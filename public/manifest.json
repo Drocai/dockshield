@@ -1,0 +1,11 @@
+{
+  "name": "DockShield — Marine Asset Protection",
+  "short_name": "DockShield",
+  "description": "USACE-compliant dock preservation. Dock-as-a-Service for Lake Lanier.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#030712",
+  "theme_color": "#0ea5e9",
+  "orientation": "any",
+  "icons": []
+}

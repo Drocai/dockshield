@@ -1,0 +1,16 @@
+[project]
+id = ""
+# Set this to your Supabase project ref after creation
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+
+[functions]
+verify_jwt = false
+# JWT verification disabled — Edge Functions use service_role key internally
