@@ -4,568 +4,480 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>DockShield — Marine Asset Protection | Lake Lanier</title>
-  <meta name="description" content="The only USACE-compliant, zero-discharge dock preservation service on Lake Lanier. Protect your marine investment with Dock-as-a-Service.">
+  <meta name="description" content="The only USACE-compliant, zero-discharge dock preservation service on Lake Lanier.">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#030712">
-  <meta property="og:title" content="DockShield — Dock-as-a-Service">
-  <meta property="og:description" content="Automated marine asset preservation. Protect your dock from biological decay that cuts structural lifespan by 40%.">
-  <meta property="og:type" content="website">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg-void: #030712; --bg-deep: #0a1628;
-      --bg-card: rgba(8, 18, 38, 0.88); --bg-card-solid: #081226;
-      --border-subtle: rgba(56, 189, 248, 0.08); --border-active: rgba(56, 189, 248, 0.25);
-      --border-glow: rgba(14, 165, 233, 0.4);
-      --text-primary: #e8edf5; --text-secondary: #94a3b8; --text-muted: #475569;
-      --accent: #0ea5e9; --accent-bright: #38bdf8;
-      --accent-glow: rgba(14, 165, 233, 0.15); --accent-glow-strong: rgba(14, 165, 233, 0.35);
-      --success: #10b981; --success-bg: rgba(16, 185, 129, 0.08);
-      --danger: #ef4444; --danger-bg: rgba(239, 68, 68, 0.08);
-      --warning: #f59e0b;
-      --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
-      --radius: 14px; --radius-sm: 10px; --radius-xs: 6px;
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#030712;--card:rgba(8,18,38,0.9);--border:rgba(56,189,248,0.08);
+      --border-a:rgba(56,189,248,0.25);--txt:#e8edf5;--txt2:#94a3b8;--muted:#475569;
+      --accent:#0ea5e9;--bright:#38bdf8;--glow:rgba(14,165,233,0.15);--glowS:rgba(14,165,233,0.35);
+      --ok:#10b981;--danger:#ef4444;--warn:#f59e0b;
+      --f:'DM Sans',-apple-system,sans-serif;--mono:'JetBrains Mono',monospace;
+      --r:14px;--rs:10px;--rx:6px;
     }
-    html, body { height: 100%; overflow: hidden; }
-    body { font-family: var(--font-body); background: var(--bg-void); color: var(--text-primary); -webkit-font-smoothing: antialiased; }
-
-    #simulator { position: fixed; inset: 0; z-index: 1; }
-    canvas { display: block; }
-
-    .ambient-overlay {
-      position: fixed; inset: 0; z-index: 2; pointer-events: none;
-      background:
-        radial-gradient(ellipse 120% 60% at 20% 90%, rgba(14,165,233,0.04) 0%, transparent 70%),
-        radial-gradient(ellipse 80% 50% at 80% 10%, rgba(16,185,129,0.03) 0%, transparent 70%),
-        linear-gradient(180deg, rgba(3,7,18,0.3) 0%, transparent 30%, transparent 70%, rgba(3,7,18,0.6) 100%);
-    }
-
-    #ui-layer {
-      position: fixed; inset: 0; z-index: 10;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 20px; pointer-events: none;
-    }
-
-    .card {
-      background: var(--bg-card); backdrop-filter: blur(40px) saturate(1.6);
-      -webkit-backdrop-filter: blur(40px) saturate(1.6);
-      border: 1px solid var(--border-subtle); border-radius: var(--radius);
-      padding: 36px 32px; width: 100%; max-width: 460px; pointer-events: auto;
-      box-shadow: 0 0 0 1px rgba(255,255,255,0.02) inset, 0 24px 80px -12px rgba(0,0,0,0.7), 0 0 40px -8px var(--accent-glow);
-      transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); position: relative; overflow: hidden;
-    }
-    .card::before {
-      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(56,189,248,0.12), rgba(16,185,129,0.08), transparent);
-    }
-    .card.hidden { display: none; }
-
-    .logo-block { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
-    .logo-mark {
-      width: 42px; height: 42px; border-radius: var(--radius-sm);
-      background: linear-gradient(135deg, #0ea5e9, #06b6d4);
-      display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 0 24px var(--accent-glow-strong), 0 0 0 1px rgba(255,255,255,0.1) inset;
-    }
-    .logo-mark svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3)); }
-    .logo-wordmark { font-size: 21px; font-weight: 700; letter-spacing: -0.5px; line-height: 1; }
-    .logo-wordmark span { color: var(--accent-bright); }
-    .logo-compliance { display: block; font-size: 9.5px; font-weight: 500; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-muted); margin-top: 3px; }
-
-    .card h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; line-height: 1.2; margin-bottom: 8px; }
-    .card .subtitle { font-size: 13.5px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 24px; font-weight: 400; }
-    .highlight { color: var(--accent-bright); font-weight: 600; }
-
-    .field { margin-bottom: 14px; }
-    .field label { display: block; font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
-    .field input, .field select {
-      width: 100%; background: rgba(8,18,38,0.7); border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm); padding: 13px 16px; color: var(--text-primary);
-      font-family: var(--font-body); font-size: 14px; transition: border-color 0.2s, box-shadow 0.2s; outline: none;
-    }
-    .field input::placeholder { color: #334155; }
-    .field input:focus, .field select:focus { border-color: var(--border-active); box-shadow: 0 0 0 3px var(--accent-glow); }
-    .field select {
-      cursor: pointer; -webkit-appearance: none; appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 16px center;
-    }
-    .field select option { background: var(--bg-deep); }
-
-    .btn-primary {
-      width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm);
-      font-family: var(--font-body); font-size: 14px; font-weight: 600; cursor: pointer;
-      background: linear-gradient(135deg, #0ea5e9, #0284c7); color: white;
-      box-shadow: 0 4px 16px var(--accent-glow-strong), 0 0 0 1px rgba(255,255,255,0.1) inset;
-      transition: all 0.2s ease; margin-top: 6px;
-    }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px var(--accent-glow-strong); }
-    .btn-primary:active { transform: translateY(0); }
-    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
-    .btn-secondary {
-      width: 100%; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
-      background: transparent; color: var(--text-secondary); font-family: var(--font-body);
-      font-size: 13px; font-weight: 500; cursor: pointer; margin-top: 10px; transition: all 0.2s;
-    }
-    .btn-secondary:hover { border-color: var(--border-active); color: var(--text-primary); }
-
-    .stat-box { background: rgba(3,7,18,0.5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 18px 20px; margin: 18px 0; }
-    .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; }
-    .stat-row:not(:last-child) { border-bottom: 1px solid rgba(30,41,59,0.4); }
-    .stat-label { font-size: 12.5px; color: var(--text-secondary); }
-    .stat-value { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
-    .stat-value.danger { color: var(--danger); }
-    .stat-value.success { color: var(--success); }
-    .stat-value.accent { color: var(--accent-bright); }
-    .stat-value.warning { color: var(--warning); }
-
-    .threat-alert {
-      background: var(--danger-bg); border: 1px solid rgba(239,68,68,0.15);
-      border-radius: var(--radius-xs); padding: 12px 14px; margin-bottom: 16px;
-      display: flex; align-items: flex-start; gap: 10px;
-    }
-    .threat-alert svg { flex-shrink: 0; width: 18px; height: 18px; color: var(--danger); margin-top: 1px; }
-    .threat-alert p { font-size: 12.5px; line-height: 1.6; color: #fca5a5; }
-    .threat-alert strong { color: #fecaca; font-weight: 600; }
-
-    .tier-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
-    .tier-option {
-      background: rgba(3,7,18,0.5); border: 2px solid var(--border-subtle);
-      border-radius: var(--radius-sm); padding: 16px 8px; text-align: center;
-      cursor: pointer; transition: all 0.25s; position: relative;
-    }
-    .tier-option:hover { border-color: var(--border-active); }
-    .tier-option.selected { border-color: var(--accent); background: rgba(14,165,233,0.06); box-shadow: 0 0 20px var(--accent-glow); }
-    .tier-name { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-muted); margin-bottom: 6px; }
-    .tier-price { font-family: var(--font-mono); font-size: 24px; font-weight: 700; }
-    .tier-price span { font-size: 11px; font-weight: 400; color: var(--text-muted); }
-    .tier-option.selected .tier-name { color: var(--accent-bright); }
-    .tier-badge { position: absolute; top: -1px; right: -1px; background: var(--success); color: white; font-size: 8px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 8px; border-radius: 0 var(--radius-sm) 0 var(--radius-xs); }
-    .tier-feature { font-size: 10px; color: var(--text-muted); margin-top: 6px; line-height: 1.4; }
-
-    .spinner-area { text-align: center; padding: 16px 0; }
-    .spinner { width: 44px; height: 44px; border: 2px solid var(--border-subtle); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 18px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner-area h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-    .spinner-area p { font-size: 12.5px; color: var(--text-muted); font-family: var(--font-mono); }
-
-    .success-ring { width: 52px; height: 52px; border-radius: 50%; background: var(--success-bg); border: 1px solid rgba(16,185,129,0.2); display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; }
-    .success-ring svg { width: 26px; height: 26px; color: var(--success); }
-
-    .compliance-footer { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(30,41,59,0.3); }
-    .compliance-footer svg { width: 12px; height: 12px; color: var(--success); }
-    .compliance-footer span { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); font-weight: 500; }
-
-    .note { font-size: 11.5px; color: var(--text-muted); text-align: center; margin-top: 14px; line-height: 1.6; }
-
-    #game-hud { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 15; pointer-events: none; display: none; gap: 20px; align-items: center; }
-    .hud-item { font-family: var(--font-mono); font-size: 12px; color: var(--accent-bright); background: rgba(3,7,18,0.7); backdrop-filter: blur(12px); padding: 8px 14px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle); }
-    .hud-item .label { font-size: 9px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
-    .hud-item .val { font-size: 16px; font-weight: 700; }
-
-    #game-controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 15; pointer-events: none; display: none; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); background: rgba(3,7,18,0.6); backdrop-filter: blur(8px); padding: 8px 16px; border-radius: var(--radius-xs); border: 1px solid var(--border-subtle); letter-spacing: 0.5px; }
-
-    .fade-in { animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-    .fade-in-up { animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-
-    @media (max-width: 480px) {
-      .card { padding: 28px 20px; border-radius: 12px; }
-      .card h2 { font-size: 21px; }
-      .tier-price { font-size: 20px !important; }
-      .tier-feature { display: none; }
-    }
+    html,body{height:100%;overflow:hidden}
+    body{font-family:var(--f);background:var(--bg);color:var(--txt);-webkit-font-smoothing:antialiased}
+    #sim{position:fixed;inset:0;z-index:1}canvas{display:block}
+    .amb{position:fixed;inset:0;z-index:2;pointer-events:none;background:radial-gradient(ellipse 120% 60% at 20% 90%,rgba(14,165,233,0.04) 0%,transparent 70%),radial-gradient(ellipse 80% 50% at 80% 10%,rgba(16,185,129,0.03) 0%,transparent 70%),linear-gradient(180deg,rgba(3,7,18,0.3) 0%,transparent 30%,transparent 70%,rgba(3,7,18,0.6) 100%)}
+    #ui{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;pointer-events:none}
+    .card{background:var(--card);backdrop-filter:blur(40px) saturate(1.6);border:1px solid var(--border);border-radius:var(--r);padding:32px 28px;width:100%;max-width:480px;pointer-events:auto;box-shadow:0 0 0 1px rgba(255,255,255,0.02) inset,0 24px 80px -12px rgba(0,0,0,0.7),0 0 40px -8px var(--glow);position:relative;overflow:hidden}
+    .card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(56,189,248,0.12),rgba(16,185,129,0.08),transparent)}
+    .card.hidden{display:none}
+    .logo{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+    .logo-i{width:40px;height:40px;border-radius:var(--rs);background:linear-gradient(135deg,#0ea5e9,#06b6d4);display:flex;align-items:center;justify-content:center;box-shadow:0 0 24px var(--glowS)}
+    .logo-i svg{width:20px;height:20px;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3))}
+    .logo-w{font-size:20px;font-weight:700;letter-spacing:-0.5px}.logo-w span{color:var(--bright)}
+    .logo-c{display:block;font-size:9px;font-weight:500;letter-spacing:1.8px;text-transform:uppercase;color:var(--muted);margin-top:2px}
+    h2{font-size:22px;font-weight:700;letter-spacing:-0.4px;margin-bottom:6px}
+    .sub{font-size:13px;color:var(--txt2);line-height:1.7;margin-bottom:20px}
+    .hl{color:var(--bright);font-weight:600}
+    .field{margin-bottom:12px}.field label{display:block;font-size:9.5px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    .field input,.field select{width:100%;background:rgba(8,18,38,0.7);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;color:var(--txt);font-family:var(--f);font-size:13.5px;outline:none;transition:border-color .2s,box-shadow .2s}
+    .field input::placeholder{color:#334155}
+    .field input:focus,.field select:focus{border-color:var(--border-a);box-shadow:0 0 0 3px var(--glow)}
+    .field select{cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+    .field select option{background:#0a1628}
+    .btn{width:100%;padding:13px;border:none;border-radius:var(--rs);font-family:var(--f);font-size:13.5px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:4px}
+    .btn-p{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;box-shadow:0 4px 16px var(--glowS),0 0 0 1px rgba(255,255,255,0.1) inset}
+    .btn-p:hover{transform:translateY(-1px);box-shadow:0 8px 24px var(--glowS)}.btn-p:active{transform:translateY(0)}
+    .btn-s{background:transparent;border:1px solid var(--border);color:var(--txt2);margin-top:8px}.btn-s:hover{border-color:var(--border-a);color:var(--txt)}
+    .boat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
+    .boat-opt{background:rgba(3,7,18,0.5);border:2px solid var(--border);border-radius:var(--rs);padding:14px 8px;text-align:center;cursor:pointer;transition:all .25s}
+    .boat-opt:hover{border-color:var(--border-a)}
+    .boat-opt.sel{border-color:var(--accent);background:rgba(14,165,233,0.06);box-shadow:0 0 20px var(--glow)}
+    .boat-opt .bn{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:4px}
+    .boat-opt.sel .bn{color:var(--bright)}
+    .boat-opt .bi{font-size:28px;margin-bottom:4px}
+    .boat-opt .bs{font-family:var(--mono);font-size:10px;color:var(--muted)}
+    .stat-box{background:rgba(3,7,18,0.5);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;margin:14px 0}
+    .stat-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0}
+    .stat-row:not(:last-child){border-bottom:1px solid rgba(30,41,59,0.4)}
+    .stat-label{font-size:12px;color:var(--txt2)}.stat-val{font-family:var(--mono);font-size:12.5px;font-weight:600}
+    .stat-val.danger{color:var(--danger)}.stat-val.ok{color:var(--ok)}.stat-val.accent{color:var(--bright)}.stat-val.warn{color:var(--warn)}
+    .threat{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.15);border-radius:var(--rx);padding:10px 12px;margin-bottom:14px;display:flex;align-items:flex-start;gap:8px}
+    .threat svg{flex-shrink:0;width:16px;height:16px;color:var(--danger);margin-top:1px}.threat p{font-size:12px;line-height:1.6;color:#fca5a5}.threat strong{color:#fecaca;font-weight:600}
+    .tier-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+    .tier-opt{background:rgba(3,7,18,0.5);border:2px solid var(--border);border-radius:var(--rs);padding:14px 8px;text-align:center;cursor:pointer;transition:all .25s;position:relative}
+    .tier-opt:hover{border-color:var(--border-a)}.tier-opt.sel{border-color:var(--accent);background:rgba(14,165,233,0.06);box-shadow:0 0 20px var(--glow)}
+    .tn{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:4px}.tier-opt.sel .tn{color:var(--bright)}
+    .tp{font-family:var(--mono);font-size:22px;font-weight:700}.tp span{font-size:10px;font-weight:400;color:var(--muted)}
+    .tbadge{position:absolute;top:-1px;right:-1px;background:var(--ok);color:#fff;font-size:7.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:3px 7px;border-radius:0 var(--rs) 0 var(--rx)}
+    .tf{font-size:9.5px;color:var(--muted);margin-top:4px;line-height:1.4}
+    .spin-a{text-align:center;padding:14px 0}.spinner{width:40px;height:40px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spin-a h3{font-size:15px;font-weight:600;margin-bottom:4px}.spin-a p{font-size:12px;color:var(--muted);font-family:var(--mono)}
+    .ok-ring{width:48px;height:48px;border-radius:50%;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+    .ok-ring svg{width:24px;height:24px;color:var(--ok)}
+    .comp-ft{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;padding-top:12px;border-top:1px solid rgba(30,41,59,0.3)}
+    .comp-ft svg{width:11px;height:11px;color:var(--ok)}.comp-ft span{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:500}
+    .note{font-size:11px;color:var(--muted);text-align:center;margin-top:12px;line-height:1.6}
+    #hud{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:15;pointer-events:none;display:none;gap:12px;align-items:center}
+    .hud-i{font-family:var(--mono);font-size:11px;color:var(--bright);background:rgba(3,7,18,0.75);backdrop-filter:blur(12px);padding:6px 12px;border-radius:var(--rx);border:1px solid var(--border)}
+    .hud-i .hl2{font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:1px;display:block}.hud-i .hv{font-size:14px;font-weight:700}
+    #controls{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:15;pointer-events:none;display:none;font-family:var(--mono);font-size:10px;color:var(--muted);background:rgba(3,7,18,0.65);backdrop-filter:blur(8px);padding:6px 14px;border-radius:var(--rx);border:1px solid var(--border);letter-spacing:.5px}
+    #wx-badge{position:fixed;top:16px;right:16px;z-index:15;pointer-events:none;display:none;font-family:var(--mono);font-size:10px;background:rgba(3,7,18,0.75);backdrop-filter:blur(12px);padding:8px 12px;border-radius:var(--rx);border:1px solid var(--border);text-align:right}
+    #wx-badge .wl{font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+    .fade-up{animation:fadeUp .6s cubic-bezier(.16,1,.3,1) forwards}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @media(max-width:480px){.card{padding:24px 18px;border-radius:12px}h2{font-size:19px}.tp{font-size:18px!important}.tf,.bs{display:none}}
   </style>
 </head>
 <body>
-  <div id="simulator"></div>
-  <div class="ambient-overlay"></div>
-
-  <div id="game-hud">
-    <div class="hud-item"><div class="label">Speed</div><div class="val" id="hud-speed">0 kn</div></div>
-    <div class="hud-item"><div class="label">Distance</div><div class="val" id="hud-dist">250m</div></div>
-    <div class="hud-item"><div class="label">Heading</div><div class="val" id="hud-heading">N</div></div>
+  <div id="sim"></div>
+  <div class="amb"></div>
+  <div id="hud">
+    <div class="hud-i"><span class="hl2">Speed</span><span class="hv" id="h-spd">0 kn</span></div>
+    <div class="hud-i"><span class="hl2">Distance</span><span class="hv" id="h-dst">--</span></div>
+    <div class="hud-i"><span class="hl2">Heading</span><span class="hv" id="h-hdg">N</span></div>
+    <div class="hud-i"><span class="hl2">Score</span><span class="hv" id="h-scr">0</span></div>
   </div>
-  <div id="game-controls">WASD or Arrow Keys to navigate · Reach the green beacon</div>
+  <div id="controls">WASD / Arrows to navigate · Dock at the green beacon</div>
+  <div id="wx-badge">
+    <div class="wl">Weather</div>
+    <div id="wx-cond" style="color:var(--bright);font-weight:600">Loading...</div>
+    <div id="wx-wind" style="color:var(--txt2);font-size:9px;margin-top:2px"></div>
+  </div>
 
-  <div id="ui-layer">
-    <!-- STEP 1: Lead Capture -->
-    <div id="step-capture" class="card fade-in-up">
-      <div class="logo-block">
-        <div class="logo-mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </div>
-        <div>
-          <div class="logo-wordmark">Dock<span>Shield</span></div>
-          <span class="logo-compliance">Zero-Discharge · Lake Lanier</span>
-        </div>
-      </div>
+  <div id="ui">
+    <!-- STEP 1: Lead + Boat Selection -->
+    <div id="s-cap" class="card fade-up">
+      <div class="logo"><div class="logo-i"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div><div class="logo-w">Dock<span>Shield</span></div><span class="logo-c">Zero-Discharge · Lake Lanier</span></div></div>
       <h2>Protect Your Marine Asset</h2>
-      <p class="subtitle">Enter your property details to receive a <span class="highlight">satellite-guided structural assessment</span> and instant protection quote. Navigate our Lake Lanier simulator to see what's at stake.</p>
-      <div class="field"><label>Property Address</label><input type="text" id="address" placeholder="e.g., 123 Waterfront Dr, Buford, GA 30518" autocomplete="street-address"></div>
-      <div class="field"><label>Contact Email</label><input type="email" id="email" placeholder="name@domain.com" autocomplete="email"></div>
-      <div class="field"><label>Dock Structure</label>
-        <select id="dock-type"><option value="fixed">Fixed Dock</option><option value="floating">Floating Dock</option><option value="boat_lift">Boat Lift / Hoist</option><option value="seawall">Seawall / Bulkhead</option><option value="multi">Multi-Slip / Marina</option></select>
+      <p class="sub">Enter your address to <span class="hl">fly in from space</span>, select your vessel, and navigate Lake Lanier's hazards in real weather conditions.</p>
+      <div class="field"><label>Property Address</label><input type="text" id="f-addr" placeholder="e.g., 6950 Holiday Rd, Buford, GA 30518" autocomplete="street-address"></div>
+      <div class="field"><label>Contact Email</label><input type="email" id="f-email" placeholder="name@domain.com" autocomplete="email"></div>
+      <p class="sub" style="margin-bottom:8px;font-size:11.5px;font-weight:600;color:var(--txt)">Select Your Vessel</p>
+      <div class="boat-grid">
+        <div class="boat-opt" data-boat="regular" onclick="DS.pickBoat('regular')"><div class="bi">&#9973;</div><div class="bn">Regular</div><div class="bs">Balanced handling</div></div>
+        <div class="boat-opt sel" data-boat="pontoon" onclick="DS.pickBoat('pontoon')"><div class="bi">&#128674;</div><div class="bn">Pontoon</div><div class="bs">Stable, slow turn</div></div>
+        <div class="boat-opt" data-boat="speedboat" onclick="DS.pickBoat('speedboat')"><div class="bi">&#128676;</div><div class="bn">Speedboat</div><div class="bs">Fast, light hull</div></div>
       </div>
-      <button class="btn-primary" onclick="DaaS.triggerAnalysis()">Launch 3D Analysis</button>
-      <div class="compliance-footer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-        <span>USACE-Compliant · Zero Discharge Protocol</span>
-      </div>
+      <button class="btn btn-p" onclick="DS.launch()">Launch from Orbit</button>
+      <div class="comp-ft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg><span>USACE-Compliant · Zero Discharge Protocol</span></div>
     </div>
 
-    <!-- STEP 2: Processing -->
-    <div id="step-processing" class="card hidden">
-      <div class="spinner-area"><div class="spinner"></div><h3>Acquiring Satellite Telemetry</h3><p id="processing-status">Resolving coordinates...</p></div>
-    </div>
+    <!-- STEP 2: Processing / Zoom -->
+    <div id="s-proc" class="card hidden"><div class="spin-a"><div class="spinner"></div><h3 id="proc-title">Acquiring Satellite Lock</h3><p id="proc-msg">Initializing orbital view...</p></div></div>
 
-    <!-- STEP 3: Tier Selection -->
-    <div id="step-tier" class="card hidden">
+    <!-- STEP 3: Tier -->
+    <div id="s-tier" class="card hidden">
       <h2>Structural Assessment</h2>
-      <div class="threat-alert">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <p>Unmitigated biological growth reduces structural lifespan by <strong>40%</strong>. Average dock replacement on Lake Lanier exceeds <strong>$35,000</strong>.</p>
-      </div>
+      <div class="threat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><p>Biological growth reduces dock lifespan by <strong>40%</strong>. Lake Lanier replacement averages <strong>$35,000</strong>.</p></div>
       <div class="stat-box">
-        <div class="stat-row"><span class="stat-label">Biological Growth Index</span><span class="stat-value danger">HIGH RISK</span></div>
-        <div class="stat-row"><span class="stat-label">Structural Decay Projection</span><span class="stat-value danger">-40% lifespan</span></div>
-        <div class="stat-row"><span class="stat-label">Estimated Replacement Cost</span><span class="stat-value warning">$35,000+</span></div>
-        <div class="stat-row"><span class="stat-label">DaaS Prevention Savings</span><span class="stat-value success">$14,000 avg</span></div>
+        <div class="stat-row"><span class="stat-label">Biological Growth Index</span><span class="stat-val danger">HIGH RISK</span></div>
+        <div class="stat-row"><span class="stat-label">Structural Decay</span><span class="stat-val danger">-40% lifespan</span></div>
+        <div class="stat-row"><span class="stat-label">Replacement Cost</span><span class="stat-val warn">$35,000+</span></div>
+        <div class="stat-row"><span class="stat-label">Your Navigation Score</span><span class="stat-val accent" id="final-score">0</span></div>
+        <div class="stat-row"><span class="stat-label">DaaS Savings</span><span class="stat-val ok">$14,000 avg</span></div>
       </div>
-      <p class="subtitle" style="margin-bottom:10px;font-size:12px;">Select your protection tier — zero contract, cancel anytime:</p>
+      <p class="sub" style="margin-bottom:8px;font-size:11px">Zero contract, cancel anytime:</p>
       <div class="tier-grid">
-        <div class="tier-option" data-tier="1" onclick="DaaS.selectTier(1)"><div class="tier-name">Preventative</div><div class="tier-price">$49<span>/mo</span></div><div class="tier-feature">Bi-annual wash<br>+ hazard report</div></div>
-        <div class="tier-option selected" data-tier="2" onclick="DaaS.selectTier(2)"><div class="tier-badge">Popular</div><div class="tier-name">Comprehensive</div><div class="tier-price">$99<span>/mo</span></div><div class="tier-feature">Wash + seal<br>+ pest treatment</div></div>
-        <div class="tier-option" data-tier="3" onclick="DaaS.selectTier(3)"><div class="tier-name">Premium</div><div class="tier-price">$199<span>/mo</span></div><div class="tier-feature">Full service<br>+ drone reports</div></div>
+        <div class="tier-opt" data-tier="1" onclick="DS.pickTier(1)"><div class="tn">Preventative</div><div class="tp">$49<span>/mo</span></div><div class="tf">Bi-annual wash + report</div></div>
+        <div class="tier-opt sel" data-tier="2" onclick="DS.pickTier(2)"><div class="tbadge">Popular</div><div class="tn">Comprehensive</div><div class="tp">$99<span>/mo</span></div><div class="tf">Wash + seal + pest</div></div>
+        <div class="tier-opt" data-tier="3" onclick="DS.pickTier(3)"><div class="tn">Premium</div><div class="tp">$199<span>/mo</span></div><div class="tf">Full + drone + storm</div></div>
       </div>
-      <button class="btn-primary" onclick="DaaS.submitQuote()">Get My Protection Plan</button>
-      <div class="compliance-footer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-        <span>SBC-24V1 Certified · 95% Slurry Recovery</span>
-      </div>
+      <button class="btn btn-p" onclick="DS.submitQuote()">Get My Protection Plan</button>
+      <div class="comp-ft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg><span>SBC-24V1 · 95% Recovery</span></div>
     </div>
 
     <!-- STEP 4: Success -->
-    <div id="step-success" class="card hidden">
-      <div class="success-ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+    <div id="s-ok" class="card hidden">
+      <div class="ok-ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></div>
       <h2 style="text-align:center">Protection Plan Ready</h2>
       <div class="stat-box">
-        <div class="stat-row"><span class="stat-label">Selected Plan</span><span class="stat-value accent" id="final-tier">Comprehensive</span></div>
-        <div class="stat-row"><span class="stat-label">Monthly Investment</span><span class="stat-value success" id="final-price">$99/mo</span></div>
-        <div class="stat-row"><span class="stat-label">Projected Savings</span><span class="stat-value success">$14,000+</span></div>
+        <div class="stat-row"><span class="stat-label">Plan</span><span class="stat-val accent" id="ok-tier">Comprehensive</span></div>
+        <div class="stat-row"><span class="stat-label">Monthly</span><span class="stat-val ok" id="ok-price">$99/mo</span></div>
+        <div class="stat-row"><span class="stat-label">Savings</span><span class="stat-val ok">$14,000+</span></div>
       </div>
-      <button class="btn-primary" id="checkout-btn" onclick="DaaS.goToCheckout()">Activate Dock Protection</button>
-      <p class="note">A secure payment link has also been sent to your email.</p>
-      <button class="btn-secondary" onclick="DaaS.reset()">Start New Analysis</button>
+      <button class="btn btn-p" id="ck-btn" onclick="DS.checkout()">Activate Dock Protection</button>
+      <p class="note">Secure payment link also sent to your email.</p>
+      <button class="btn btn-s" onclick="DS.reset()">New Analysis</button>
     </div>
 
     <!-- Game Result -->
-    <div id="step-game-result" class="card hidden">
-      <h2 id="game-result-title" style="text-align:center"></h2>
-      <p class="subtitle" id="game-result-msg" style="text-align:center"></p>
-      <div class="threat-alert">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <p>Navigating Lanier's hazards is one challenge. <strong>Hidden biological decay</strong> is another — cutting dock lifespan by 40% and risking a <strong>$35,000 replacement</strong>.</p>
+    <div id="s-result" class="card hidden">
+      <h2 id="res-title" style="text-align:center"></h2>
+      <p class="sub" id="res-msg" style="text-align:center"></p>
+      <div class="stat-box">
+        <div class="stat-row"><span class="stat-label">Navigation Score</span><span class="stat-val accent" id="res-score">0</span></div>
+        <div class="stat-row"><span class="stat-label">Vessel</span><span class="stat-val" id="res-boat">Pontoon</span></div>
+        <div class="stat-row"><span class="stat-label">Weather Penalty</span><span class="stat-val warn" id="res-wx">None</span></div>
       </div>
-      <button class="btn-primary" onclick="DaaS.showTierFromGame()">View Protection Plans</button>
+      <div class="threat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><p><strong>Hidden biological decay</strong> cuts dock lifespan by 40%, risking <strong>$35,000 replacement</strong>.</p></div>
+      <button class="btn btn-p" onclick="DS.showTiers()">View Protection Plans</button>
+      <button class="btn btn-s" onclick="DS.replay()">Play Again</button>
     </div>
 
     <!-- Error -->
-    <div id="step-error" class="card hidden">
-      <h2 style="color:var(--danger)">System Error</h2>
-      <p class="subtitle" id="error-message">An error occurred during analysis.</p>
-      <button class="btn-secondary" onclick="DaaS.reset()">Retry Analysis</button>
-    </div>
+    <div id="s-err" class="card hidden"><h2 style="color:var(--danger)">System Error</h2><p class="sub" id="err-msg">An error occurred.</p><button class="btn btn-s" onclick="DS.reset()">Retry</button></div>
   </div>
 
 <script src="/api/config"></script>
 <script>
-const DaaS = (() => {
-  const CONFIG = { CESIUM_ION_TOKEN:'', GOOGLE_MAPS_API_KEY:'', SUPABASE_URL:'', SUPABASE_ANON_KEY:'' };
-  if (window.__ENV__) Object.assign(CONFIG, window.__ENV__);
+const DS=(()=>{
+  const CFG={SUPABASE_URL:'',SUPABASE_ANON_KEY:'',GOOGLE_MAPS_API_KEY:'',CESIUM_ION_TOKEN:''};
+  if(window.__ENV__)Object.assign(CFG,window.__ENV__);
 
-  const TIERS = { 1:{name:'Preventative',price:49}, 2:{name:'Comprehensive',price:99}, 3:{name:'Premium',price:199} };
-  let state = { address:'', email:'', dockType:'fixed', lat:34.2279, lng:-83.9199, selectedTier:2, leadId:null, quoteId:null, checkoutUrl:null, gameActive:false };
+  // Boat class tuning from PierPressure spec
+  const BOATS={
+    regular:{name:'Regular',accel:0.018,drag:0.984,turn:0.045,maxSpd:1.2,wake:1.0,color:0xe0e0e0,wxExposure:1.0},
+    pontoon:{name:'Pontoon',accel:0.012,drag:0.988,turn:0.03,maxSpd:0.8,wake:0.7,color:0xd4a853,wxExposure:0.7},
+    speedboat:{name:'Speedboat',accel:0.025,drag:0.978,turn:0.055,maxSpd:1.8,wake:1.5,color:0xef4444,wxExposure:1.4}
+  };
+  const TIERS={1:{name:'Preventative',price:49},2:{name:'Comprehensive',price:99},3:{name:'Premium',price:199}};
 
-  const $ = id => document.getElementById(id);
-  function showStep(id) {
-    ['step-capture','step-processing','step-tier','step-success','step-error','step-game-result'].forEach(s => {
-      const el = $(s); if (!el) return;
-      if (s === id) { el.classList.remove('hidden'); el.classList.add('fade-in-up'); }
-      else { el.classList.add('hidden'); el.classList.remove('fade-in-up'); }
-    });
-  }
+  let S={addr:'',email:'',boatClass:'pontoon',tier:2,lat:34.2279,lng:-83.9199,
+    leadId:null,quoteId:null,checkoutUrl:null,
+    gameOn:false,score:0,startTime:0,
+    wx:{wind:2,windDir:180,rain:0,vis:10000,gust:0,cond:'Clear',temp:72}};
 
-  // === THREE.JS ===
-  let scene, camera, renderer, boat, dock, stumps = [], waterGeo, waterOrigY;
-  let boatSpeed = 0;
-  const keys = {};
-  const ACCEL=0.015, DRAG=0.985, TURN=0.04, MIN_STEER=0.03;
-  const DOCK_POS = new THREE.Vector3(0, 0, -250);
+  const $=id=>document.getElementById(id);
+  function show(id){['s-cap','s-proc','s-tier','s-ok','s-err','s-result'].forEach(s=>{const e=$(s);if(!e)return;if(s===id){e.classList.remove('hidden');e.classList.add('fade-up')}else{e.classList.add('hidden');e.classList.remove('fade-up')}})}
 
-  function initScene() {
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x030a1a);
-    scene.fog = new THREE.FogExp2(0x030a1a, 0.005);
-    camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
-    renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    $('simulator').appendChild(renderer.domElement);
+  // === THREE.JS ENGINE ===
+  let scene,cam,ren,boat,dockMesh,stumps=[],waterGeo,waterOY;
+  let spd=0;const keys={};
+  const DOCK=new THREE.Vector3(0,0,-250);
+  let spawnPos=new THREE.Vector3(0,0.4,50);
 
-    scene.add(new THREE.HemisphereLight(0x1a3050, 0x020810, 0.6));
-    const dir = new THREE.DirectionalLight(0x4a8ab5, 0.8);
-    dir.position.set(30,50,20); dir.castShadow=true; dir.shadow.mapSize.set(1024,1024);
-    scene.add(dir);
-    scene.add(new THREE.AmbientLight(0x0a1830, 0.4));
+  function initScene(){
+    scene=new THREE.Scene();scene.background=new THREE.Color(0x020810);scene.fog=new THREE.FogExp2(0x020810,0.004);
+    cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,2000);
+    ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;
+    $('sim').appendChild(ren.domElement);
+
+    scene.add(new THREE.HemisphereLight(0x1a3050,0x020810,0.6));
+    const dl=new THREE.DirectionalLight(0x4a8ab5,0.8);dl.position.set(30,50,20);dl.castShadow=true;dl.shadow.mapSize.set(1024,1024);scene.add(dl);
+    scene.add(new THREE.AmbientLight(0x0a1830,0.4));
 
     // Water
-    waterGeo = new THREE.PlaneGeometry(800,800,80,80);
-    const waterMat = new THREE.MeshPhongMaterial({ color:0x0a2540, emissive:0x041020, specular:0x1a5070, shininess:80, transparent:true, opacity:0.92 });
-    const water = new THREE.Mesh(waterGeo, waterMat);
-    water.rotation.x = -Math.PI/2; water.receiveShadow = true;
-    scene.add(water);
-    const wp = waterGeo.attributes.position;
-    waterOrigY = new Float32Array(wp.count);
-    for(let i=0;i<wp.count;i++) waterOrigY[i] = wp.getZ(i);
+    waterGeo=new THREE.PlaneGeometry(1200,1200,100,100);
+    const wMat=new THREE.MeshPhongMaterial({color:0x0a2540,emissive:0x041020,specular:0x1a5070,shininess:80,transparent:true,opacity:0.92});
+    const water=new THREE.Mesh(waterGeo,wMat);water.rotation.x=-Math.PI/2;water.receiveShadow=true;scene.add(water);
+    const wp=waterGeo.attributes.position;waterOY=new Float32Array(wp.count);
+    for(let i=0;i<wp.count;i++)waterOY[i]=wp.getZ(i);
 
-    // Boat
-    const hullGeo = new THREE.CylinderGeometry(0.3,0.6,4,6);
-    const hullMat = new THREE.MeshPhongMaterial({ color:0xe8e8e8, emissive:0x222222 });
-    boat = new THREE.Mesh(hullGeo, hullMat);
-    boat.rotation.z = Math.PI/2; boat.position.set(0,0.4,50); boat.castShadow=true;
-    const cabGeo = new THREE.CylinderGeometry(0.8,1.0,1.2,4);
-    const cabMat = new THREE.MeshPhongMaterial({ color:0x0ea5e9, emissive:0x053050 });
-    const cab = new THREE.Mesh(cabGeo, cabMat);
-    cab.position.set(0,0.8,0); cab.rotation.z=-Math.PI/2;
-    boat.add(cab); scene.add(boat);
+    // Boat (created on class selection)
+    buildBoat(S.boatClass);
 
     // Dock
-    const dockGeo = new THREE.BoxGeometry(8,0.5,12);
-    const dockMat = new THREE.MeshPhongMaterial({ color:0x8B6914, emissive:0x2a1f05 });
-    dock = new THREE.Mesh(dockGeo, dockMat);
-    dock.position.copy(DOCK_POS); dock.position.y=0.3;
-    dock.castShadow=true; dock.receiveShadow=true;
-    scene.add(dock);
-
+    const dkG=new THREE.BoxGeometry(10,0.5,14);const dkM=new THREE.MeshPhongMaterial({color:0x8B6914,emissive:0x2a1f05});
+    dockMesh=new THREE.Mesh(dkG,dkM);dockMesh.position.copy(DOCK);dockMesh.position.y=0.3;dockMesh.castShadow=true;scene.add(dockMesh);
     // Pilings
-    for(let i=-3;i<=3;i+=2){
-      const pg = new THREE.CylinderGeometry(0.15,0.2,3,8);
-      const pm = new THREE.MeshPhongMaterial({color:0x5a4510});
-      const p = new THREE.Mesh(pg,pm);
-      p.position.set(i,-1,DOCK_POS.z+(i%4===0?-5:5));
-      scene.add(p);
-    }
-
+    for(let i=-4;i<=4;i+=2){const pg=new THREE.CylinderGeometry(0.15,0.2,3,8);const pm=new THREE.MeshPhongMaterial({color:0x5a4510});const p=new THREE.Mesh(pg,pm);p.position.set(i,-1,DOCK.z+(i%4===0?-6:6));scene.add(p)}
     // Beacon
-    const beaconMat = new THREE.MeshPhongMaterial({ color:0x10b981, emissive:0x10b981, emissiveIntensity:2 });
-    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.3,8,8), beaconMat);
-    beacon.position.set(0,2,DOCK_POS.z); scene.add(beacon);
-    const bLight = new THREE.PointLight(0x10b981,2,30);
-    bLight.position.copy(beacon.position); scene.add(bLight);
+    const bMat=new THREE.MeshPhongMaterial({color:0x10b981,emissive:0x10b981,emissiveIntensity:2});
+    const beacon=new THREE.Mesh(new THREE.SphereGeometry(0.4,8,8),bMat);beacon.position.set(0,2.5,DOCK.z);scene.add(beacon);
+    const bL=new THREE.PointLight(0x10b981,2,40);bL.position.copy(beacon.position);scene.add(bL);
 
-    // Stumps
-    for(let i=0;i<35;i++){
-      const sx=(Math.random()-0.5)*200, sz=-Math.random()*280;
-      if(Math.abs(sz-50)<15||Math.abs(sz-DOCK_POS.z)<15) continue;
-      const sg = new THREE.CylinderGeometry(0.5+Math.random()*0.5, 0.8+Math.random()*0.3, 1+Math.random()*1.5, 6);
-      const sm = new THREE.MeshPhongMaterial({color:0x2a1a0a, emissive:0x100800});
-      const s = new THREE.Mesh(sg,sm); s.position.set(sx,-0.2,sz); s.castShadow=true;
-      scene.add(s); stumps.push(s);
+    // Stumps (Lake Lanier submerged hazards)
+    for(let i=0;i<45;i++){
+      const sx=(Math.random()-0.5)*300,sz=-Math.random()*320;
+      if(Math.abs(sz-50)<20||Math.abs(sz-DOCK.z)<18)continue;
+      const sg=new THREE.CylinderGeometry(0.4+Math.random()*0.6,0.7+Math.random()*0.4,0.8+Math.random()*2,6);
+      const sm=new THREE.MeshPhongMaterial({color:0x2a1a0a,emissive:0x0a0500});
+      const s=new THREE.Mesh(sg,sm);s.position.set(sx,-0.3,sz);s.castShadow=true;scene.add(s);stumps.push(s);
     }
 
-    camera.position.set(0,30,70); camera.lookAt(0,0,0);
+    // Start from "space" view
+    cam.position.set(0,600,200);cam.lookAt(0,0,-100);
 
     function animate(t){
       requestAnimationFrame(animate);
-      // Water
-      const wp=waterGeo.attributes.position;
-      for(let i=0;i<wp.count;i++){
-        const x=wp.getX(i),y=wp.getY(i);
-        wp.setZ(i, waterOrigY[i]+Math.sin(x*0.05+t*0.001)*0.3+Math.cos(y*0.07+t*0.0012)*0.2);
+      // Water with weather influence
+      const wAmp=0.2+S.wx.wind*0.08;const wFreq=0.04+S.wx.wind*0.005;
+      const wp2=waterGeo.attributes.position;
+      for(let i=0;i<wp2.count;i++){
+        const x=wp2.getX(i),y=wp2.getY(i);
+        wp2.setZ(i,waterOY[i]+Math.sin(x*wFreq+t*0.001)*wAmp+Math.cos(y*(wFreq*1.4)+t*0.0012)*(wAmp*0.7));
       }
-      wp.needsUpdate=true; waterGeo.computeVertexNormals();
-      beaconMat.emissiveIntensity=1.5+Math.sin(t*0.003)*0.5;
-      bLight.intensity=1.5+Math.sin(t*0.003)*0.5;
+      wp2.needsUpdate=true;waterGeo.computeVertexNormals();
+      bMat.emissiveIntensity=1.5+Math.sin(t*0.003)*0.5;bL.intensity=1.5+Math.sin(t*0.003)*0.5;
+      // Fog from visibility
+      scene.fog.density=0.004+(1-Math.min(S.wx.vis,10000)/10000)*0.015;
 
-      if(state.gameActive){
+      if(S.gameOn){
         updateBoat();
-        const behind=new THREE.Vector3(0,8,14);
-        behind.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);
-        behind.add(boat.position);
-        camera.position.lerp(behind,0.06);
-        camera.lookAt(boat.position.x,boat.position.y+1,boat.position.z);
-      } else {
-        const tt=t*0.0001;
-        camera.position.x=Math.sin(tt)*40;
-        camera.position.z=Math.cos(tt)*40+10;
-        camera.position.y=18+Math.sin(tt*2)*3;
-        camera.lookAt(0,0,-20);
+        const bh=new THREE.Vector3(0,8,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);bh.add(boat.position);
+        cam.position.lerp(bh,0.06);cam.lookAt(boat.position.x,boat.position.y+1,boat.position.z);
+      }else if(!S._zooming){
+        const tt=t*0.00008;cam.position.x=Math.sin(tt)*50;cam.position.z=Math.cos(tt)*50;
+        cam.position.y=Math.max(18,cam.position.y+(18-cam.position.y)*0.01);cam.lookAt(0,0,-50);
       }
-      renderer.render(scene,camera);
+      ren.render(scene,cam);
     }
     animate(0);
-    addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+    addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
+  }
+
+  function buildBoat(cls){
+    if(boat)scene.remove(boat);
+    const t=BOATS[cls];
+    const hG=new THREE.CylinderGeometry(cls==='pontoon'?0.5:0.3,cls==='pontoon'?0.8:0.6,cls==='speedboat'?5:4,cls==='pontoon'?8:6);
+    const hM=new THREE.MeshPhongMaterial({color:t.color,emissive:0x222222});
+    boat=new THREE.Mesh(hG,hM);boat.rotation.z=Math.PI/2;boat.castShadow=true;
+    const cG=new THREE.CylinderGeometry(cls==='speedboat'?0.6:0.8,cls==='speedboat'?0.7:1.0,cls==='pontoon'?0.8:1.2,4);
+    const cM=new THREE.MeshPhongMaterial({color:0x0ea5e9,emissive:0x053050});
+    const cab=new THREE.Mesh(cG,cM);cab.position.set(0,0.8,0);cab.rotation.z=-Math.PI/2;boat.add(cab);
+    boat.position.copy(spawnPos);scene.add(boat);
   }
 
   function updateBoat(){
-    if(keys['ArrowUp']||keys['KeyW']) boatSpeed+=ACCEL;
-    if(keys['ArrowDown']||keys['KeyS']) boatSpeed-=ACCEL*0.5;
-    boatSpeed*=DRAG;
-    if(Math.abs(boatSpeed)>MIN_STEER){
-      if(keys['ArrowLeft']||keys['KeyA']) boat.rotation.y+=TURN;
-      if(keys['ArrowRight']||keys['KeyD']) boat.rotation.y-=TURN;
+    const t=BOATS[S.boatClass];
+    const wxPenalty=1-Math.min(S.wx.wind*S.wx.wind*0.003*t.wxExposure,0.4);
+    if(keys.ArrowUp||keys.KeyW)spd=Math.min(spd+t.accel*wxPenalty,t.maxSpd);
+    if(keys.ArrowDown||keys.KeyS)spd-=t.accel*0.5;
+    spd*=t.drag;
+    if(Math.abs(spd)>0.03){
+      const turnMod=wxPenalty*(1-Math.min(S.wx.gust*0.02,0.2));
+      if(keys.ArrowLeft||keys.KeyA)boat.rotation.y+=t.turn*turnMod;
+      if(keys.ArrowRight||keys.KeyD)boat.rotation.y-=t.turn*turnMod;
     }
-    const d=new THREE.Vector3(0,0,-1);
-    d.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);
-    boat.position.addScaledVector(d,boatSpeed);
-    boat.position.y=0.4+Math.sin(Date.now()*0.002)*0.15;
+    // Wind drift
+    const windRad=S.wx.windDir*Math.PI/180;
+    const drift=S.wx.wind*0.001*t.wxExposure;
+    boat.position.x+=Math.sin(windRad)*drift;boat.position.z+=Math.cos(windRad)*drift;
 
-    $('hud-speed').textContent=Math.abs(boatSpeed*40).toFixed(1)+' kn';
-    $('hud-dist').textContent=boat.position.distanceTo(DOCK_POS).toFixed(0)+'m';
+    const dir=new THREE.Vector3(0,0,-1);dir.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);
+    boat.position.addScaledVector(dir,spd);
+    boat.position.y=0.4+Math.sin(Date.now()*0.002)*(0.1+S.wx.wind*0.02);
+
+    // Score: accumulate based on speed and distance
+    const dist=boat.position.distanceTo(DOCK);
+    if(dist<250)S.score+=Math.max(0,Math.round(spd*10));
+
+    // HUD
+    $('h-spd').textContent=Math.abs(spd*40).toFixed(1)+' kn';
+    $('h-dst').textContent=dist.toFixed(0)+'m';
     const h=((boat.rotation.y*180/Math.PI%360)+360)%360;
-    $('hud-heading').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];
+    $('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8];
+    $('h-scr').textContent=S.score;
 
-    for(const s of stumps){ if(boat.position.distanceTo(s.position)<2.5){ endGame(false); return; } }
-    if(boat.position.distanceTo(DOCK_POS)<10) endGame(true);
+    // Collision
+    for(const s of stumps){if(boat.position.distanceTo(s.position)<2.5){endGame(false);return}}
+    if(dist<10)endGame(true);
   }
 
+  // === ZOOM FROM SPACE ANIMATION ===
+  function zoomFromSpace(){
+    S._zooming=true;
+    const start={x:0,y:600,z:200};
+    const end={x:(Math.random()-0.5)*80,y:20,z:60};
+    const dur=3500;const t0=Date.now();
+    function tick(){
+      const p=Math.min((Date.now()-t0)/dur,1);
+      const ease=1-Math.pow(1-p,3);// ease out cubic
+      cam.position.x=start.x+(end.x-start.x)*ease;
+      cam.position.y=start.y+(end.y-start.y)*ease;
+      cam.position.z=start.z+(end.z-start.z)*ease;
+      cam.lookAt(0,0,-50);
+      if(p<1)requestAnimationFrame(tick);else{S._zooming=false}
+    }
+    tick();
+  }
+
+  // === WEATHER ===
+  async function fetchWeather(){
+    try{
+      // OpenWeather free API for Lake Lanier area
+      const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);
+      if(!r.ok)throw new Error('wx');
+      const d=await r.json();
+      S.wx.wind=d.wind?.speed||2;S.wx.windDir=d.wind?.deg||180;S.wx.gust=d.wind?.gust||0;
+      S.wx.cond=d.weather?.[0]?.main||'Clear';S.wx.temp=Math.round(d.main?.temp||72);
+      S.wx.vis=d.visibility||10000;S.wx.rain=d.rain?.['1h']||0;
+    }catch(e){
+      // Fallback: generate plausible weather
+      S.wx.wind=2+Math.random()*8;S.wx.windDir=Math.round(Math.random()*360);
+      S.wx.gust=S.wx.wind+Math.random()*5;S.wx.cond=['Clear','Clouds','Overcast','Drizzle'][Math.floor(Math.random()*4)];
+      S.wx.temp=Math.round(65+Math.random()*20);S.wx.vis=3000+Math.random()*7000;S.wx.rain=Math.random()>0.7?0.2:0;
+    }
+    $('wx-cond').textContent=`${S.wx.cond} ${S.wx.temp}°F`;
+    $('wx-wind').textContent=`Wind ${S.wx.wind.toFixed(1)} mph ${getWindDir(S.wx.windDir)}${S.wx.gust>S.wx.wind+2?' G'+S.wx.gust.toFixed(0):''}`;
+  }
+  function getWindDir(d){const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];return dirs[Math.round(d/22.5)%16]}
+
+  // === GAME ===
   function startGame(){
-    state.gameActive=true; boatSpeed=0;
-    boat.position.set(0,0.4,50); boat.rotation.y=Math.PI;
-    $('game-hud').style.display='flex';
-    $('game-controls').style.display='block';
+    S.gameOn=true;S.score=0;S.startTime=Date.now();spd=0;
+    // Random spawn around the lake
+    spawnPos.set((Math.random()-0.5)*120,0.4,30+Math.random()*40);
+    boat.position.copy(spawnPos);boat.rotation.y=Math.PI+Math.random()*0.5-0.25;
+    $('hud').style.display='flex';$('controls').style.display='block';$('wx-badge').style.display='block';
   }
   function endGame(won){
-    state.gameActive=false;
-    $('game-hud').style.display='none';
-    $('game-controls').style.display='none';
-    $('game-result-title').textContent=won?'Docked Successfully':'Hull Breach';
-    $('game-result-msg').textContent=won
-      ?'Your navigation is sharp. But is your physical dock safe from what you can\'t see?'
-      :'Lake Lanier\'s submerged stumps are hazardous. So is leaving your dock unprotected.';
-    showStep('step-game-result');
+    S.gameOn=false;
+    $('hud').style.display='none';$('controls').style.display='none';
+    // Time bonus
+    const elapsed=(Date.now()-S.startTime)/1000;
+    if(won)S.score+=Math.max(0,Math.round(500-elapsed*3));
+    $('res-title').textContent=won?'Docked Successfully':'Hull Breach';
+    $('res-msg').textContent=won?'Solid navigation. But is your physical dock safe from what you can\'t see?':'Lake Lanier\'s submerged stumps got you. Imagine what invisible decay does to your dock.';
+    $('res-score').textContent=S.score;
+    $('res-boat').textContent=BOATS[S.boatClass].name;
+    $('res-wx').textContent=S.wx.wind>8?'Severe ('+S.wx.wind.toFixed(0)+' mph)':S.wx.wind>5?'Moderate':'None';
+    $('final-score').textContent=S.score;
+    savePlayerData(won);
+    show('s-result');
   }
-  function showTierFromGame(){ showStep('step-tier'); }
 
-  document.addEventListener('keydown',e=>{ keys[e.code]=true; });
-  document.addEventListener('keyup',e=>{ keys[e.code]=false; });
-
-  // === API ===
-  async function geocode(addr){
-    if(!CONFIG.GOOGLE_MAPS_API_KEY) return null;
+  // === PERSISTENCE ===
+  async function savePlayerData(won){
+    if(!CFG.SUPABASE_URL||!CFG.SUPABASE_ANON_KEY)return;
     try{
-      const r=await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${CONFIG.GOOGLE_MAPS_API_KEY}`);
-      const d=await r.json();
-      if(d.results?.length) return d.results[0].geometry.location;
-    }catch(e){console.warn('Geocode:',e);}
-    return null;
+      // Save to analytics_events (works even without full schema — graceful fail)
+      await fetch(`${CFG.SUPABASE_URL}/rest/v1/analytics_events`,{
+        method:'POST',headers:{'apikey':CFG.SUPABASE_ANON_KEY,'Authorization':`Bearer ${CFG.SUPABASE_ANON_KEY}`,'Content-Type':'application/json','Prefer':'return=minimal'},
+        body:JSON.stringify({event_type:'sim_complete',payload:{email:S.email,boat_class:S.boatClass,score:S.score,won,weather:S.wx,address:S.addr}})
+      });
+    }catch(e){console.warn('Analytics save:',e)}
   }
-  async function supabasePost(table,body){
-    const r=await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${table}`,{
-      method:'POST', headers:{'apikey':CONFIG.SUPABASE_ANON_KEY,'Authorization':`Bearer ${CONFIG.SUPABASE_ANON_KEY}`,'Content-Type':'application/json','Prefer':'return=representation'},
-      body:JSON.stringify(body)});
-    if(!r.ok) throw new Error(`Supabase ${table} POST: ${r.status}`);
-    const d=await r.json(); return Array.isArray(d)?d[0]:d;
+  async function supaPost(t,b){
+    const r=await fetch(`${CFG.SUPABASE_URL}/rest/v1/${t}`,{method:'POST',headers:{'apikey':CFG.SUPABASE_ANON_KEY,'Authorization':`Bearer ${CFG.SUPABASE_ANON_KEY}`,'Content-Type':'application/json','Prefer':'return=representation'},body:JSON.stringify(b)});
+    if(!r.ok)throw new Error(`${t}: ${r.status}`);const d=await r.json();return Array.isArray(d)?d[0]:d;
   }
-  async function supabaseInvoke(fn,body){
-    const r=await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/${fn}`,{
-      method:'POST', headers:{'Authorization':`Bearer ${CONFIG.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
-    if(!r.ok) throw new Error(`Edge Function ${fn}: ${r.status}`);
-    return r.json();
+  async function supaInvoke(fn,b){
+    const r=await fetch(`${CFG.SUPABASE_URL}/functions/v1/${fn}`,{method:'POST',headers:{'Authorization':`Bearer ${CFG.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(b)});
+    if(!r.ok)throw new Error(`${fn}: ${r.status}`);return r.json();
   }
 
   // === PIPELINE ===
-  async function triggerAnalysis(){
-    state.address=$('address').value.trim();
-    state.email=$('email').value.trim();
-    state.dockType=$('dock-type').value;
-    if(!state.address||!state.email){alert('Please enter both address and email.');return;}
-    if(!state.email.includes('@')){alert('Please enter a valid email.');return;}
+  async function launch(){
+    S.addr=$('f-addr').value.trim();S.email=$('f-email').value.trim();
+    if(!S.addr||!S.email){alert('Enter address and email.');return}
+    if(!S.email.includes('@')){alert('Valid email required.');return}
 
-    showStep('step-processing');
+    show('s-proc');$('proc-title').textContent='Acquiring Satellite Lock';$('proc-msg').textContent='Initializing orbital view...';
+
     try{
-      $('processing-status').textContent='Resolving coordinates...';
-      const coords=await geocode(state.address);
-      if(coords){state.lat=coords.lat;state.lng=coords.lng;}
-
-      $('processing-status').textContent='Initializing 3D environment...';
-      await new Promise(r=>setTimeout(r,600));
-
-      $('processing-status').textContent='Registering asset telemetry...';
-      if(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_ANON_KEY){
-        try{
-          const lead=await supabasePost('leads',{email:state.email,address:state.address,lat:state.lat,lng:state.lng,dock_type:state.dockType,status:'new'});
-          state.leadId=lead.id;
-        }catch(e){console.warn('Lead insert (demo):',e);}
+      // Geocode
+      if(CFG.GOOGLE_MAPS_API_KEY){
+        try{const r=await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(S.addr)}&key=${CFG.GOOGLE_MAPS_API_KEY}`);const d=await r.json();if(d.results?.length){S.lat=d.results[0].geometry.location.lat;S.lng=d.results[0].geometry.location.lng}}catch(e){}
       }
 
-      $('processing-status').textContent='Launching simulator...';
-      await new Promise(r=>setTimeout(r,400));
+      // Zoom from space
+      $('proc-msg').textContent='Descending to Lake Lanier...';
+      zoomFromSpace();
+      await new Promise(r=>setTimeout(r,1500));
+
+      // Weather
+      $('proc-msg').textContent='Fetching live weather data...';
+      await fetchWeather();
+      await new Promise(r=>setTimeout(r,800));
+
+      // Lead capture
+      $('proc-msg').textContent='Registering asset telemetry...';
+      if(CFG.SUPABASE_URL&&CFG.SUPABASE_ANON_KEY){
+        try{const lead=await supaPost('leads',{email:S.email,address:S.addr,lat:S.lat,lng:S.lng,dock_type:'fixed',status:'new'});S.leadId=lead.id}catch(e){console.warn('Lead (demo):',e)}
+      }
+
+      $('proc-msg').textContent='Launching simulator...';
+      await new Promise(r=>setTimeout(r,500));
+
       startGame();
-      showStep(null);
-      setTimeout(()=>{if(state.gameActive)endGame(false);},45000);
+      show(null);
+      setTimeout(()=>{if(S.gameOn)endGame(false)},60000);
     }catch(e){
-      console.error('Pipeline error:',e);
-      $('error-message').textContent=e.message||'Analysis system error.';
-      showStep('step-error');
+      console.error(e);$('err-msg').textContent=e.message;show('s-err');
     }
   }
 
-  function selectTier(tier){
-    state.selectedTier=tier;
-    document.querySelectorAll('.tier-option').forEach(el=>{
-      el.classList.toggle('selected',parseInt(el.dataset.tier)===tier);
-    });
+  function pickBoat(cls){
+    S.boatClass=cls;
+    document.querySelectorAll('.boat-opt').forEach(el=>el.classList.toggle('sel',el.dataset.boat===cls));
+    buildBoat(cls);
   }
+  function pickTier(t){S.tier=t;document.querySelectorAll('.tier-opt').forEach(el=>el.classList.toggle('sel',parseInt(el.dataset.tier)===t))}
+  function showTiers(){show('s-tier')}
+  function replay(){show(null);startGame()}
 
   async function submitQuote(){
-    const tier=TIERS[state.selectedTier];
-    showStep('step-processing');
-    $('processing-status').textContent='Generating protection plan...';
+    const tier=TIERS[S.tier];show('s-proc');$('proc-title').textContent='Generating Plan';$('proc-msg').textContent='Processing...';
     try{
-      if(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_ANON_KEY){
-        try{
-          const result=await supabaseInvoke('process-lead',{
-            lead_id:state.leadId,email:state.email,address:state.address,
-            dock_type:state.dockType,daas_tier:state.selectedTier,monthly_price:tier.price});
-          state.quoteId=result.quote_id;
-          state.checkoutUrl=result.checkout_url;
-        }catch(e){console.warn('Quote (demo):',e);}
+      if(CFG.SUPABASE_URL&&CFG.SUPABASE_ANON_KEY){
+        try{const r=await supaInvoke('process-lead',{lead_id:S.leadId,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.tier,monthly_price:tier.price});S.quoteId=r.quote_id;S.checkoutUrl=r.checkout_url}catch(e){console.warn('Quote (demo):',e)}
       }
-      $('final-tier').textContent=tier.name;
-      $('final-price').textContent=`$${tier.price}/mo`;
-      showStep('step-success');
-    }catch(e){
-      console.error('Quote error:',e);
-      $('error-message').textContent='Quote generation failed.';
-      showStep('step-error');
-    }
+      $('ok-tier').textContent=tier.name;$('ok-price').textContent=`$${tier.price}/mo`;show('s-ok');
+    }catch(e){$('err-msg').textContent='Quote failed.';show('s-err')}
   }
-
-  function goToCheckout(){
-    if(state.checkoutUrl) window.open(state.checkoutUrl,'_blank');
-    else alert('Demo mode — Stripe checkout would open here.\nConfigure STRIPE_SECRET_KEY to enable live payments.');
-  }
-
+  function checkout(){if(S.checkoutUrl)window.open(S.checkoutUrl,'_blank');else alert('Demo mode — Stripe checkout activates with STRIPE_SECRET_KEY.')}
   function reset(){
-    state={address:'',email:'',dockType:'fixed',lat:34.2279,lng:-83.9199,selectedTier:2,leadId:null,quoteId:null,checkoutUrl:null,gameActive:false};
-    $('address').value='';$('email').value='';$('dock-type').value='fixed';
-    document.querySelectorAll('.tier-option').forEach(el=>{el.classList.toggle('selected',parseInt(el.dataset.tier)===2);});
-    $('game-hud').style.display='none';$('game-controls').style.display='none';
-    showStep('step-capture');
+    S={...S,addr:'',email:'',tier:2,leadId:null,quoteId:null,checkoutUrl:null,gameOn:false,score:0};
+    $('f-addr').value='';$('f-email').value='';
+    document.querySelectorAll('.tier-opt').forEach(el=>el.classList.toggle('sel',parseInt(el.dataset.tier)===2));
+    $('hud').style.display='none';$('controls').style.display='none';$('wx-badge').style.display='none';
+    cam.position.set(0,600,200);show('s-cap');
   }
 
+  document.addEventListener('keydown',e=>{keys[e.code]=true});
+  document.addEventListener('keyup',e=>{keys[e.code]=false});
   document.addEventListener('DOMContentLoaded',initScene);
-  return {triggerAnalysis,selectTier,submitQuote,goToCheckout,reset,showTierFromGame};
+
+  return{launch,pickBoat,pickTier,submitQuote,checkout,reset,showTiers,replay};
 })();
 </script>
 </body>
