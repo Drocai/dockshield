@@ -184,10 +184,11 @@ const skyVS=`varying vec3 vWP;void main(){vec4 wp=modelMatrix*vec4(position,1.0)
 const skyFS=`varying vec3 vWP;void main(){float h=normalize(vWP+vec3(0,50,0)).y;h=pow(clamp(h,0.0,1.0),0.4);vec3 bot=vec3(0.29,0.49,0.61);vec3 mid=vec3(0.1,0.23,0.36);vec3 top=vec3(0.04,0.09,0.15);vec3 c=mix(bot,mid,smoothstep(0.0,0.35,h));c=mix(c,top,smoothstep(0.35,1.0,h));gl_FragColor=vec4(c,1.0);}`;
 
 function init(){
+  const isMobile=/Mobi|Android/i.test(navigator.userAgent);
   scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x1a3a5c,0.0018);
   cam=new THREE.PerspectiveCamera(62,innerWidth/innerHeight,0.1,2000);
-  ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
-  ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;
+  ren=new THREE.WebGLRenderer({antialias:!isMobile});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,isMobile?1.5:2));
+  if(!isMobile){ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;}
   ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.1;
   $('sim').appendChild(ren.domElement);
 
@@ -220,7 +221,7 @@ function init(){
       tickPhysics(t);tickWakes(t);tickAI(t);tickBuoys(t);tickMinimap();
       // Camera
       const bh=new THREE.Vector3(0,18+Math.abs(spd)*5,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);bh.add(boat.position);
-      cam.position.lerp(bh,0.06);cam.lookAt(boat.position.x,boat.position.y+2,boat.position.z);
+      cam.position.lerp(bh,0.12);cam.lookAt(boat.position.x,boat.position.y+2,boat.position.z);
       cam.fov=62+Math.abs(spd)/BT[S.bc].mx*12;cam.updateProjectionMatrix();
       // VFX
       const sp=Math.abs(spd)/BT[S.bc].mx;
@@ -473,8 +474,15 @@ async function fetchWx(){
 
 function startGame(){
   S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.distTrav=0;S.nearMiss=0;spd=0;angVel=0;
-  const spawn=new THREE.Vector3((Math.random()-0.5)*100,0.4,30+Math.random()*50);
+  const spawn=new THREE.Vector3((Math.random()-0.5)*80,0.4,30+Math.random()*40);
   boat.position.copy(spawn);boat.rotation.set(0,Math.PI+Math.random()*0.5-0.25,0);prevPos.copy(spawn);
+  // SNAP camera to boat immediately — don't lerp from space
+  const snapBehind=new THREE.Vector3(0,18,16);
+  snapBehind.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);
+  snapBehind.add(boat.position);
+  cam.position.copy(snapBehind);
+  cam.lookAt(boat.position.x,boat.position.y+2,boat.position.z);
+  cam.fov=62;cam.updateProjectionMatrix();
   ['hud','ctrl','wxb','minimap','compass'].forEach(id=>{$(id).style.display=id==='hud'?'flex':'block'});
 }
 function endGame(won){
