@@ -192,15 +192,10 @@ function init(){
   ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.1;
   $('sim').appendChild(ren.domElement);
 
-  // Sky dome — with fallback
-  try{
-    const skyG=new THREE.SphereGeometry(900,24,12);
-    const skyM=new THREE.ShaderMaterial({vertexShader:skyVS,fragmentShader:skyFS,side:THREE.BackSide});
-    scene.add(new THREE.Mesh(skyG,skyM));
-  }catch(e){
-    console.warn('Sky shader fallback');
-    scene.background=new THREE.Color(0x0a1628);
-  }
+  // Sky dome
+  const skyG=new THREE.SphereGeometry(900,24,12);
+  const skyM=new THREE.ShaderMaterial({vertexShader:skyVS,fragmentShader:skyFS,side:THREE.BackSide});
+  scene.add(new THREE.Mesh(skyG,skyM));
 
   // Lights
   scene.add(new THREE.HemisphereLight(0x87CEEB,0x2a4a3a,0.5));
@@ -208,24 +203,10 @@ function init(){
   dl.shadow.camera.left=-300;dl.shadow.camera.right=300;dl.shadow.camera.top=300;dl.shadow.camera.bottom=-300;scene.add(dl);
   scene.add(new THREE.AmbientLight(0x203050,0.4));
 
-  // Water — with shader fallback for mobile
+  // Water
   const wG=new THREE.PlaneGeometry(W*2,W*2,isMobile?60:120,isMobile?60:120);
-  let wM;
-  try{
-    wM=new THREE.ShaderMaterial({vertexShader:waterVS,fragmentShader:waterFS,transparent:true,
-      uniforms:{uTime:{value:0},uDeep:{value:new THREE.Color(0x0a2a2a)},uShallow:{value:new THREE.Color(0x1a5a52)},uFoam:{value:new THREE.Color(0x4a8a7a)},uSunDir:{value:new THREE.Vector3(0.5,0.7,0.3).normalize()},uCamPos:{value:new THREE.Vector3()}}});
-    // Test compile
-    const testRen=ren;const gl=testRen.getContext();
-    const prog=gl.createProgram();
-    const vs=gl.createShader(gl.VERTEX_SHADER);gl.shaderSource(vs,THREE.ShaderChunk.common+'\n'+waterVS);gl.compileShader(vs);
-    if(!gl.getShaderParameter(vs,gl.COMPILE_STATUS)){throw new Error('VS fail:'+gl.getShaderInfoLog(vs))}
-    gl.deleteShader(vs);gl.deleteProgram(prog);
-  }catch(e){
-    console.warn('Shader fallback:',e);
-    wM=new THREE.MeshPhongMaterial({color:0x0a2540,emissive:0x041020,specular:0x1a5070,shininess:80,transparent:true,opacity:0.92});
-    wM.uniforms={uTime:{value:0},uCamPos:{value:new THREE.Vector3()}};
-    wM._isFallback=true;
-  }
+  const wM=new THREE.ShaderMaterial({vertexShader:waterVS,fragmentShader:waterFS,transparent:true,
+    uniforms:{uTime:{value:0},uDeep:{value:new THREE.Color(0x0a2a2a)},uShallow:{value:new THREE.Color(0x1a5a52)},uFoam:{value:new THREE.Color(0x4a8a7a)},uSunDir:{value:new THREE.Vector3(0.5,0.7,0.3).normalize()},uCamPos:{value:new THREE.Vector3()}}});
   const water=new THREE.Mesh(wG,wM);water.rotation.x=-Math.PI/2;water.receiveShadow=true;scene.add(water);
 
   mkBoat(S.bc);mkDock();mkWorld();mkObstacles();mkAI();mkBuoys();
@@ -234,7 +215,7 @@ function init(){
 
   function frame(){
     requestAnimationFrame(frame);const t=clock.getElapsedTime();
-    if(!wM._isFallback){wM.uniforms.uTime.value=t;wM.uniforms.uCamPos.value.copy(cam.position);}
+    wM.uniforms.uTime.value=t;wM.uniforms.uCamPos.value.copy(cam.position);
 
     if(S.on){
       tickPhysics(t);tickWakes(t);tickAI(t);tickBuoys(t);tickMinimap();
