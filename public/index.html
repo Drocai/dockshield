@@ -136,7 +136,7 @@ let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score
 const $=id=>document.getElementById(id);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id))}
 
-let scene,cam,ren,boat,waterGeo,waterOZ,stumps=[],aiB=[];
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
