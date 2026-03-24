@@ -4,8 +4,6 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>DockShield — Marine Asset Protection | Lake Lanier</title>
 <meta name="description" content="USACE-compliant zero-discharge dock preservation on Lake Lanier.">
-<meta property="og:title" content="DockShield — Dock-as-a-Service">
-<meta property="og:description" content="Navigate Lake Lanier in real weather. Protect your dock from biological decay.">
 <link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#030712">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -25,15 +23,16 @@ h2{font-size:20px;font-weight:700;margin-bottom:5px}
 .sub{font-size:12.5px;color:#94a3b8;line-height:1.65;margin-bottom:16px}
 .hl{color:#38bdf8;font-weight:600}
 label{display:block;font-size:9px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#475569;margin-bottom:3px}
-input,select{width:100%;background:rgba(8,18,38,0.7);border:1px solid rgba(56,189,248,0.08);border-radius:10px;padding:11px 12px;color:#e8edf5;font:13px 'DM Sans',sans-serif;outline:none;margin-bottom:10px}
-input:focus,select:focus{border-color:rgba(56,189,248,0.25);box-shadow:0 0 0 3px rgba(14,165,233,0.15)}
+input{width:100%;background:rgba(8,18,38,0.7);border:1px solid rgba(56,189,248,0.08);border-radius:10px;padding:11px 12px;color:#e8edf5;font:13px 'DM Sans',sans-serif;outline:none;margin-bottom:10px}
+input:focus{border-color:rgba(56,189,248,0.25);box-shadow:0 0 0 3px rgba(14,165,233,0.15)}
 input::placeholder{color:#334155}
-select{-webkit-appearance:none;appearance:none;cursor:pointer}
 .btn{width:100%;padding:12px;border:none;border-radius:10px;font:600 13px 'DM Sans',sans-serif;cursor:pointer;margin-top:4px;transition:all .2s}
 .bp{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;box-shadow:0 4px 16px rgba(14,165,233,0.35)}
 .bp:hover{transform:translateY(-1px)}.bp:active{transform:translateY(0)}
-.bs{background:transparent;border:1px solid rgba(56,189,248,0.08);color:#94a3b8;margin-top:8px}
-.bg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0}
+.bx{background:transparent;border:1px solid rgba(56,189,248,0.08);color:#94a3b8;margin-top:8px}.bx:hover{border-color:rgba(56,189,248,0.25);color:#e8edf5}
+.bgreen{background:linear-gradient(135deg,#10b981,#059669);color:#fff;box-shadow:0 4px 16px rgba(16,185,129,0.35)}
+.bgreen:hover{transform:translateY(-1px)}
+.boat-g{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0}
 .bo{background:rgba(3,7,18,0.5);border:2px solid rgba(56,189,248,0.08);border-radius:10px;padding:12px 6px;text-align:center;cursor:pointer;transition:all .25s}
 .bo:hover{border-color:rgba(56,189,248,0.25)}.bo.on{border-color:#0ea5e9;background:rgba(14,165,233,0.06)}
 .bo .bn{font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#475569}.bo.on .bn{color:#38bdf8}
@@ -55,331 +54,219 @@ select{-webkit-appearance:none;appearance:none;cursor:pointer}
 .note{font-size:10.5px;color:#475569;text-align:center;margin-top:10px}
 .spin{width:36px;height:36px;border:2px solid rgba(56,189,248,0.08);border-top-color:#0ea5e9;border-radius:50%;animation:sp .8s linear infinite;margin:12px auto}
 @keyframes sp{to{transform:rotate(360deg)}}
+.incv{background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;padding:10px 12px;margin:12px 0;text-align:center}
+.incv .ic-t{font-size:11px;font-weight:700;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.incv .ic-d{font-size:11.5px;color:#a7f3d0;line-height:1.5}
+.dbadge{display:inline-block;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font:700 11px 'JetBrains Mono',monospace;padding:3px 8px;border-radius:6px}
+.ordiv{display:flex;align-items:center;gap:12px;margin:12px 0}
+.ordiv hr{flex:1;border:none;border-top:1px solid rgba(56,189,248,0.08)}
+.ordiv span{font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:2px;font-weight:600}
+.rcard{border-radius:8px;padding:12px;margin:10px 0}
+.rcard .rl{font-size:9px;text-transform:uppercase;letter-spacing:1.2px;font-weight:600;margin-bottom:4px}
+.rcard .rmsg{font-size:12px;line-height:1.5}
 #hud{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:15;display:none;gap:10px;font-family:'JetBrains Mono',monospace;font-size:10px;pointer-events:none}
 .hi{background:rgba(3,7,18,0.8);backdrop-filter:blur(12px);padding:5px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.08);color:#38bdf8}
 .hi .lbl{font-size:7.5px;color:#475569;letter-spacing:1px;text-transform:uppercase;display:block}.hi .val{font-size:13px;font-weight:700}
+#phud{position:fixed;top:55px;left:50%;transform:translateX(-50%);z-index:15;display:none;pointer-events:none;text-align:center}
+#pn{font:700 14px 'DM Sans',sans-serif;color:#38bdf8;text-shadow:0 0 12px rgba(56,189,248,0.4)}
+#pd{font:11px 'JetBrains Mono',monospace;color:#94a3b8;margin-top:2px}
+#pbar{width:200px;height:4px;background:rgba(56,189,248,0.1);border-radius:4px;margin:6px auto 0;overflow:hidden}
+#pfill{height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);border-radius:4px;transition:width 0.3s;width:0%}
 #wxb{position:fixed;top:12px;right:12px;z-index:15;display:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;background:rgba(3,7,18,0.8);padding:6px 10px;border-radius:6px;border:1px solid rgba(56,189,248,0.08);text-align:right;pointer-events:none}
-#info{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:15;display:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#475569;background:rgba(3,7,18,0.7);padding:5px 12px;border-radius:6px;border:1px solid rgba(56,189,248,0.08);pointer-events:none}
+#nfo{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:15;display:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#475569;background:rgba(3,7,18,0.7);padding:5px 12px;border-radius:6px;border:1px solid rgba(56,189,248,0.08);pointer-events:none}
+#ww{position:fixed;top:80px;right:12px;z-index:15;display:none;font:600 11px 'JetBrains Mono',monospace;color:#f59e0b;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);padding:6px 10px;border-radius:6px;pointer-events:none;animation:pls 1.5s ease-in-out infinite}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:0.5}}
 </style>
 </head>
 <body>
-<div id="hud">
-  <div class="hi"><span class="lbl">Speed</span><span class="val" id="h-spd">0</span></div>
-  <div class="hi"><span class="lbl">Distance</span><span class="val" id="h-dst">--</span></div>
-  <div class="hi"><span class="lbl">Heading</span><span class="val" id="h-hdg">N</span></div>
-  <div class="hi"><span class="lbl">Score</span><span class="val" id="h-scr">0</span></div>
-</div>
+<div id="hud"><div class="hi"><span class="lbl">Speed</span><span class="val" id="h-spd">0</span></div><div class="hi"><span class="lbl">Distance</span><span class="val" id="h-dst">--</span></div><div class="hi"><span class="lbl">Heading</span><span class="val" id="h-hdg">N</span></div><div class="hi"><span class="lbl">Score</span><span class="val" id="h-scr">0</span></div></div>
+<div id="phud"><div id="pn"></div><div id="pd"></div><div id="pbar"><div id="pfill"></div></div></div>
 <div id="wxb"><div style="font-size:7.5px;color:#475569;letter-spacing:1px;text-transform:uppercase">Weather</div><div id="wx-c" style="color:#38bdf8;font-weight:600">--</div><div id="wx-w" style="color:#94a3b8;font-size:8.5px"></div></div>
-<div id="info">WASD / Arrows · Navigate to the red marker</div>
+<div id="nfo">WASD / Arrows · Follow the rings</div>
+<div id="ww">WIND GUST WARNING</div>
 
 <div id="overlay">
-  <!-- CAPTURE -->
   <div id="s1" class="card">
     <div class="logo"><i><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></i><div><b>Dock<span>Shield</span></b><small>Zero-Discharge · Lake Lanier</small></div></div>
     <h2>Protect Your Marine Asset</h2>
-    <p class="sub">Enter your address to launch a <span class="hl">Lake Lanier navigation simulation</span> in live weather. Your dock becomes the target.</p>
+    <p class="sub">Navigate Lake Lanier's hazards in <span class="hl">live weather</span>, or skip straight to a protection plan.</p>
     <label>Property Address</label><input type="text" id="f-addr" placeholder="6950 Holiday Rd, Buford, GA 30518">
     <label>Email</label><input type="email" id="f-email" placeholder="name@domain.com">
     <label style="margin-top:4px">Select Vessel</label>
-    <div class="bg">
-      <div class="bo" data-b="regular" onclick="DS.boat('regular')"><div class="bi">⛵</div><div class="bn">Regular</div></div>
-      <div class="bo on" data-b="pontoon" onclick="DS.boat('pontoon')"><div class="bi">🚢</div><div class="bn">Pontoon</div></div>
-      <div class="bo" data-b="speedboat" onclick="DS.boat('speedboat')"><div class="bi">🚤</div><div class="bn">Speedboat</div></div>
-    </div>
-    <button class="btn bp" onclick="DS.launch()">Launch Simulation</button>
+    <div class="boat-g"><div class="bo" data-b="regular" onclick="DS.boat('regular')"><div class="bi">&#9973;</div><div class="bn">Regular</div></div><div class="bo on" data-b="pontoon" onclick="DS.boat('pontoon')"><div class="bi">&#128674;</div><div class="bn">Pontoon</div></div><div class="bo" data-b="speedboat" onclick="DS.boat('speedboat')"><div class="bi">&#128676;</div><div class="bn">Speedboat</div></div></div>
+    <div class="incv"><div class="ic-t">Play the Simulation</div><div class="ic-d">Complete the dock approach to unlock <span class="dbadge">15% OFF</span> your first month</div></div>
+    <button class="btn bp" onclick="DS.launch()">Launch Dock Simulation</button>
+    <div class="ordiv"><hr><span>or</span><hr></div>
+    <button class="btn bx" onclick="DS.skip()">Skip to Protection Plans</button>
     <div class="cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg><span>USACE-Compliant · Zero Discharge</span></div>
   </div>
-  <!-- LOADING -->
   <div id="s2" class="card off"><div style="text-align:center"><div class="spin"></div><h2 id="lt" style="font-size:15px">Initializing</h2><p id="lm" class="sub" style="font-family:'JetBrains Mono',monospace;font-size:11px">Please wait...</p></div></div>
-  <!-- TIER -->
   <div id="s3" class="card off">
     <h2>Assessment Complete</h2>
+    <div id="td" class="incv off"><div class="ic-t">Simulation Discount Applied</div><div class="ic-d"><span class="dbadge">15% OFF</span> first month — earned through dock approach</div></div>
     <div class="th"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><p>Biological growth cuts dock lifespan <strong>40%</strong>. Replacement: <strong>$35K+</strong>.</p></div>
-    <div class="sb"><div class="sr"><span class="sl">Growth Index</span><span class="sv r">HIGH</span></div><div class="sr"><span class="sl">Decay</span><span class="sv r">-40%</span></div><div class="sr"><span class="sl">Nav Score</span><span class="sv b" id="f-scr">0</span></div><div class="sr"><span class="sl">DaaS Savings</span><span class="sv g">$14K avg</span></div></div>
-    <div class="tg">
-      <div class="to" data-t="1" onclick="DS.tier(1)"><div class="tn">Prevent</div><div class="tp">$49<span>/mo</span></div></div>
-      <div class="to on" data-t="2" onclick="DS.tier(2)"><div class="tbg">Popular</div><div class="tn">Complete</div><div class="tp">$99<span>/mo</span></div></div>
-      <div class="to" data-t="3" onclick="DS.tier(3)"><div class="tn">Premium</div><div class="tp">$199<span>/mo</span></div></div>
-    </div>
+    <div class="sb"><div class="sr"><span class="sl">Growth Index</span><span class="sv r">HIGH</span></div><div class="sr"><span class="sl">Decay Rate</span><span class="sv r">-40%</span></div><div class="sr"><span class="sl">Nav Score</span><span class="sv b" id="f-scr">—</span></div><div class="sr"><span class="sl">DaaS Savings</span><span class="sv g">$14K avg</span></div></div>
+    <div class="tg"><div class="to" data-t="1" onclick="DS.tier(1)"><div class="tn">Prevent</div><div class="tp">$49<span>/mo</span></div></div><div class="to on" data-t="2" onclick="DS.tier(2)"><div class="tbg">Popular</div><div class="tn">Complete</div><div class="tp">$99<span>/mo</span></div></div><div class="to" data-t="3" onclick="DS.tier(3)"><div class="tn">Premium</div><div class="tp">$199<span>/mo</span></div></div></div>
     <button class="btn bp" onclick="DS.quote()">Get Protection Plan</button>
+    <button class="btn bx" id="pft" onclick="DS.playFromTier()">Play Simulation to Unlock 15% Off</button>
   </div>
-  <!-- SUCCESS -->
   <div id="s4" class="card off" style="text-align:center">
     <h2>Plan Ready</h2>
     <div class="sb"><div class="sr"><span class="sl">Plan</span><span class="sv b" id="ok-t">Comprehensive</span></div><div class="sr"><span class="sl">Monthly</span><span class="sv g" id="ok-p">$99/mo</span></div><div class="sr"><span class="sl">Savings</span><span class="sv g">$14K+</span></div></div>
     <button class="btn bp" onclick="DS.pay()">Activate Protection</button>
-    <p class="note">Payment link also sent to email.</p><button class="btn bs" onclick="DS.reset()">New Analysis</button>
+    <p class="note">Payment link also sent to email.</p><button class="btn bx" onclick="DS.reset()">New Analysis</button>
   </div>
-  <!-- RESULT -->
-  <div id="s5" class="card off" style="text-align:center">
-    <h2 id="rt"></h2><p class="sub" id="rm"></p>
-    <div class="sb"><div class="sr"><span class="sl">Score</span><span class="sv b" id="r-scr">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv" id="r-time">0s</span></div><div class="sr"><span class="sl">Max Speed</span><span class="sv" id="r-spd">0</span></div><div class="sr"><span class="sl">Near Misses</span><span class="sv y" id="r-near">0</span></div></div>
-    <div class="th"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><p><strong>Hidden decay</strong> cuts lifespan 40%. <strong>$35K replacement</strong>.</p></div>
-    <button class="btn bp" onclick="DS.showTiers()">View Plans</button><button class="btn bs" onclick="DS.replay()">Play Again</button>
+  <div id="s5" class="card off">
+    <h2 id="rt" style="text-align:center"></h2><p class="sub" id="rm" style="text-align:center"></p>
+    <div class="sb"><div class="sr"><span class="sl">Score</span><span class="sv b" id="r-scr">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv" id="r-time">0s</span></div><div class="sr"><span class="sl">Max Speed</span><span class="sv" id="r-spd">0</span></div><div class="sr"><span class="sl">Near Misses</span><span class="sv y" id="r-near">0</span></div><div class="sr"><span class="sl">Phases</span><span class="sv b" id="r-ph">0/3</span></div></div>
+    <div class="rcard" id="rc"><div class="rl" id="rlbl">Risk Assessment</div><div class="rmsg" id="rmsg"></div></div>
+    <div class="incv"><div class="ic-t">Discount Unlocked</div><div class="ic-d"><span class="dbadge">15% OFF</span> your first month of protection</div></div>
+    <button class="btn bgreen" onclick="DS.showTiers()">View Plans — 15% Off Applied</button>
+    <button class="btn bx" onclick="DS.replay()">Play Again</button>
   </div>
 </div>
 
 <script src="/api/config"></script>
 <script>
-// ============================================================
-// DockShield — Built on the PROVEN test.html renderer
-// Zero custom GLSL. MeshStandardMaterial only.
-// ============================================================
 const DS=(()=>{
-const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:'',GOOGLE_MAPS_API_KEY:''};
-if(window.__ENV__)Object.assign(C,window.__ENV__);
-
-const BT={
-  regular:{n:'Regular',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xe0e0e0,wx:1},
-  pontoon:{n:'Pontoon',ac:.012,dr:.988,tu:.03,mx:.8,col:0xd4a853,wx:.7},
-  speedboat:{n:'Speedboat',ac:.025,dr:.978,tu:.055,mx:1.8,col:0xef4444,wx:1.4}
-};
+const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
+const BT={regular:{n:'Regular',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xe0e0e0,wx:1},pontoon:{n:'Pontoon',ac:.012,dr:.988,tu:.03,mx:.8,col:0xd4a853,wx:.7},speedboat:{n:'Speedboat',ac:.025,dr:.978,tu:.055,mx:1.8,col:0xef4444,wx:1.4}};
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-
-let state={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,
-  on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,
-  wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
-
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 const $=id=>document.getElementById(id);
-function show(id){['s1','s2','s3','s4','s5'].forEach(s=>{$(s).classList.toggle('off',s!==id)})}
+function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id))}
 
-// === ENGINE (same pattern as working test.html) ===
-let scene,cam,ren,boatMesh,waterGeo,waterOZ,stumps=[],dockPos=new THREE.Vector3(0,0,-120);
-let spd=0,angVel=0,prevPos=new THREE.Vector3();
+let scene,cam,ren,boat,waterGeo,waterOZ,stumps=[],aiB=[];
+let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
+let wps=[],wpI=0;
 const keys={};
 
-// Build scene IMMEDIATELY on page load — same as test.html
 function initEngine(){
-  scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x0a1628);
-  scene.fog=new THREE.Fog(0x0a1628,100,450);
-
-  cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);
-  cam.position.set(0,15,30);cam.lookAt(0,0,0);
-
-  ren=new THREE.WebGLRenderer({antialias:true});
-  ren.setSize(innerWidth,innerHeight);
-  ren.setPixelRatio(Math.min(devicePixelRatio,2));
-  ren.toneMapping=THREE.ACESFilmicToneMapping;
-  ren.toneMappingExposure=1.1;
+  scene=new THREE.Scene();scene.background=new THREE.Color(0x0a1628);scene.fog=new THREE.Fog(0x0a1628,100,450);
+  cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);cam.position.set(0,15,30);cam.lookAt(0,0,0);
+  ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
+  ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.1;
   document.body.insertBefore(ren.domElement,document.body.firstChild);
-
-  // Lights
   scene.add(new THREE.AmbientLight(0x404060,0.6));
   const sun=new THREE.DirectionalLight(0xffeedd,1.2);sun.position.set(50,100,50);scene.add(sun);
   scene.add(new THREE.HemisphereLight(0x87CEEB,0x2a4a3a,0.3));
 
-  // Water
   waterGeo=new THREE.PlaneGeometry(600,600,60,60);
-  const wMat=new THREE.MeshStandardMaterial({color:0x0a3050,roughness:0.25,metalness:0.65,transparent:true,opacity:0.92});
+  const wM=new THREE.MeshStandardMaterial({color:0x0a3050,roughness:0.25,metalness:0.65,transparent:true,opacity:0.92});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
-  const water=new THREE.Mesh(waterGeo,wMat);water.rotation.x=-Math.PI/2;scene.add(water);
+  scene.add(new THREE.Mesh(waterGeo,wM)).rotation.x=-Math.PI/2;
 
-  // Boat
-  buildBoat('pontoon');
-
+  mkBoat('pontoon');
   // Dock
   const dk=new THREE.Mesh(new THREE.BoxGeometry(8,0.4,12),new THREE.MeshStandardMaterial({color:0x8B6914,roughness:0.8}));
   dk.position.set(dockPos.x,0.3,dockPos.z);scene.add(dk);
-  // Pin
-  const pin=new THREE.Mesh(new THREE.SphereGeometry(1.5,8,8),new THREE.MeshStandardMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:0.5}));
-  pin.position.set(dockPos.x,8,dockPos.z);scene.add(pin);
-  const pinPost=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,8,6),new THREE.MeshStandardMaterial({color:0xcc0000}));
-  pinPost.position.set(dockPos.x,4,dockPos.z);scene.add(pinPost);
-  // Beacon
-  const bLight=new THREE.PointLight(0x10b981,2,40);bLight.position.set(dockPos.x,3,dockPos.z);scene.add(bLight);
+  [[-3,dockPos.z-5],[3,dockPos.z-5],[-3,dockPos.z+5],[3,dockPos.z+5]].forEach(([x,z])=>{const p=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,3,6),new THREE.MeshStandardMaterial({color:0x6B5914}));p.position.set(x,1.5,z);scene.add(p)});
+  const pin=new THREE.Mesh(new THREE.SphereGeometry(1.5,8,8),new THREE.MeshStandardMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:0.5}));pin.position.set(dockPos.x,8,dockPos.z);scene.add(pin);
+  const pp=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,8,6),new THREE.MeshStandardMaterial({color:0xcc0000}));pp.position.set(dockPos.x,4,dockPos.z);scene.add(pp);
+  const bl=new THREE.PointLight(0x10b981,2,40);bl.position.set(dockPos.x,3,dockPos.z);scene.add(bl);
 
-  // Stumps
-  for(let i=0;i<40;i++){
-    const sx=(Math.random()-0.5)*200,sz=-Math.random()*140-10;
-    if(Math.abs(sz-dockPos.z)<15||Math.abs(sz)<8)continue;
-    const s=new THREE.Mesh(new THREE.CylinderGeometry(0.4+Math.random()*0.5,0.6+Math.random()*0.3,1+Math.random()*1.5,6),new THREE.MeshStandardMaterial({color:0x3a2a1a}));
-    s.position.set(sx,-0.2,sz);scene.add(s);stumps.push(s);
-  }
+  // Stumps — sparse near start, dense in hazard zone
+  for(let i=0;i<60;i++){const sx=(Math.random()-0.5)*220;let sz=-Math.random()*160-10;if(Math.abs(sz-dockPos.z)<15||Math.abs(sz)<12)continue;if(sz>-40&&Math.random()>0.3)continue;const s=new THREE.Mesh(new THREE.CylinderGeometry(0.4+Math.random()*0.5,0.6+Math.random()*0.3,1+Math.random()*1.5,6),new THREE.MeshStandardMaterial({color:0x3a2a1a}));s.position.set(sx,-0.2,sz);scene.add(s);stumps.push(s)}
+  // AI boats
+  [0x3b82f6,0xec4899,0xf97316,0x8b5cf6].forEach((c,i)=>{const g=new THREE.Group();const h=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.8,3.5),new THREE.MeshStandardMaterial({color:c}));h.position.y=0.4;g.add(h);const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+  // Shores
+  for(let i=0;i<8;i++){const a=i/8*Math.PI*2,r=180;const sh=new THREE.Mesh(new THREE.BoxGeometry(25+Math.random()*30,3+Math.random()*2,15+Math.random()*15),new THREE.MeshStandardMaterial({color:0x2a4a2a,roughness:0.95}));sh.position.set(Math.cos(a)*r,0,Math.sin(a)*r);sh.rotation.y=a;scene.add(sh)}
+  // Waypoint rings
+  [[0,0,0],[-15,0,-18],[10,0,-38],[-5,0,-55],[0,0,-75]].forEach(([x,y,z])=>{const r=new THREE.Mesh(new THREE.RingGeometry(3,4,16),new THREE.MeshBasicMaterial({color:0x0ea5e9,transparent:true,opacity:0.3,side:THREE.DoubleSide}));r.rotation.x=-Math.PI/2;r.position.set(x,0.15,z);r.visible=false;scene.add(r);wps.push(r)});
 
-  // Shore landmasses
-  for(let i=0;i<8;i++){
-    const a=i/8*Math.PI*2,r=180;
-    const sh=new THREE.Mesh(new THREE.BoxGeometry(25+Math.random()*30,3+Math.random()*2,15+Math.random()*15),new THREE.MeshStandardMaterial({color:0x2a4a2a,roughness:0.95}));
-    sh.position.set(Math.cos(a)*r,0,Math.sin(a)*r);sh.rotation.y=a;scene.add(sh);
-  }
-
-  // Input
-  document.addEventListener('keydown',e=>{keys[e.code]=true});
-  document.addEventListener('keyup',e=>{keys[e.code]=false});
+  document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
-
-  // Start render loop IMMEDIATELY
-  animate();
+  loop();
 }
 
-function buildBoat(cls){
-  if(boatMesh)scene.remove(boatMesh);
-  const t=BT[cls];
-  boatMesh=new THREE.Group();
-  const hull=new THREE.Mesh(new THREE.BoxGeometry(2,1,5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));
-  hull.position.y=0.5;boatMesh.add(hull);
-  const cabin=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.8,2),new THREE.MeshStandardMaterial({color:0x0ea5e9}));
-  cabin.position.set(0,1.2,-0.5);boatMesh.add(cabin);
-  const windshield=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.5,0.1),new THREE.MeshStandardMaterial({color:0x88ccee,transparent:true,opacity:0.5,metalness:0.8}));
-  windshield.position.set(0,1.6,0.5);windshield.rotation.x=-0.2;boatMesh.add(windshield);
-  // Nav lights
-  const pL=new THREE.PointLight(0xff0000,0.4,6);pL.position.set(-1.2,1.2,2);boatMesh.add(pL);
-  const pR=new THREE.PointLight(0x00ff00,0.4,6);pR.position.set(1.2,1.2,2);boatMesh.add(pR);
-  boatMesh.position.set(0,0.3,20);
-  scene.add(boatMesh);
-}
+function mkBoat(cls){if(boat)scene.remove(boat);const t=BT[cls];boat=new THREE.Group();
+  const hull=new THREE.Mesh(new THREE.BoxGeometry(2,1,5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));hull.position.y=0.5;boat.add(hull);
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.8,2),new THREE.MeshStandardMaterial({color:0x0ea5e9}));cab.position.set(0,1.2,-0.5);boat.add(cab);
+  const ws=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.5,0.1),new THREE.MeshStandardMaterial({color:0x88ccee,transparent:true,opacity:0.5,metalness:0.8}));ws.position.set(0,1.6,0.5);ws.rotation.x=-0.2;boat.add(ws);
+  const pL=new THREE.PointLight(0xff0000,0.4,6);pL.position.set(-1.2,1.2,2);boat.add(pL);
+  const pR=new THREE.PointLight(0x00ff00,0.4,6);pR.position.set(1.2,1.2,2);boat.add(pR);
+  boat.position.set(0,0.3,20);scene.add(boat)}
 
-function animate(){
-  requestAnimationFrame(animate);
-  const t=Date.now()*0.001;
+// === 3-PHASE MISSION ===
+const PH=[{n:'APPROACH',d:'Follow the rings',check:()=>wpI>=4},{n:'HAZARD ZONE',d:'Avoid obstacles — watch for crossings',check:()=>boat.position.distanceTo(dockPos)<55},{n:'PRECISION DOCKING',d:'Slow down — dock carefully',check:()=>boat.position.distanceTo(dockPos)<8}];
+function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').textContent=PH[p].d;$('pfill').style.width=((p+1)/3*100)+'%';
+  if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0})}
+  if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>w.visible=false);S.pc=1}
+  if(p===2){$('nfo').textContent='SLOW DOWN — Precision approach';$('nfo').style.color='#f59e0b';S.pc=2}}
 
-  // Water waves
-  const wAmp=0.25+state.wx.ws*0.04;
-  const wp=waterGeo.attributes.position;
-  for(let i=0;i<wp.count;i++){
-    const x=wp.getX(i),y=wp.getY(i);
-    wp.setZ(i,waterOZ[i]+Math.sin(x*0.05+t)*wAmp+Math.cos(y*0.07+t*0.8)*(wAmp*0.6));
-  }
+function tickPh(){const d=boat.position.distanceTo(dockPos),p=S.phase;
+  if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(boat.position.distanceTo(w.position)<6){w.visible=false;S.score+=50;wpI++;if(wpI<wps.length)wps[wpI].visible=true}}}
+  if(p<2&&PH[p].check())setPh(p+1);
+  if(p>=1){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(boat.position.distanceTo(a.position)<4)S.near+=2})}
+  if(p===2&&Math.abs(spd)>0.4)S.score=Math.max(0,S.score-2)}
+
+// === RENDER ===
+function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
+  const wA=0.25+S.wx.ws*0.04;const wp=waterGeo.attributes.position;
+  for(let i=0;i<wp.count;i++){const x=wp.getX(i),y=wp.getY(i);wp.setZ(i,waterOZ[i]+Math.sin(x*0.05+t)*wA+Math.cos(y*0.07+t*0.8)*(wA*0.6))}
   wp.needsUpdate=true;waterGeo.computeVertexNormals();
 
-  if(state.on){
-    // Physics
-    const bt=BT[state.bc];
-    const wxP=1-Math.min(state.wx.ws*state.wx.ws*0.003*bt.wx,0.4);
-    if(keys.ArrowUp||keys.KeyW)spd=Math.min(spd+bt.ac*wxP,bt.mx);
-    if(keys.ArrowDown||keys.KeyS)spd-=bt.ac*0.5;
-    spd*=bt.dr;
-    if(Math.abs(spd)>0.03){
-      if(keys.ArrowLeft||keys.KeyA)angVel+=bt.tu*wxP;
-      if(keys.ArrowRight||keys.KeyD)angVel-=bt.tu*wxP;
-    }
-    angVel*=0.88;boatMesh.rotation.y+=angVel;
+  if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
+    if(keys.ArrowUp||keys.KeyW)spd=Math.min(spd+bt.ac*wxP,bt.mx);if(keys.ArrowDown||keys.KeyS)spd-=bt.ac*0.5;spd*=bt.dr;
+    if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA)aV+=bt.tu*wxP;if(keys.ArrowRight||keys.KeyD)aV-=bt.tu*wxP}
+    aV*=0.88;boat.rotation.y+=aV;
+    const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);prev.copy(boat.position);
+    boat.position.addScaledVector(dir,spd);boat.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;boat.rotation.z=-aV*2.5;boat.rotation.x=spd*0.05;
+    const wr=S.wx.wd*Math.PI/180;boat.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;boat.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
+    S.dist+=boat.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
+    const dd=boat.position.distanceTo(dockPos);if(dd<150)S.score+=Math.max(0,Math.round(as*0.3));
+    $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
+    const hd=((boat.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
+    for(const s of stumps){const d=boat.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<6)S.near++}
+    tickPh();if(dd<8){S.pc=3;endGame(true)}
+    const bh=new THREE.Vector3(0,10+Math.abs(spd)*4,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);bh.add(boat.position);cam.position.lerp(bh,0.1);cam.lookAt(boat.position.x,boat.position.y+1,boat.position.z);
+  }else{cam.position.x=Math.sin(t*0.1)*30;cam.position.z=Math.cos(t*0.1)*30-20;cam.position.y=12+Math.sin(t*0.2)*2;cam.lookAt(0,0,-20)}
+  ren.render(scene,cam)}
 
-    const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),boatMesh.rotation.y);
-    prevPos.copy(boatMesh.position);
-    boatMesh.position.addScaledVector(dir,spd);
-    boatMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;
-    boatMesh.rotation.z=-angVel*2.5;
-    boatMesh.rotation.x=spd*0.05;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;spd=0;aV=0;
+  boat.position.set((Math.random()-0.5)*20,0.3,25);boat.rotation.set(0,Math.PI,0);prev.copy(boat.position);
+  const bh=new THREE.Vector3(0,12,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),boat.rotation.y);bh.add(boat.position);cam.position.copy(bh);cam.lookAt(boat.position);
+  $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
+  $('nfo').textContent='WASD / Arrows · Follow the rings';$('nfo').style.color='#475569';setPh(0);show(null)}
 
-    // Wind drift
-    const wr=state.wx.wd*Math.PI/180;
-    boatMesh.position.x+=Math.sin(wr)*state.wx.ws*0.0008*bt.wx;
-    boatMesh.position.z+=Math.cos(wr)*state.wx.ws*0.0008*bt.wx;
+// === RESULT → SALES BRIDGE ===
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';aiB.forEach(a=>a.userData.on=false);
+  const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
+  $('rt').textContent=won?'Docked Successfully':'Hull Breach';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
+  let rl,rm,rc;const nr=S.near/Math.max(el,1);
+  if(!won){rl='HIGH EXPOSURE';rm='Lake Lanier\'s hidden obstacles got you. Your dock faces the same invisible threats — algae, biological growth, and structural decay below the waterline.';rc='rgba(239,68,68,0.08)'}
+  else if(S.near>15||nr>0.5){rl='ELEVATED RISK';rm='Multiple close calls during approach. Storm debris, wake damage, and navigation clutter increase your dock\'s exposure to structural stress. Regular maintenance prevents compounding damage.';rc='rgba(245,158,11,0.08)'}
+  else if(S.maxSpd>25){rl='SPEED STRESS';rm='High-speed approaches put extra stress on dock structures. Wake energy and impact loading accelerate wear. Precision maintenance extends your dock\'s rated lifespan.';rc='rgba(245,158,11,0.08)'}
+  else{rl='CLEAN APPROACH';rm='Excellent navigation — you protected your approach. Now protect the dock itself. Even clean approaches can\'t prevent biological growth, the #1 cause of dock replacement.';rc='rgba(16,185,129,0.08)'}
+  $('rm').textContent=won?'Your dock faces threats you can\'t see from the surface.':'The lake\'s hazards are real. So is what\'s growing under your dock.';
+  const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
+  $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN APPROACH'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN APPROACH'?'#a7f3d0':'#fecaca';
+  saveData(won);show('s5')}
 
-    // Stats
-    state.dist+=boatMesh.position.distanceTo(prevPos);
-    const absSpd=Math.abs(spd*40);if(absSpd>state.maxSpd)state.maxSpd=absSpd;
-    const dDist=boatMesh.position.distanceTo(dockPos);
-    if(dDist<150)state.score+=Math.max(0,Math.round(absSpd*0.3));
+// === SERVICES ===
+async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`}
+async function geocode(a){try{const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(a)}`,{headers:{'User-Agent':'DockShield/1.0'}});const d=await r.json();if(d.length)return{lat:parseFloat(d[0].lat),lng:parseFloat(d[0].lon)}}catch(e){}return null}
+async function saveData(w){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload:{email:S.email,bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr}})})}catch(e){}}
+async function saveLead(){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/leads`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({email:S.email,address:S.addr,lat:S.lat,lng:S.lng,dock_type:'fixed',status:'new'})});if(r.ok){const d=await r.json();S.lid=(Array.isArray(d)?d[0]:d).id}}catch(e){}}
 
-    // HUD
-    $('h-spd').textContent=absSpd.toFixed(1)+' kn';
-    $('h-dst').textContent=dDist.toFixed(0)+'m';
-    const hd=((boatMesh.rotation.y*180/Math.PI%360)+360)%360;
-    $('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];
-    $('h-scr').textContent=state.score;
+// === ACTIONS ===
+function val(){S.addr=$('f-addr').value.trim();S.email=$('f-email').value.trim();if(!S.addr||!S.email){alert('Enter address and email.');return false}if(!S.email.includes('@')){alert('Valid email required.');return false}return true}
+async function launch(){if(!val())return;show('s2');$('lt').textContent='Locating Dock';$('lm').textContent='Geocoding...';try{const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}$('lm').textContent='Fetching weather...';await fetchWx();$('lm').textContent='Registering...';await saveLead();$('lm').textContent='Launching...';await new Promise(r=>setTimeout(r,300));startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}catch(e){alert('Error: '+e.message);show('s1')}}
+async function skip(){if(!val())return;show('s2');$('lt').textContent='Processing';$('lm').textContent='Analyzing location...';try{const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}$('lm').textContent='Fetching conditions...';await fetchWx();$('lm').textContent='Registering...';await saveLead();await new Promise(r=>setTimeout(r,300));$('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')}catch(e){alert('Error: '+e.message);show('s1')}}
+function playFromTier(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function showTiers(){if(S.played){$('td').classList.remove('off');$('pft').classList.add('off')}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
+function replay(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>el.classList.toggle('on',el.dataset.b===c));mkBoat(c)}
+function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
+async function quote(){const t=TI[S.ti];show('s2');$('lt').textContent='Generating';$('lm').textContent='Building plan...';
+  if(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY){try{await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:S.lid,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.ti,monthly_price:t.p})})}catch(e){}}
+  $('ok-t').textContent=t.n;$('ok-p').textContent=S.played?`$${Math.round(t.p*0.85)}/mo (first month)`:`$${t.p}/mo`;show('s4')}
+function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
+function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
 
-    // Collision
-    for(const s of stumps){
-      const d=boatMesh.position.distanceTo(s.position);
-      if(d<2.5){endGame(false);return}
-      if(d<6)state.near++;
-    }
-    if(dDist<8)endGame(true);
-
-    // Camera follow
-    const behind=new THREE.Vector3(0,10+Math.abs(spd)*4,16);
-    behind.applyAxisAngle(new THREE.Vector3(0,1,0),boatMesh.rotation.y);
-    behind.add(boatMesh.position);
-    cam.position.lerp(behind,0.1);
-    cam.lookAt(boatMesh.position.x,boatMesh.position.y+1,boatMesh.position.z);
-  } else {
-    // Idle orbit
-    cam.position.x=Math.sin(t*0.1)*30;
-    cam.position.z=Math.cos(t*0.1)*30-20;
-    cam.position.y=12+Math.sin(t*0.2)*2;
-    cam.lookAt(0,0,-20);
-  }
-
-  ren.render(scene,cam);
-}
-
-function startGame(){
-  state.on=true;state.score=0;state.t0=Date.now();state.maxSpd=0;state.dist=0;state.near=0;
-  spd=0;angVel=0;
-  boatMesh.position.set((Math.random()-0.5)*40,0.3,20+Math.random()*20);
-  boatMesh.rotation.set(0,Math.PI+Math.random()*0.4-0.2,0);
-  prevPos.copy(boatMesh.position);
-  // Snap camera
-  const behind=new THREE.Vector3(0,12,16);behind.applyAxisAngle(new THREE.Vector3(0,1,0),boatMesh.rotation.y);behind.add(boatMesh.position);
-  cam.position.copy(behind);cam.lookAt(boatMesh.position);
-  $('hud').style.display='flex';$('wxb').style.display='block';$('info').style.display='block';
-  show(null);
-}
-
-function endGame(won){
-  state.on=false;$('hud').style.display='none';$('info').style.display='none';
-  const elapsed=(Date.now()-state.t0)/1000;
-  if(won)state.score+=Math.max(0,Math.round(500-elapsed*3));
-  $('rt').textContent=won?'Docked Successfully':'Hull Breach';
-  $('rm').textContent=won?'Sharp navigation. Is your physical dock safe from invisible threats?':'Lake Lanier got you. Imagine what hidden decay does to your dock.';
-  $('r-scr').textContent=state.score;$('r-time').textContent=elapsed.toFixed(1)+'s';
-  $('r-spd').textContent=state.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(state.near,99);
-  $('f-scr').textContent=state.score;
-  saveData(won);show('s5');
-}
-
-// === WEATHER ===
-async function fetchWx(){
-  try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${state.lat}&lon=${state.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();state.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}
-  catch(e){state.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}
-  $('wx-c').textContent=`${state.wx.c} ${state.wx.t}°F`;$('wx-w').textContent=`Wind ${state.wx.ws.toFixed(1)}mph`;
-}
-
-// === GEOCODE ===
-async function geocode(addr){
-  try{const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`,{headers:{'User-Agent':'DockShield/1.0'}});const d=await r.json();if(d.length)return{lat:parseFloat(d[0].lat),lng:parseFloat(d[0].lon)}}catch(e){}
-  return null;
-}
-
-// === SUPABASE ===
-async function saveData(won){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload:{email:state.email,bc:state.bc,score:state.score,won,wx:state.wx,addr:state.addr,maxSpd:state.maxSpd,near:state.near}})})}catch(e){}}
-
-// === PIPELINE ===
-async function launch(){
-  state.addr=$('f-addr').value.trim();state.email=$('f-email').value.trim();
-  if(!state.addr||!state.email){alert('Enter address and email.');return}
-  if(!state.email.includes('@')){alert('Valid email.');return}
-  show('s2');$('lt').textContent='Locating Dock';$('lm').textContent='Geocoding address...';
-  try{
-    const coords=await geocode(state.addr);
-    if(coords){state.lat=coords.lat;state.lng=coords.lng}
-    $('lm').textContent='Fetching weather...';await fetchWx();
-    $('lm').textContent='Registering lead...';
-    if(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY){try{await fetch(`${C.SUPABASE_URL}/rest/v1/leads`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({email:state.email,address:state.addr,lat:state.lat,lng:state.lng,dock_type:'fixed',status:'new'})})}catch(e){}}
-    $('lm').textContent='Launching...';await new Promise(r=>setTimeout(r,400));
-    startGame();
-    setTimeout(()=>{if(state.on)endGame(false)},60000);
-  }catch(e){alert('Error: '+e.message);show('s1')}
-}
-
-function boat(c){state.bc=c;document.querySelectorAll('.bo').forEach(el=>el.classList.toggle('on',el.dataset.b===c));buildBoat(c)}
-function tier(t){state.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
-function showTiers(){show('s3')}
-function replay(){startGame()}
-async function quote(){const t=TI[state.ti];show('s2');$('lt').textContent='Generating';$('lm').textContent='Processing...';
-  if(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY){try{const r=await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:state.lid,email:state.email,address:state.addr,dock_type:'fixed',daas_tier:state.ti,monthly_price:t.p})});if(r.ok){const d=await r.json();state.curl=d.checkout_url}}catch(e){}}
-  $('ok-t').textContent=t.n;$('ok-p').textContent=`$${t.p}/mo`;show('s4')}
-function pay(){if(state.curl)window.open(state.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){state.on=false;$('hud').style.display='none';$('wxb').style.display='none';$('info').style.display='none';$('f-addr').value='';$('f-email').value='';show('s1')}
-
-// BOOT — Initialize engine immediately, same as test.html
 initEngine();
-
-return{launch,boat,tier,quote,pay,reset,showTiers,replay};
+return{launch,skip,playFromTier,boat,tier,quote,pay,reset,showTiers,replay};
 })();
 </script>
 </body>
