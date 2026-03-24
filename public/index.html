@@ -188,7 +188,7 @@ function initEngine(){
   const pinPost=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,8,6),new THREE.MeshStandardMaterial({color:0xcc0000}));
   pinPost.position.set(dockPos.x,4,dockPos.z);scene.add(pinPost);
   // Beacon
-  scene.add(Object.assign(new THREE.PointLight(0x10b981,2,40),{position:new THREE.Vector3(dockPos.x,3,dockPos.z)}));
+  const bLight=new THREE.PointLight(0x10b981,2,40);bLight.position.set(dockPos.x,3,dockPos.z);scene.add(bLight);
 
   // Stumps
   for(let i=0;i<40;i++){
@@ -225,8 +225,8 @@ function buildBoat(cls){
   const windshield=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.5,0.1),new THREE.MeshStandardMaterial({color:0x88ccee,transparent:true,opacity:0.5,metalness:0.8}));
   windshield.position.set(0,1.6,0.5);windshield.rotation.x=-0.2;boatMesh.add(windshield);
   // Nav lights
-  boatMesh.add(Object.assign(new THREE.PointLight(0xff0000,0.4,6),{position:new THREE.Vector3(-1.2,1.2,2)}));
-  boatMesh.add(Object.assign(new THREE.PointLight(0x00ff00,0.4,6),{position:new THREE.Vector3(1.2,1.2,2)}));
+  const pL=new THREE.PointLight(0xff0000,0.4,6);pL.position.set(-1.2,1.2,2);boatMesh.add(pL);
+  const pR=new THREE.PointLight(0x00ff00,0.4,6);pR.position.set(1.2,1.2,2);boatMesh.add(pR);
   boatMesh.position.set(0,0.3,20);
   scene.add(boatMesh);
 }
