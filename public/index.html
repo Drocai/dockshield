@@ -155,7 +155,7 @@ function initEngine(){
   const wM=new THREE.MeshStandardMaterial({color:0x0a3050,roughness:0.25,metalness:0.65,transparent:true,opacity:0.92});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
-  scene.add(new THREE.Mesh(waterGeo,wM)).rotation.x=-Math.PI/2;
+  const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;scene.add(waterMesh);
 
   mkBoat('pontoon');
   // Dock
