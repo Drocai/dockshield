@@ -357,10 +357,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   ren.render(scene,cam)}
 
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;spd=0;aV=0;
-  bMesh.position.set((Math.random()-0.5)*10,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
-  // Camera: behind and above the boat, looking forward toward dock
-  cam.position.set(bMesh.position.x, 8, bMesh.position.z + 14);
-  cam.lookAt(bMesh.position.x, 1, bMesh.position.z);
+  bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
+  cam.position.set(0, 6, 38);
+  cam.lookAt(0, 0, 15);
   $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
   $('nfo').textContent='WASD / Arrows · Follow the rings';$('nfo').style.color='#475569';setPh(0);show(null)}
 
