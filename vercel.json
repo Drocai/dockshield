@@ -2,9 +2,6 @@
   "buildCommand": null,
   "outputDirectory": "public",
   "framework": null,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
   "headers": [
     {
       "source": "/sw.js",
