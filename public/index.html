@@ -145,6 +145,7 @@ let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
 let tch={lY:0,rX:0};
+let wakes=[],rainDrops=[];
 
 function initEngine(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
@@ -318,6 +319,81 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
+// === WAKE PARTICLES ===
+const wakeMat=new THREE.MeshBasicMaterial({color:0xaaddcc,transparent:true,opacity:0.4});
+const wakeGeo=new THREE.SphereGeometry(0.18,4,4);
+const sprayMat=new THREE.MeshBasicMaterial({color:0xddeeff,transparent:true,opacity:0.5});
+const sprayGeo=new THREE.SphereGeometry(0.12,4,3);
+
+function spawnWake(){
+  if(wakes.length>150||Math.abs(spd)<0.1)return;
+  const cnt=Math.ceil(Math.abs(spd)*5);
+  for(let i=0;i<cnt;i++){
+    const p=new THREE.Mesh(wakeGeo,wakeMat.clone());
+    const local=new THREE.Vector3((Math.random()-0.5)*2,0.2,-3.5-Math.random());
+    local.applyQuaternion(bMesh.quaternion);p.position.copy(bMesh.position).add(local);
+    p.userData={life:1,decay:0.015+Math.random()*0.015,vy:0.015+Math.random()*0.02,vx:(Math.random()-0.5)*0.04,vz:(Math.random()-0.5)*0.04};
+    scene.add(p);wakes.push(p);
+  }
+  // Bow spray at high speed
+  if(Math.abs(spd)>0.5){
+    for(let i=0;i<4;i++){
+      const p=new THREE.Mesh(sprayGeo,sprayMat.clone());
+      const local=new THREE.Vector3((Math.random()-0.5)*1.2,0.4,4+Math.random()*0.5);
+      local.applyQuaternion(bMesh.quaternion);p.position.copy(bMesh.position).add(local);
+      p.userData={life:1,decay:0.025+Math.random()*0.02,vy:0.04+Math.random()*0.03,vx:(Math.random()-0.5)*0.06,vz:(Math.random()-0.5)*0.06};
+      scene.add(p);wakes.push(p);
+    }
+  }
+}
+
+function tickWakes(){
+  for(let i=wakes.length-1;i>=0;i--){
+    const p=wakes[i],u=p.userData;u.life-=u.decay;
+    if(u.life<=0){scene.remove(p);p.geometry.dispose();p.material.dispose();wakes.splice(i,1);continue}
+    p.position.y+=u.vy;p.position.x+=u.vx;p.position.z+=u.vz;
+    p.scale.multiplyScalar(1.015);p.material.opacity=u.life*0.4;
+  }
+}
+
+// === WEATHER VISUALS ===
+function applyWeatherVisuals(){
+  const w=S.wx;
+  // Fog density based on visibility
+  const vis=Math.max(w.v||10000,1000);
+  scene.fog.near=Math.min(vis*0.008,80);scene.fog.far=Math.min(vis*0.04,400);
+  // Sky/fog color shift for conditions
+  if(w.c==='Rain'||w.c==='Drizzle'){
+    scene.background.set(0x0a1218);scene.fog.color.set(0x0a1218);
+  }else if(w.c==='Clouds'||w.c==='Overcast'){
+    scene.background.set(0x0c1822);scene.fog.color.set(0x0c1822);
+  }else{
+    scene.background.set(0x071520);scene.fog.color.set(0x0b1e30);
+  }
+  // Spawn rain particles if raining
+  if((w.c==='Rain'||w.c==='Drizzle')&&rainDrops.length===0){
+    const rainGeo=new THREE.BufferGeometry();
+    const rainCount=200;const rainPos=new Float32Array(rainCount*3);
+    for(let i=0;i<rainCount;i++){rainPos[i*3]=(Math.random()-0.5)*200;rainPos[i*3+1]=Math.random()*40;rainPos[i*3+2]=(Math.random()-0.5)*200}
+    rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
+    const rainMat=new THREE.PointsMaterial({color:0x8899bb,size:0.15,transparent:true,opacity:0.5});
+    const rain=new THREE.Points(rainGeo,rainMat);scene.add(rain);rainDrops.push(rain);
+  }
+}
+
+function tickRain(){
+  rainDrops.forEach(rain=>{
+    const pos=rain.geometry.attributes.position;
+    for(let i=0;i<pos.count;i++){
+      pos.setY(i,pos.getY(i)-0.3-S.wx.ws*0.02);
+      if(pos.getY(i)<0)pos.setY(i,30+Math.random()*10);
+      // Wind drift
+      pos.setX(i,pos.getX(i)+Math.sin(S.wx.wd*Math.PI/180)*0.02);
+    }
+    pos.needsUpdate=true;
+  });
+}
+
 // === 3-PHASE MISSION ===
 const PH=[{n:'APPROACH',d:'Follow the rings',check:()=>wpI>=4},{n:'HAZARD ZONE',d:'Avoid obstacles — watch for crossings',check:()=>bMesh.position.distanceTo(dockPos)<55},{n:'PRECISION DOCKING',d:'Slow down — dock carefully',check:()=>bMesh.position.distanceTo(dockPos)<8}];
 function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').textContent=PH[p].d;$('pfill').style.width=((p+1)/3*100)+'%';
@@ -352,6 +428,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<6)S.near++}
+    spawnWake();tickWakes();tickRain();
     tickPh();if(dd<8){S.pc=3;endGame(true)}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{cam.position.x=Math.sin(t*0.1)*30;cam.position.z=Math.cos(t*0.1)*30-20;cam.position.y=12+Math.sin(t*0.2)*2;cam.lookAt(0,0,-20)}
@@ -366,6 +443,8 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 
 // === RESULT → SALES BRIDGE ===
 function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';aiB.forEach(a=>a.userData.on=false);
+  // Clean wakes
+  wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
   $('rt').textContent=won?'Docked Successfully':'Hull Breach';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
   let rl,rm,rc;const nr=S.near/Math.max(el,1);
@@ -379,7 +458,7 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   saveData(won);show('s5')}
 
 // === SERVICES ===
-async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`}
+async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(a)}`,{headers:{'User-Agent':'DockShield/1.0'}});const d=await r.json();if(d.length)return{lat:parseFloat(d[0].lat),lng:parseFloat(d[0].lon)}}catch(e){}return null}
 async function saveData(w){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload:{email:S.email,bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr}})})}catch(e){}}
 async function saveLead(){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/leads`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({email:S.email,address:S.addr,lat:S.lat,lng:S.lng,dock_type:'fixed',status:'new'})});if(r.ok){const d=await r.json();S.lid=(Array.isArray(d)?d[0]:d).id}}catch(e){}}
