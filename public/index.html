@@ -352,7 +352,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<6)S.near++}
     tickPh();if(dd<8){S.pc=3;endGame(true)}
-    const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+    const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{cam.position.x=Math.sin(t*0.1)*30;cam.position.z=Math.cos(t*0.1)*30-20;cam.position.y=12+Math.sin(t*0.2)*2;cam.lookAt(0,0,-20)}
   ren.render(scene,cam)}
 
