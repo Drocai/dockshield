@@ -352,13 +352,15 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<6)S.near++}
     tickPh();if(dd<8){S.pc=3;endGame(true)}
-    const bh=new THREE.Vector3(0,10+Math.abs(spd)*4,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+    const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{cam.position.x=Math.sin(t*0.1)*30;cam.position.z=Math.cos(t*0.1)*30-20;cam.position.y=12+Math.sin(t*0.2)*2;cam.lookAt(0,0,-20)}
   ren.render(scene,cam)}
 
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;spd=0;aV=0;
-  bMesh.position.set((Math.random()-0.5)*20,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
-  const bh=new THREE.Vector3(0,12,16);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.copy(bh);cam.lookAt(bMesh.position);
+  bMesh.position.set((Math.random()-0.5)*10,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
+  // Camera: behind and above the boat, looking forward toward dock
+  cam.position.set(bMesh.position.x, 8, bMesh.position.z + 14);
+  cam.lookAt(bMesh.position.x, 1, bMesh.position.z);
   $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
   $('nfo').textContent='WASD / Arrows · Follow the rings';$('nfo').style.color='#475569';setPh(0);show(null)}
 
