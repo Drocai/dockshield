@@ -144,6 +144,7 @@ let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
+let tch={lY:0,rX:0};
 
 function initEngine(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
@@ -175,7 +176,7 @@ function initEngine(){
   // Touch controls
   const isMob=/Mobi|Android/i.test(navigator.userAgent);
   if(isMob)$('touch').style.display='block';
-  let tch={lY:0,rX:0},lId=null,rId=null,lCy=0,rCx=0;
+  let lId=null,rId=null,lCy=0,rCx=0;
   const tz=$('touch');if(tz){
     const zones=tz.children;
     zones[0].addEventListener('touchstart',e=>{e.preventDefault();const t=e.changedTouches[0];lId=t.identifier;lCy=t.clientY},{passive:false});
