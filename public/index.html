@@ -146,38 +146,29 @@ let wps=[],wpI=0;
 const keys={};
 
 function initEngine(){
-  scene=new THREE.Scene();scene.background=new THREE.Color(0x0a1628);scene.fog=new THREE.Fog(0x0a1628,100,450);
+  scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
   cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);cam.position.set(0,15,30);cam.lookAt(0,0,0);
   ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
-  ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.1;
+  ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.2;
+  ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;
   document.body.insertBefore(ren.domElement,document.body.firstChild);
-  scene.add(new THREE.AmbientLight(0x404060,0.6));
-  const sun=new THREE.DirectionalLight(0xffeedd,1.2);sun.position.set(50,100,50);scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0x87CEEB,0x2a4a3a,0.3));
+  // Richer lighting
+  scene.add(new THREE.AmbientLight(0x304060,0.5));
+  const sun=new THREE.DirectionalLight(0xffecd2,1.4);sun.position.set(80,120,60);sun.castShadow=true;
+  sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-200;sun.shadow.camera.right=200;sun.shadow.camera.top=200;sun.shadow.camera.bottom=-200;scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0x6090b0,0x1a3020,0.4));
+  // Subtle golden hour rim light
+  const rim=new THREE.DirectionalLight(0xffaa55,0.3);rim.position.set(-60,30,-80);scene.add(rim);
 
-  waterGeo=new THREE.PlaneGeometry(600,600,60,60);
-  const wM=new THREE.MeshStandardMaterial({color:0x0a3050,roughness:0.25,metalness:0.65,transparent:true,opacity:0.92});
+  // Water — deeper blue-green, more reflective
+  waterGeo=new THREE.PlaneGeometry(800,800,80,80);
+  const wM=new THREE.MeshStandardMaterial({color:0x0c3a4d,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
-  const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;scene.add(waterMesh);
+  const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  // Dock
-  const dk=new THREE.Mesh(new THREE.BoxGeometry(8,0.4,12),new THREE.MeshStandardMaterial({color:0x8B6914,roughness:0.8}));
-  dk.position.set(dockPos.x,0.3,dockPos.z);scene.add(dk);
-  [[-3,dockPos.z-5],[3,dockPos.z-5],[-3,dockPos.z+5],[3,dockPos.z+5]].forEach(([x,z])=>{const p=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,3,6),new THREE.MeshStandardMaterial({color:0x6B5914}));p.position.set(x,1.5,z);scene.add(p)});
-  const pin=new THREE.Mesh(new THREE.SphereGeometry(1.5,8,8),new THREE.MeshStandardMaterial({color:0xff0000,emissive:0xff0000,emissiveIntensity:0.5}));pin.position.set(dockPos.x,8,dockPos.z);scene.add(pin);
-  const pp=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,8,6),new THREE.MeshStandardMaterial({color:0xcc0000}));pp.position.set(dockPos.x,4,dockPos.z);scene.add(pp);
-  const bl=new THREE.PointLight(0x10b981,2,40);bl.position.set(dockPos.x,3,dockPos.z);scene.add(bl);
-
-  // Stumps — sparse near start, dense in hazard zone
-  for(let i=0;i<60;i++){const sx=(Math.random()-0.5)*220;let sz=-Math.random()*160-10;if(Math.abs(sz-dockPos.z)<15||Math.abs(sz)<12)continue;if(sz>-40&&Math.random()>0.3)continue;const s=new THREE.Mesh(new THREE.CylinderGeometry(0.4+Math.random()*0.5,0.6+Math.random()*0.3,1+Math.random()*1.5,6),new THREE.MeshStandardMaterial({color:0x3a2a1a}));s.position.set(sx,-0.2,sz);scene.add(s);stumps.push(s)}
-  // AI boats
-  [0x3b82f6,0xec4899,0xf97316,0x8b5cf6].forEach((c,i)=>{const g=new THREE.Group();const h=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.8,3.5),new THREE.MeshStandardMaterial({color:c}));h.position.y=0.4;g.add(h);const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
-  // Shores
-  for(let i=0;i<8;i++){const a=i/8*Math.PI*2,r=180;const sh=new THREE.Mesh(new THREE.BoxGeometry(25+Math.random()*30,3+Math.random()*2,15+Math.random()*15),new THREE.MeshStandardMaterial({color:0x2a4a2a,roughness:0.95}));sh.position.set(Math.cos(a)*r,0,Math.sin(a)*r);sh.rotation.y=a;scene.add(sh)}
-  // Waypoint rings
-  [[0,0,0],[-15,0,-18],[10,0,-38],[-5,0,-55],[0,0,-75]].forEach(([x,y,z])=>{const r=new THREE.Mesh(new THREE.RingGeometry(3,4,16),new THREE.MeshBasicMaterial({color:0x0ea5e9,transparent:true,opacity:0.3,side:THREE.DoubleSide}));r.rotation.x=-Math.PI/2;r.position.set(x,0.15,z);r.visible=false;scene.add(r);wps.push(r)});
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();
 
   document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -198,23 +189,143 @@ function initEngine(){
   loop();
 }
 
+function mkDock(){
+  const dg=new THREE.Group();
+  // Main platform — planked look via multiple thin boxes
+  for(let i=0;i<8;i++){const plank=new THREE.Mesh(new THREE.BoxGeometry(7.8,0.15,1.3),new THREE.MeshStandardMaterial({color:i%2?0x7a5c14:0x8B6914,roughness:0.85}));plank.position.set(0,0.35,-5.2+i*1.5);plank.castShadow=true;plank.receiveShadow=true;dg.add(plank)}
+  // Support beams underneath
+  for(let x=-3;x<=3;x+=2){const beam=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.4,12),new THREE.MeshStandardMaterial({color:0x5a4210}));beam.position.set(x,0.1,0);dg.add(beam)}
+  // Posts with rope tops
+  [[-3.5,-5.5],[3.5,-5.5],[-3.5,5.5],[3.5,5.5],[-3.5,0],[3.5,0]].forEach(([x,z])=>{
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.22,3.5,8),new THREE.MeshStandardMaterial({color:0x5a4210,roughness:0.9}));post.position.set(x,1.8,z);post.castShadow=true;dg.add(post);
+    // Rope coil on top
+    const coil=new THREE.Mesh(new THREE.TorusGeometry(0.3,0.06,6,12),new THREE.MeshStandardMaterial({color:0xa08850}));coil.position.set(x,3.1,z);coil.rotation.x=Math.PI/2;dg.add(coil)});
+  // Bumpers
+  [[-4,2],[4,2],[-4,-3],[4,-3]].forEach(([x,z])=>{const bmp=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,1.2,8),new THREE.MeshStandardMaterial({color:0x2255aa}));bmp.position.set(x,0.6,z);dg.add(bmp)});
+  // Dock light
+  const dockLight=new THREE.PointLight(0xffeedd,0.8,25);dockLight.position.set(0,3.5,0);dg.add(dockLight);
+  const lampPost=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,3,6),new THREE.MeshStandardMaterial({color:0x444444,metalness:0.8}));lampPost.position.set(0,1.8,0);dg.add(lampPost);
+  const lampHead=new THREE.Mesh(new THREE.SphereGeometry(0.25,8,6),new THREE.MeshStandardMaterial({color:0xffeedd,emissive:0xffeedd,emissiveIntensity:0.6}));lampHead.position.set(0,3.4,0);dg.add(lampHead);
+
+  dg.position.set(dockPos.x,0,dockPos.z);scene.add(dg);
+
+  // Pin marker
+  const pinG=new THREE.Group();
+  const pin=new THREE.Mesh(new THREE.SphereGeometry(1.2,12,12),new THREE.MeshStandardMaterial({color:0xff2222,emissive:0xff0000,emissiveIntensity:0.6,metalness:0.3}));pin.position.y=10;pinG.add(pin);
+  const pinP=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,10,6),new THREE.MeshStandardMaterial({color:0xcc0000,metalness:0.4}));pinP.position.y=5;pinG.add(pinP);
+  const pinLight=new THREE.PointLight(0xff3333,1.5,35);pinLight.position.set(0,10,0);pinG.add(pinLight);
+  // Beacon ring on water
+  const beacon=new THREE.Mesh(new THREE.RingGeometry(10,11,32),new THREE.MeshBasicMaterial({color:0x10b981,transparent:true,opacity:0.18,side:THREE.DoubleSide}));beacon.rotation.x=-Math.PI/2;beacon.position.y=0.1;pinG.add(beacon);
+  const bl=new THREE.PointLight(0x10b981,1.5,30);bl.position.set(0,2,0);pinG.add(bl);
+  pinG.position.set(dockPos.x,0,dockPos.z);scene.add(pinG);
+  scene._pinG=pinG;scene._beacon=beacon;
+}
+
+function mkWorld(){
+  // Shores — organic shapes with varied heights
+  for(let i=0;i<12;i++){
+    const a=i/12*Math.PI*2+Math.random()*0.3,r=160+Math.random()*40;
+    const w=20+Math.random()*35,h=2+Math.random()*4,d=12+Math.random()*18;
+    const sh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.28+Math.random()*0.05,0.4+Math.random()*0.2,0.12+Math.random()*0.06),roughness:0.95}));
+    sh.position.set(Math.cos(a)*r,h/2-1.5,Math.sin(a)*r);sh.rotation.y=a+Math.random()*0.3;sh.castShadow=true;sh.receiveShadow=true;scene.add(sh);
+  }
+  // Trees on shores
+  for(let i=0;i<50;i++){
+    const a=Math.random()*Math.PI*2,r=165+Math.random()*30;
+    const g=new THREE.Group();
+    const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.35,3+Math.random()*2,5),new THREE.MeshStandardMaterial({color:0x3a2a18}));trunk.position.y=2;g.add(trunk);
+    const crown=new THREE.Mesh(new THREE.SphereGeometry(1.5+Math.random()*1.5,6,5),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.3+Math.random()*0.08,0.5+Math.random()*0.3,0.1+Math.random()*0.08)}));
+    crown.position.y=4+Math.random()*2;crown.castShadow=true;g.add(crown);
+    g.position.set(Math.cos(a)*r,0,Math.sin(a)*r);scene.add(g);
+  }
+  // Buoys with lights
+  const buoyCols=[0xef4444,0xf59e0b,0xef4444,0xf59e0b,0xef4444,0xf59e0b];
+  for(let i=0;i<6;i++){
+    const a=i/6*Math.PI*2,r=70+Math.random()*40;
+    const buoy=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,2.2,8),new THREE.MeshStandardMaterial({color:buoyCols[i],emissive:buoyCols[i],emissiveIntensity:0.3}));
+    buoy.position.set(Math.cos(a)*r,1,Math.sin(a)*r-60);scene.add(buoy);
+    const bLight=new THREE.PointLight(buoyCols[i],0.5,12);bLight.position.set(Math.cos(a)*r,2.5,Math.sin(a)*r-60);scene.add(bLight);
+  }
+}
+
+function mkObstacles(){
+  // Stumps — sparse near start, dense in hazard zone, varied appearance
+  for(let i=0;i<70;i++){
+    const sx=(Math.random()-0.5)*220;let sz=-Math.random()*160-10;
+    if(Math.abs(sz-dockPos.z)<15||Math.abs(sz)<12)continue;
+    if(sz>-40&&Math.random()>0.25)continue;
+    const h=0.8+Math.random()*2,r1=0.3+Math.random()*0.5,r2=r1+0.1+Math.random()*0.3;
+    const s=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,6),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.08,0.4+Math.random()*0.2,0.08+Math.random()*0.06),roughness:0.95}));
+    s.position.set(sx,-0.3,sz);s.rotation.x=(Math.random()-0.5)*0.3;s.rotation.z=(Math.random()-0.5)*0.3;
+    s.castShadow=true;scene.add(s);stumps.push(s);
+  }
+  // Floating debris
+  for(let i=0;i<12;i++){
+    const dx=(Math.random()-0.5)*180,dz=-20-Math.random()*100;
+    const db=new THREE.Mesh(new THREE.BoxGeometry(0.8+Math.random()*0.6,0.2,0.6+Math.random()*0.8),new THREE.MeshStandardMaterial({color:0x2a1a0a,roughness:0.9}));
+    db.position.set(dx,0.15,dz);db.rotation.y=Math.random()*Math.PI;scene.add(db);stumps.push(db);
+  }
+}
+
+function mkAI(){
+  [0x3388ee,0xee5588,0xff8833,0x8855ee].forEach((c,i)=>{
+    const g=new THREE.Group();
+    // Better AI boat shape
+    const hull=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.6,3.5),new THREE.MeshStandardMaterial({color:c,roughness:0.3,metalness:0.2}));hull.position.y=0.3;g.add(hull);
+    const cab=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.5,1.2),new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.5}));cab.position.set(0,0.7,-0.3);g.add(cab);
+    const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
+    const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
+    g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+function mkWaypoints(){
+  [[0,0,0],[-15,0,-18],[10,0,-38],[-5,0,-55],[0,0,-75]].forEach(([x,y,z])=>{
+    const r=new THREE.Mesh(new THREE.RingGeometry(3,4,24),new THREE.MeshBasicMaterial({color:0x0ea5e9,transparent:true,opacity:0.35,side:THREE.DoubleSide}));
+    r.rotation.x=-Math.PI/2;r.position.set(x,0.15,z);r.visible=false;scene.add(r);wps.push(r);
+    // Inner glow ring
+    const inner=new THREE.Mesh(new THREE.RingGeometry(1.5,2,24),new THREE.MeshBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.2,side:THREE.DoubleSide}));
+    inner.rotation.x=-Math.PI/2;inner.position.set(x,0.18,z);inner.visible=false;scene.add(inner);
+    r.userData.inner=inner;
+  });
+}
+
 function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THREE.Group();
-  const hull=new THREE.Mesh(new THREE.BoxGeometry(2,1,5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));hull.position.y=0.5;bMesh.add(hull);
-  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.8,2),new THREE.MeshStandardMaterial({color:0x0ea5e9}));cab.position.set(0,1.2,-0.5);bMesh.add(cab);
-  const ws=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.5,0.1),new THREE.MeshStandardMaterial({color:0x88ccee,transparent:true,opacity:0.5,metalness:0.8}));ws.position.set(0,1.6,0.5);ws.rotation.x=-0.2;bMesh.add(ws);
-  const pL=new THREE.PointLight(0xff0000,0.4,6);pL.position.set(-1.2,1.2,2);bMesh.add(pL);
-  const pR=new THREE.PointLight(0x00ff00,0.4,6);pR.position.set(1.2,1.2,2);bMesh.add(pR);
+  // Hull — tapered bow using scaled boxes
+  const hullMain=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.9,4.5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35,metalness:0.15}));hullMain.position.y=0.45;hullMain.castShadow=true;bMesh.add(hullMain);
+  // Bow taper
+  const bow=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.7,1.5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35,metalness:0.15}));bow.position.set(0,0.4,3.2);bow.castShadow=true;bMesh.add(bow);
+  const bowTip=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.5,0.8),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35}));bowTip.position.set(0,0.35,4);bMesh.add(bowTip);
+  // Stern
+  const stern=new THREE.Mesh(new THREE.BoxGeometry(2,0.7,0.6),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));stern.position.set(0,0.4,-2.5);bMesh.add(stern);
+  // Deck stripe
+  const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.04,4.8),new THREE.MeshStandardMaterial({color:0x0ea5e9,emissive:0x0ea5e9,emissiveIntensity:0.15}));stripe.position.y=0.92;bMesh.add(stripe);
+  // Cabin
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.9,2.2),new THREE.MeshStandardMaterial({color:0xf5f5f0,roughness:0.6}));cab.position.set(0,1.4,-0.3);cab.castShadow=true;bMesh.add(cab);
+  // Windshield
+  const ws=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.6,0.08),new THREE.MeshStandardMaterial({color:0x88ddff,transparent:true,opacity:0.45,metalness:0.9,roughness:0.1}));ws.position.set(0,1.8,0.8);ws.rotation.x=-0.25;bMesh.add(ws);
+  // Console
+  const console=new THREE.Mesh(new THREE.BoxGeometry(1,0.4,0.5),new THREE.MeshStandardMaterial({color:0x1a1a2e,metalness:0.6}));console.position.set(0,1.6,0.3);bMesh.add(console);
+  // Motor
+  const motor=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.2,0.9),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.7,roughness:0.3}));motor.position.set(0,0.2,-2.8);bMesh.add(motor);
+  const motorCowl=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.3,0.5),new THREE.MeshStandardMaterial({color:0x222230}));motorCowl.position.set(0,0.9,-2.8);bMesh.add(motorCowl);
+  // Railing posts
+  [[-1.1,1],[1.1,1],[-1.1,-1],[1.1,-1]].forEach(([x,z])=>{const rail=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.6,4),new THREE.MeshStandardMaterial({color:0xcccccc,metalness:0.8}));rail.position.set(x,1.2,z);bMesh.add(rail)});
+  // Nav lights
+  const pL=new THREE.PointLight(0xff0000,0.5,8);pL.position.set(-1.2,1.3,2.5);bMesh.add(pL);
+  const pR=new THREE.PointLight(0x00ff00,0.5,8);pR.position.set(1.2,1.3,2.5);bMesh.add(pR);
+  // Headlight
+  const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === 3-PHASE MISSION ===
 const PH=[{n:'APPROACH',d:'Follow the rings',check:()=>wpI>=4},{n:'HAZARD ZONE',d:'Avoid obstacles — watch for crossings',check:()=>bMesh.position.distanceTo(dockPos)<55},{n:'PRECISION DOCKING',d:'Slow down — dock carefully',check:()=>bMesh.position.distanceTo(dockPos)<8}];
 function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').textContent=PH[p].d;$('pfill').style.width=((p+1)/3*100)+'%';
-  if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0})}
-  if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>w.visible=false);S.pc=1}
+  if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0;if(w.userData.inner)w.userData.inner.visible=i===0})}
+  if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>{w.visible=false;if(w.userData.inner)w.userData.inner.visible=false});S.pc=1}
   if(p===2){$('nfo').textContent='SLOW DOWN — Precision approach';$('nfo').style.color='#f59e0b';S.pc=2}}
 
 function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
-  if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;S.score+=50;wpI++;if(wpI<wps.length)wps[wpI].visible=true}}}
+  if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
   if(p<2&&PH[p].check())setPh(p+1);
   if(p>=1){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
   if(p===2&&Math.abs(spd)>0.4)S.score=Math.max(0,S.score-2)}
@@ -224,6 +335,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   const wA=0.25+S.wx.ws*0.04;const wp=waterGeo.attributes.position;
   for(let i=0;i<wp.count;i++){const x=wp.getX(i),y=wp.getY(i);wp.setZ(i,waterOZ[i]+Math.sin(x*0.05+t)*wA+Math.cos(y*0.07+t*0.8)*(wA*0.6))}
   wp.needsUpdate=true;waterGeo.computeVertexNormals();
+  // Pin bob
+  if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
+  if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
 
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx);if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd-=bt.ac*0.5;spd*=bt.dr;
