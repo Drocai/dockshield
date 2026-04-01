@@ -67,7 +67,7 @@ serve(async (req) => {
       const meta = session.metadata || {};
 
       const tier = meta.daas_tier || "2";
-      if (!Object.prototype.hasOwnProperty.call(SCHEDULES, tier)) {
+      if (!Object.hasOwn(SCHEDULES, tier)) {
         throw new Error(`Invalid subscription tier: ${tier}`);
       }
 
