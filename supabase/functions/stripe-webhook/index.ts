@@ -53,14 +53,11 @@ serve(async (req) => {
   try {
     const body = await req.text();
 
-    let event: Stripe.Event;
-
-    if (webhookSecret && signature) {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    } else {
-      // Development mode — parse directly (NOT for production)
-      event = JSON.parse(body);
+    if (!webhookSecret || !signature) {
+      throw new Error("Stripe webhook signature verification is required");
     }
+
+    const event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
 
     // -------------------------------------------------------
     // Handle: checkout.session.completed
@@ -70,6 +67,10 @@ serve(async (req) => {
       const meta = session.metadata || {};
 
       const tier = meta.daas_tier || "2";
+      if (!Object.prototype.hasOwnProperty.call(SCHEDULES, tier)) {
+        throw new Error(`Invalid subscription tier: ${tier}`);
+      }
+
       const schedule = { ...SCHEDULES[tier] };
 
       // Calculate next service date (30 days from now)
