@@ -57,6 +57,105 @@ const mini={
     const el=$('mini');if(el)el.style.display='none';
     if(dp)clearDropPoint(dp);
   },
+  // === TETRIS: "stack the catch" — falling fish-shaped pieces on a 10x16 grid ===
+  openTetris(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    const COLS=10,ROWS=16,CELL=20;
+    const W=COLS*CELL,H=ROWS*CELL;
+    card.innerHTML=`
+      <div class="m-kicker" style="color:#10b981">Tackle Box · ${dp.userData.type.n}</div>
+      <div class="m-title">Stack the catch.</div>
+      <div class="m-sub">Pack the tackle box. Clear lines. Don’t stack out.</div>
+      <canvas id="m-tcv" width="${W}" height="${H}"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Lines</span><span class="sv g" id="m-tlines">0</span></div><div class="sr"><span class="sl">Score</span><span class="sv b" id="m-tscr">0</span></div></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+        <button class="btn bx" id="m-tl">◀</button>
+        <button class="btn bx" id="m-tr">▶</button>
+        <button class="btn bx" id="m-trot">↻</button>
+        <button class="btn bx" id="m-td">▼</button>
+      </div>
+      <button class="btn bx" id="m-tquit" style="margin-top:8px">Bail Out</button>`;
+    const cv=$('m-tcv'),ctx=cv.getContext('2d');
+    // 7 standard tetrominoes
+    const PIECES=[
+      {c:'#60d0ff',s:[[1,1,1,1]]},                     // I
+      {c:'#fbcf3b',s:[[1,1],[1,1]]},                   // O
+      {c:'#a78bfa',s:[[0,1,0],[1,1,1]]},               // T
+      {c:'#10b981',s:[[0,1,1],[1,1,0]]},               // S
+      {c:'#ef4444',s:[[1,1,0],[0,1,1]]},               // Z
+      {c:'#3b82f6',s:[[1,0,0],[1,1,1]]},               // J
+      {c:'#f59e0b',s:[[0,0,1],[1,1,1]]}                // L
+    ];
+    const G={grid:Array.from({length:ROWS},()=>Array(COLS).fill(0)),lines:0,score:0,alive:true};
+    const newPiece=()=>{
+      const p=PIECES[Math.floor(Math.random()*PIECES.length)];
+      G.cur={shape:p.s.map(r=>r.slice()),color:p.c,x:Math.floor(COLS/2)-Math.floor(p.s[0].length/2),y:0};
+      if(collides(G.cur,0,0)){G.alive=false;end()}
+    };
+    const collides=(p,dx,dy)=>{
+      for(let r=0;r<p.shape.length;r++)for(let c=0;c<p.shape[r].length;c++){
+        if(!p.shape[r][c])continue;
+        const ny=p.y+r+dy,nx=p.x+c+dx;
+        if(nx<0||nx>=COLS||ny>=ROWS)return true;
+        if(ny>=0&&G.grid[ny][nx])return true;
+      }
+      return false;
+    };
+    const lock=()=>{
+      G.cur.shape.forEach((row,r)=>row.forEach((v,c)=>{if(v&&G.cur.y+r>=0)G.grid[G.cur.y+r][G.cur.x+c]=G.cur.color}));
+      // Clear lines
+      let cleared=0;
+      for(let r=ROWS-1;r>=0;r--){if(G.grid[r].every(v=>v)){G.grid.splice(r,1);G.grid.unshift(Array(COLS).fill(0));cleared++;r++}}
+      if(cleared){G.lines+=cleared;G.score+=[0,40,100,300,1200][cleared]}
+      newPiece();
+    };
+    const rotate=()=>{
+      const r=G.cur.shape;const n=r[0].map((_,i)=>r.map(row=>row[i]).reverse());
+      const old=G.cur.shape;G.cur.shape=n;if(collides(G.cur,0,0))G.cur.shape=old;
+    };
+    const move=dx=>{if(!collides(G.cur,dx,0))G.cur.x+=dx};
+    const drop=()=>{
+      if(!collides(G.cur,0,1))G.cur.y++;
+      else lock();
+    };
+    const render=()=>{
+      ctx.fillStyle='#02060f';ctx.fillRect(0,0,W,H);
+      // grid lines
+      ctx.strokeStyle='rgba(251,146,60,0.06)';for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)ctx.strokeRect(c*CELL,r*CELL,CELL,CELL);
+      // locked cells
+      for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){if(G.grid[r][c]){ctx.fillStyle=G.grid[r][c];ctx.fillRect(c*CELL+1,r*CELL+1,CELL-2,CELL-2)}}
+      // current piece
+      if(G.cur){ctx.fillStyle=G.cur.color;G.cur.shape.forEach((row,r)=>row.forEach((v,c)=>{if(v)ctx.fillRect((G.cur.x+c)*CELL+1,(G.cur.y+r)*CELL+1,CELL-2,CELL-2)}))}
+      $('m-tlines').textContent=G.lines;$('m-tscr').textContent=G.score;
+    };
+    const tick=()=>{
+      if(!G.alive)return;
+      drop();render();
+      G.timer=setTimeout(tick,Math.max(200,520-G.lines*22));
+    };
+    const end=()=>{
+      if(G.timer)clearTimeout(G.timer);document.removeEventListener('keydown',keyHandler);
+      const line=G.lines>=4?'Tackle box packed. Clean.':G.lines>0?'Packed enough to ride out.':'Box overflowed. Bait’s lost.';
+      mini.finish(dp,G.score+G.lines*25,line,G.lines>=4?'lilly':'self');
+    };
+    const keyHandler=e=>{
+      if(!miniActive)return;
+      if(e.code==='ArrowLeft'){e.preventDefault();move(-1);render()}
+      if(e.code==='ArrowRight'){e.preventDefault();move(1);render()}
+      if(e.code==='ArrowUp'){e.preventDefault();rotate();render()}
+      if(e.code==='ArrowDown'){e.preventDefault();drop();render()}
+    };
+    document.addEventListener('keydown',keyHandler);
+    $('m-tl').onclick=()=>{move(-1);render()};
+    $('m-tr').onclick=()=>{move(1);render()};
+    $('m-trot').onclick=()=>{rotate();render()};
+    $('m-td').onclick=()=>{drop();render()};
+    $('m-tquit').onclick=()=>{G.alive=false;end()};
+    newPiece();render();
+    el.style.display='flex';tick();
+    radio('Tackle box overflowing. Pack it down.','self');
+  },
   // === RUNNER: side-scrolling "dock collapse" — Lilly running across breaking planks ===
   openRunner(dp){
     miniActive=true;S.on=false;
