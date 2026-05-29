@@ -127,5 +127,7 @@ body.mode-business .game-only{display:none !important}
 .mini-card .m-kicker{font:700 9px 'JetBrains Mono',monospace;letter-spacing:2px;text-transform:uppercase;color:#fb923c;margin-bottom:6px}
 .mini-card .m-title{font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:6px}
 .mini-card .m-sub{font-size:12.5px;color:#94a3b8;line-height:1.5;margin-bottom:14px}
-.mini-card canvas{display:block;background:#02060f;border:1px solid rgba(251,146,60,0.15);border-radius:8px;margin:8px auto;max-width:100%}
+/* Override the global `canvas{position:fixed;inset:0}` rule (which is for the THREE.js scene)
+   so mini-game canvases stay in the card's normal flow. */
+.mini-card canvas{display:block;position:static !important;inset:auto !important;z-index:auto;background:#02060f;border:1px solid rgba(251,146,60,0.15);border-radius:8px;margin:8px auto;max-width:100%}
 

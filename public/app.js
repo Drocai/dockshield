@@ -348,7 +348,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();
   if(GAME_MODE==='game')mkDropPoints();
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
@@ -508,6 +508,34 @@ function clearDropPoint(dp){
   // Remove the resolved drop point and spawn a replacement at a new random spot.
   scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
   setTimeout(()=>{if(S.on&&dropPoints.length<3)spawnDropPoint()},2000);
+}
+
+function mkMist(){
+  // Low atmospheric mist over the water — Points cloud, slow rotation.
+  const cnt=400;const pos=new Float32Array(cnt*3);
+  for(let i=0;i<cnt;i++){const a=Math.random()*Math.PI*2,r=20+Math.random()*220;pos[i*3]=Math.cos(a)*r;pos[i*3+1]=0.4+Math.random()*1.6;pos[i*3+2]=Math.sin(a)*r}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const m=new THREE.PointsMaterial({color:0xb0c4d0,size:0.8,transparent:true,opacity:0.18,depthWrite:false});
+  const mist=new THREE.Points(g,m);scene.add(mist);scene._mist=mist;
+}
+
+function drawMinimap(){
+  const c=$('mm-canvas');if(!c)return;
+  const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42;  // scale: world u -> px
+  ctx.clearRect(0,0,W,H);
+  // ring background
+  ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // origin (dock)
+  ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
+  // boat dot
+  const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
+  // heading line
+  const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
+  ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
+  // drop points
+  dropPoints.forEach(dp=>{if(!dp.userData.active)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
 }
 
 function mkCryptid(){
@@ -728,8 +756,10 @@ function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').te
 function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
   if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
   if(p<2&&PH[p].check())setPh(p+1);
-  if(p>=1){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
+  if(p>=1)tickAI();
   if(p===2&&Math.abs(spd)>0.4)S.score=Math.max(0,S.score-2)}
+// Roaming AI boat motion — shared by business phases and free-roam.
+function tickAI(){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
 
 // === RENDER ===
 function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
@@ -741,6 +771,20 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
   // Foam ring grows with speed and pulses to read as turbulence
   if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
+  if(scene._sunDisc&&scene._sun){
+    const cyc=(t%360)/360,ang=cyc*Math.PI*2;
+    const sunY=Math.sin(ang)*60+30;const sunX=Math.cos(ang)*120;
+    scene._sunDisc.position.set(sunX,sunY,-280);if(scene._sunHalo)scene._sunHalo.position.copy(scene._sunDisc.position);
+    // Cool when low (night-ish), warm at midday.
+    const dayness=Math.max(0,Math.sin(ang));
+    scene._sun.intensity=0.4+dayness*1.0;
+    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030}
+  }
+  // Atmospheric mist drift — Points cloud spawned in mkMist(), shifts on the wind.
+  if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
+  // Minimap update
+  if(S.on&&$('mm-canvas')){drawMinimap()}
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
     const c=scene._cryptid;c.visible=true;
@@ -800,7 +844,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game')tickDropPoints(t);
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI()}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -825,14 +869,23 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   cam.lookAt(0, 0, 15);
   // Phase HUD is business-mode only — the free-roam world has no APPROACH/SHALLOWS/EXTRACTION arc.
   $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';if(GAME_MODE==='business')$('phud').style.display='block';
+  // Minimap visible only in game mode (free-roam navigation aid).
+  const mm=$('minimap');if(mm)mm.style.display=GAME_MODE==='game'?'block':'none';
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
-  $('nfo').textContent='WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
+  $('nfo').textContent=GAME_MODE==='game'?'WASD / Arrows · Space = Sonar Ping · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  if(GAME_MODE==='business')setPh(0);
+  else{
+    // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
+    // surge, roaming AI boats) should be live for the whole run. Activate them directly.
+    S.phase=1;aiB.forEach(a=>a.userData.on=true);radio(HERO[S.bc].voice.start);
+  }
+  show(null);
   // show(null) now handles touch display for mobile
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -947,6 +1000,14 @@ function launchGame(){
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
 function endRun(){if(S.on)endGame(S.hull>0)}
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,mode:GAME_MODE};
+// QA hook (only active with ?qa=1) — force-opens a mini-game with a synthetic drop point so the
+// headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
+function qaOpen(kind){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  const type=DP_TYPES.find(d=>d.k===kind);if(!type)return false;
+  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);scene.add(dp);dropPoints.push(dp);
+  const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,mode:GAME_MODE};
 })();
 
