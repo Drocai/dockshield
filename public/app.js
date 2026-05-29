@@ -58,7 +58,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -166,6 +166,16 @@ function mkAI(){
     const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
     const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
     g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+function mkCryptid(){
+  // Dark elongated silhouette under the water. No collision, no damage — pure flavor.
+  // Three stacked tapered cylinders read as a long fish-like form.
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.4,1.2,6,8),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.35}));body.rotation.z=Math.PI/2;body.position.y=-0.4;g.add(body);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.9,8,6),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.4}));head.position.set(3,-0.4,0);g.add(head);
+  const tail=new THREE.Mesh(new THREE.ConeGeometry(0.8,2.5,6),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.3}));tail.rotation.z=-Math.PI/2;tail.position.set(-3.5,-0.4,0);g.add(tail);
+  g.visible=false;scene.add(g);scene._cryptid=g;
 }
 
 function mkEvidence(){
@@ -283,11 +293,13 @@ function fireSonar(){
   ring.rotation.x=-Math.PI/2;ring.position.copy(origin);scene.add(ring);
   sonarRings.push({m:ring,t0:now});
   // Highlight every stump within 25u for ~1.5s
+  let pinged=0;
   for(const s of stumps){if(s.position.distanceTo(origin)>25)continue;
     const h=new THREE.Mesh(new THREE.RingGeometry(1.2,1.5,18),new THREE.MeshBasicMaterial({color:0xfb923c,transparent:true,opacity:0.65,side:THREE.DoubleSide}));
     h.rotation.x=-Math.PI/2;h.position.set(s.position.x,0.12,s.position.z);scene.add(h);
-    stumpHighlights.push({m:h,t0:now});
+    stumpHighlights.push({m:h,t0:now});pinged++;
   }
+  radio(pinged>0?'Ping out. '+pinged+' hits in the ring.':'Ping out. Water reads clean — for now.','fly');
   return true;
 }
 function tickSonar(){
@@ -345,12 +357,31 @@ function tickRain(){
   });
 }
 
+// === RADIO CHATTER ===
+// Single-line overlay, fades after ~4s. Voice picks the right hero based on `who`:
+// 'self' = the player's selected hero; otherwise a fixed role for that beat.
+function radio(text,who='self'){
+  const el=$('radio');if(!el)return;
+  let hero;
+  if(who==='self')hero=HERO[S.bc];
+  else if(who==='reel')hero=HERO.regular;
+  else if(who==='lilly')hero=HERO.pontoon;
+  else if(who==='fly')hero=HERO.speedboat;
+  else hero=HERO[S.bc];
+  el.style.borderLeftColor=hero.badge;
+  el.querySelector('.r-who').textContent=hero.n;
+  el.querySelector('.r-who').style.color=hero.badge;
+  el.querySelector('.r-line').textContent=text;
+  el.style.display='block';el.style.opacity='1';
+  clearTimeout(radio._t);radio._t=setTimeout(()=>{el.style.opacity='0';setTimeout(()=>{if(el.style.opacity==='0')el.style.display='none'},400)},4000);
+}
+
 // === 3-PHASE MISSION ===
 const PH=[{n:'APPROACH',d:'Follow the rescue markers',check:()=>wpI>=4},{n:'THE SHALLOWS',d:'Avoid the debris — watch the water',check:()=>bMesh.position.distanceTo(dockPos)<55},{n:'EXTRACTION',d:'Slow down — bring them in',check:()=>bMesh.position.distanceTo(dockPos)<8}];
 function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').textContent=PH[p].d;$('pfill').style.width=((p+1)/3*100)+'%';
-  if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0;if(w.userData.inner)w.userData.inner.visible=i===0})}
-  if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>{w.visible=false;if(w.userData.inner)w.userData.inner.visible=false});S.pc=1}
-  if(p===2){$('nfo').textContent='SLOW DOWN — Extraction';$('nfo').style.color='#f59e0b';S.pc=2}}
+  if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0;if(w.userData.inner)w.userData.inner.visible=i===0});radio(HERO[S.bc].voice.start)}
+  if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>{w.visible=false;if(w.userData.inner)w.userData.inner.visible=false});S.pc=1;radio('Phase two. Shallows live. Stay sharp.','fly')}
+  if(p===2){$('nfo').textContent='SLOW DOWN — Extraction';$('nfo').style.color='#f59e0b';S.pc=2;radio('Phase three. Bring them in slow.','fly')}}
 
 function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
   if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
@@ -368,6 +399,13 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
   // Foam ring grows with speed and pulses to read as turbulence
   if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
+  if(scene._cryptid&&S.on&&S.phase>=1){
+    const c=scene._cryptid;c.visible=true;
+    const ct=t*0.18;
+    c.position.set(Math.sin(ct)*30,-1.2+Math.sin(t*0.5)*0.15,-40+Math.cos(ct*0.7)*25);
+    c.rotation.y=ct+Math.PI*0.5;
+  }else if(scene._cryptid){scene._cryptid.visible=false}
   // Sun halo pulse
   if(scene._sunHalo)scene._sunHalo.material.opacity=0.15+Math.sin(t*0.6)*0.05;
 
@@ -381,7 +419,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
-    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400)}
+    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel')}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
     const dd=bMesh.position.distanceTo(dockPos);if(dd<150)S.score+=Math.max(0,Math.round(as*0.3));
     $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
@@ -400,6 +438,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
         S.evCollected=EV[Math.floor(Math.random()*EV.length)];S.score+=75;
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
+        radio(HERO[S.bc].voice.evidence);
       }
     }
     // Civilian pickups — must approach slowly. Too-fast pass-by flashes a warning and the civilian remains in danger.
@@ -412,6 +451,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
           c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);
           $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
           $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
+          if(S.civsSaved===1)radio(HERO[S.bc].voice.rescue);
         }else if(dc<2.2&&$('ww').textContent!=='TOO FAST FOR PICKUP'){
           $('ww').textContent='TOO FAST FOR PICKUP';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='TOO FAST FOR PICKUP')$('ww').style.display='none'},1200);
         }
@@ -524,7 +564,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
     setStep(5)}catch(e){console.warn('Quote pipeline:',e)}}
   $('ok-t').textContent=t.n;$('ok-p').textContent=d>0?`$${price}/mo (first month, ${d}% off)`:`$${t.p}/mo`;
   // Waterway risk signal — wind + visibility + outcome
-  const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on your waterway: '+parts.join(' · '):'Your waterway is running clean today.'}
+  const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}

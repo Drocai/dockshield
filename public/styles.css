@@ -93,5 +93,8 @@ input::placeholder{color:#334155}
 #wxb{position:fixed;top:12px;right:12px;z-index:15;display:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;background:rgba(3,7,18,0.8);padding:6px 10px;border-radius:6px;border:1px solid rgba(251,146,60,0.08);text-align:right;pointer-events:none}
 #nfo{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:15;display:none;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#475569;background:rgba(3,7,18,0.7);padding:5px 12px;border-radius:6px;border:1px solid rgba(251,146,60,0.08);pointer-events:none}
 #ww{position:fixed;top:80px;right:12px;z-index:15;display:none;font:600 11px 'JetBrains Mono',monospace;color:#f59e0b;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);padding:6px 10px;border-radius:6px;pointer-events:none;animation:pls 1.5s ease-in-out infinite}
+#radio{position:fixed;bottom:42px;left:50%;transform:translateX(-50%);z-index:15;display:none;background:rgba(3,7,18,0.88);border:1px solid rgba(251,146,60,0.15);border-left:3px solid #fb923c;padding:7px 14px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:#e8edf5;max-width:80%;transition:opacity 0.4s;pointer-events:none}
+#radio .r-who{font:700 9px 'JetBrains Mono',monospace;color:#fb923c;letter-spacing:1.5px;text-transform:uppercase;display:block;margin-bottom:2px}
+#radio .r-line{display:block;line-height:1.4}
 @keyframes pls{0%,100%{opacity:1}50%{opacity:0.5}}
 
