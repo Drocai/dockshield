@@ -22,7 +22,7 @@ let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
 let tch={lY:0,rX:0};
-let wakes=[],rainDrops=[];
+let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
 
 function initEngine(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
@@ -54,7 +54,7 @@ function initEngine(){
   mkBoat('pontoon');
   mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();
 
-  document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);
+  document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
   const isMob=/Mobi|Android/i.test(navigator.userAgent);
@@ -255,6 +255,33 @@ function tickWakes(){
   }
 }
 
+// === SONAR PING ===
+function fireSonar(){
+  if(!S.on)return false;
+  const now=Date.now()*0.001;
+  if(S.sonarReady&&now<S.sonarReady)return false;
+  S.sonarReady=now+3;
+  const origin=bMesh.position.clone();origin.y=0.2;
+  // Expanding ring on the water — reuse wake disposal pattern
+  const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2;ring.position.copy(origin);scene.add(ring);
+  sonarRings.push({m:ring,t0:now});
+  // Highlight every stump within 25u for ~1.5s
+  for(const s of stumps){if(s.position.distanceTo(origin)>25)continue;
+    const h=new THREE.Mesh(new THREE.RingGeometry(1.2,1.5,18),new THREE.MeshBasicMaterial({color:0xfb923c,transparent:true,opacity:0.65,side:THREE.DoubleSide}));
+    h.rotation.x=-Math.PI/2;h.position.set(s.position.x,0.12,s.position.z);scene.add(h);
+    stumpHighlights.push({m:h,t0:now});
+  }
+  return true;
+}
+function tickSonar(){
+  const now=Date.now()*0.001;
+  for(let i=sonarRings.length-1;i>=0;i--){const r=sonarRings[i],age=now-r.t0;if(age>1.5){scene.remove(r.m);r.m.geometry.dispose();r.m.material.dispose();sonarRings.splice(i,1);continue}const sc=1+age*22;r.m.scale.set(sc,sc,sc);r.m.material.opacity=Math.max(0,0.85-age/1.5)}
+  for(let i=stumpHighlights.length-1;i>=0;i--){const h=stumpHighlights[i],age=now-h.t0;if(age>1.5){scene.remove(h.m);h.m.geometry.dispose();h.m.material.dispose();stumpHighlights.splice(i,1);continue}h.m.material.opacity=Math.max(0,0.65-age/1.5)}
+  // Update HUD readiness pill
+  const sp=$('h-sonar');if(sp){const ready=!S.sonarReady||now>=S.sonarReady;sp.textContent=ready?'READY':Math.max(0,(S.sonarReady-now)).toFixed(1)+'s';sp.style.color=ready?'#60d0ff':'#475569'}
+}
+
 // === WEATHER VISUALS ===
 function applyWeatherVisuals(){
   const w=S.wx;
@@ -362,7 +389,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
         }
       }
     }
-    spawnWake();tickWakes();tickRain();
+    spawnWake();tickWakes();tickRain();tickSonar();
     tickPh();if(dd<8){S.pc=3;endGame(true)}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{
@@ -375,7 +402,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;civs.forEach(c=>{c.userData.saved=false;c.visible=true});$('h-civ').textContent='0/'+civs.length;spd=0;aV=0;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;civs.forEach(c=>{c.userData.saved=false;c.visible=true});$('h-civ').textContent='0/'+civs.length;spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
@@ -468,6 +495,6 @@ function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Strip
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
 
 initEngine();
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar};
 })();
 
