@@ -467,7 +467,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();mkPOIs();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
@@ -527,6 +527,25 @@ function mkDock(){
   const bl=new THREE.PointLight(0x10b981,1.5,30);bl.position.set(0,2,0);pinG.add(bl);
   pinG.position.set(dockPos.x,0,dockPos.z);scene.add(pinG);
   scene._pinG=pinG;scene._beacon=beacon;
+}
+
+// === WORLD POIs ===
+// Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
+// players can navigate to them as landmarks. They are NOT drop points — that drop-point system
+// stays separate and random.
+function mkPOIs(){
+  if(GAME_MODE!=='game')return;
+  POIS.forEach(p=>{
+    if(p.n==='Castor Marina')return;  // marina is the existing main dock
+    const g=new THREE.Group();
+    // Small platform
+    const plat=new THREE.Mesh(new THREE.BoxGeometry(3,0.18,3),new THREE.MeshStandardMaterial({color:0x6a4f1a,roughness:0.85}));plat.position.y=0.3;g.add(plat);
+    // Single lamp post
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,2.6,6),new THREE.MeshStandardMaterial({color:0x444444,metalness:0.7}));post.position.y=1.6;g.add(post);
+    const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6),new THREE.MeshStandardMaterial({color:p.c,emissive:p.c,emissiveIntensity:0.6}));head.position.y=2.95;g.add(head);
+    const lt=new THREE.PointLight(parseInt(p.c.replace('#',''),16),0.6,18);lt.position.y=2.95;g.add(lt);
+    g.position.set(p.x,0,p.z);scene.add(g);
+  });
 }
 
 function mkWorld(){
@@ -1266,7 +1285,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
-  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';S.lore={}}}
+  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
 // === GAME-MODE ENTRY: hero pick → Q1 → Q2 → free-roam ===
 // No email, no address. The two questions tag S.lore so radio chatter can reference them later;
@@ -1304,10 +1323,27 @@ function launchGame(){
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
-initEngine();
+initEngine();refreshTrophyPeek();
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
+// Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
+function peekTrophies(){
+  if(fishCatalog.size===0)return;
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#a78bfa">Trophy Board</div>
+    <div class="m-title">${fishCatalog.size} unique trophy${fishCatalog.size===1?'':'s'} pulled out of Castor Bayou.</div>
+    <div class="m-sub">Rares + legendaries you've landed across all your sessions in this browser tab.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';const r=f?f.r:'';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:5px 9px;color:${col};font:12px 'DM Sans',sans-serif">${e} ${n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${r}</span></span>`}).join('')}</div>
+    <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
+  el.style.display='flex';
+}
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false}
+// Show the trophy peek button on s1 only if there's something to show.
+function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
+
 function endRun(){
   const btn=$('end-run');
   if(_endArmed){_endArmed=false;clearTimeout(_endArmedT);if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}if(S.on)endGame(S.hull>0);return}
@@ -1322,6 +1358,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,mode:GAME_MODE};
 })();
 
