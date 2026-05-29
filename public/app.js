@@ -19,6 +19,9 @@ const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
 // Active buffs (consumable items from the tackle shop). Persists across runs until consumed.
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
+// Graphics quality preference (separate small key so a settings wipe doesn't reset gfx).
+let gfxQuality='medium';
+try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
@@ -1687,7 +1690,6 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   el.style.display='flex';
 }
-let gfxQuality='medium';
 function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
 function applyGfx(){
   if(!scene)return;
@@ -1700,7 +1702,7 @@ function applyGfx(){
   // Renderer tone mapping exposure leans warmer on High.
   if(ren)ren.toneMappingExposure=highMode?1.4:lowMode?1.0:1.2;
 }
-try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
+/* gfxQuality declaration + initial load moved to the persistence block at the top of the file. */
 
 function openCodex(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
@@ -1731,7 +1733,8 @@ function endRun(){
 // headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
 function qaOpen(kind){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
-  const type=DP_TYPES.find(d=>d.k===kind);if(!type)return false;
+  // Boss type lives outside DP_TYPES (never spawned randomly) — qa hook checks both.
+  const type=DP_TYPES.find(d=>d.k===kind)||(kind==='boss'?DP_BOSS:null);if(!type)return false;
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
