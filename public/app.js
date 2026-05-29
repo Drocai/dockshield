@@ -57,6 +57,73 @@ const mini={
     const el=$('mini');if(el)el.style.display='none';
     if(dp)clearDropPoint(dp);
   },
+  // === RUNNER: side-scrolling "dock collapse" — Lilly running across breaking planks ===
+  openRunner(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    const W=440,H=200;
+    card.innerHTML=`
+      <div class="m-kicker" style="color:#60d0ff">Dock Collapse · ${dp.userData.type.n}</div>
+      <div class="m-title">Run.</div>
+      <div class="m-sub">Planks falling behind you. Tap / Space to jump. Don’t stop. Don’t look back.</div>
+      <canvas id="m-rcv" width="${W}" height="${H}"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Distance</span><span class="sv b" id="m-rdist">0m</span></div></div>
+      <button class="btn bx" id="m-rquit">Bail Out</button>`;
+    const cv=$('m-rcv'),ctx=cv.getContext('2d');
+    // Game state
+    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:3,obstacles:[],t0:Date.now()};
+    const jump=()=>{if(G.grounded&&G.alive){G.vy=-9;G.grounded=false}};
+    // Spawn obstacles (gap between planks) at random intervals
+    const spawn=()=>{
+      const gap=60+Math.random()*30;G.obstacles.push({x:W+10,w:gap});
+      const nextIn=900+Math.random()*1200;
+      G.spawnTimer=setTimeout(spawn,nextIn);
+    };
+    G.spawnTimer=setTimeout(spawn,800);
+    const tick=()=>{
+      if(!G.alive){return}
+      // Physics
+      G.vy+=0.5;G.y+=G.vy;if(G.y>=H-40){G.y=H-40;G.vy=0;G.grounded=true}
+      G.dist+=G.speed;G.speed=Math.min(7,3+G.dist/2000);
+      // Move obstacles + collision
+      for(let i=G.obstacles.length-1;i>=0;i--){
+        const o=G.obstacles[i];o.x-=G.speed;
+        // Player is at x=60-78, y=(H-40)-32 .. (H-40)+10
+        const inX=(60+18>o.x)&&(60<o.x+o.w);
+        const onGround=G.y>=H-44;
+        if(inX&&onGround){G.alive=false;end();return}
+        if(o.x<-60)G.obstacles.splice(i,1);
+      }
+      // Render
+      ctx.fillStyle='#02060f';ctx.fillRect(0,0,W,H);
+      // sky band
+      const grd=ctx.createLinearGradient(0,0,0,H);grd.addColorStop(0,'#0c1822');grd.addColorStop(1,'#02060f');ctx.fillStyle=grd;ctx.fillRect(0,0,W,H);
+      // dock baseline + planks
+      ctx.fillStyle='#5a4210';ctx.fillRect(0,H-30,W,30);
+      ctx.fillStyle='#8B6914';for(let x=-G.dist%40;x<W;x+=40)ctx.fillRect(x,H-30,36,4);
+      // gaps
+      ctx.fillStyle='#02060f';G.obstacles.forEach(o=>ctx.fillRect(o.x,H-30,o.w,30));
+      // Lilly figure (simple stick)
+      ctx.fillStyle='#10b981';ctx.fillRect(60,G.y-20,18,28);
+      ctx.fillStyle='#d4a373';ctx.beginPath();ctx.arc(69,G.y-26,7,0,Math.PI*2);ctx.fill();
+      // HUD overlay
+      $('m-rdist').textContent=Math.round(G.dist/10)+'m';
+      G.raf=requestAnimationFrame(tick);
+    };
+    const end=()=>{
+      if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);
+      cv.onclick=null;document.removeEventListener('keydown',keyHandler);
+      const dist=Math.round(G.dist/10),score=Math.min(400,dist*2);
+      const line=dist>200?'You outran it. Barely.':'The dock took it. Hull held.';
+      mini.finish(dp,score,line,'lilly');
+    };
+    const keyHandler=e=>{if(e.code==='Space'){e.preventDefault();jump()}};
+    document.addEventListener('keydown',keyHandler);
+    cv.onclick=jump;cv.ontouchstart=e=>{e.preventDefault();jump()};
+    $('m-rquit').onclick=()=>{G.alive=false;end()};
+    el.style.display='flex';tick();
+    radio('Dock’s coming apart. Move.','self');
+  },
   // === PUZZLE: 3-question lore quiz drawn from Castor Bayou canon ===
   openPuzzle(dp){
     miniActive=true;S.on=false;
