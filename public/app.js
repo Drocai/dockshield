@@ -1,4 +1,12 @@
 const DS=(()=>{
+// === GAME_MODE flag ===
+// 'game'     : live free-roam mode — funnel UI suppressed, no email gate, no discount bridge.
+// 'business' : legacy marketing demo — restores the email/address form, tier plans, discount banners,
+//              and Supabase saveLead/saveData/quote/pay pipeline. Kept intact for future reskin into
+//              in-game economy / promotional drops / tier cosmetics.
+// Flipping this constant fully restores the sales bridge — no business-mode code is deleted, only
+// gated on the way in.
+const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
@@ -506,8 +514,10 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
   // Tiered discount earned from run quality
   S.outcome=rl;S.discount=DISC[rl]||0;
-  paintDiscount();
-  saveData(won);show('s5')}
+  // Business-mode pipeline: paint the discount banner + send the analytics_events row.
+  // In game mode, s5 still shows score/civilians/evidence but no discount/plans bridge.
+  if(GAME_MODE==='business'){paintDiscount();saveData(won)}
+  show('s5')}
 
 // Paint the dynamic discount across s5 (result) and s3 (plans)
 function paintDiscount(){
@@ -538,7 +548,7 @@ async function launch(){if(!val())return;show('s2');setStep(1);$('lt').textConte
     await new Promise(r=>setTimeout(r,300));setStep(2);$('lt').textContent='Locating Waterway';$('lm').textContent='Geocoding your coordinates...';
     const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}
     setStep(3);$('lt').textContent='Reading Conditions';$('lm').textContent='Fetching live weather...';await fetchWx();
-    setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';await saveLead();
+    setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';if(GAME_MODE==='business')await saveLead();
     setStep(5);$('lt').textContent='Deploying';$('lm').textContent='Building the op...';await new Promise(r=>setTimeout(r,400));
     startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)
   }catch(e){alert('Error: '+e.message);show('s1')}}
@@ -546,7 +556,7 @@ async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent
   try{
     setStep(2);const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}
     setStep(3);$('lm').textContent='Fetching conditions...';await fetchWx();
-    setStep(4);$('lm').textContent='Registering...';await saveLead();
+    setStep(4);$('lm').textContent='Registering...';if(GAME_MODE==='business')await saveLead();
     setStep(5);await new Promise(r=>setTimeout(r,300));
     $('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')
   }catch(e){alert('Error: '+e.message);show('s1')}}
@@ -569,7 +579,9 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
 
+// Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
+document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,mode:GAME_MODE};
 })();
 

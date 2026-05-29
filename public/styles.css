@@ -98,3 +98,16 @@ input::placeholder{color:#334155}
 #radio .r-line{display:block;line-height:1.4}
 @keyframes pls{0%,100%{opacity:1}50%{opacity:0.5}}
 
+/* === GAME_MODE='game' funnel suppression ===
+   All sales-bridge surfaces stay in the DOM (so the business-mode reskin can revive them
+   later) but are hidden from players when the live mode is 'game'. */
+body.mode-game #s3,
+body.mode-game #s4,
+body.mode-game #r-disc-wrap,
+body.mode-game #r-disc-btn,
+body.mode-game #td,
+body.mode-game .ordiv,
+body.mode-game button.bx[onclick*="skip"],
+body.mode-game button.bx[onclick*="showTiers"],
+body.mode-game button.bgreen{display:none !important}
+
