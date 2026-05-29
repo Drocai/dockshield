@@ -98,3 +98,36 @@ input::placeholder{color:#334155}
 #radio .r-line{display:block;line-height:1.4}
 @keyframes pls{0%,100%{opacity:1}50%{opacity:0.5}}
 
+/* === GAME_MODE='game' funnel suppression ===
+   All sales-bridge surfaces stay in the DOM (so the business-mode reskin can revive them
+   later) but are hidden from players when the live mode is 'game'. */
+body.mode-game #s3,
+body.mode-game #s4,
+body.mode-game #r-disc-wrap,
+body.mode-game #r-disc-btn,
+body.mode-game #td,
+body.mode-game .ordiv,
+body.mode-game button.bx[onclick*="skip"],
+body.mode-game button.bx[onclick*="showTiers"],
+body.mode-game button.bgreen{display:none !important}
+
+body.mode-game .biz-only{display:none !important}
+body.mode-business .game-only{display:none !important}
+
+.q-opts{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
+.q-opt{background:rgba(3,7,18,0.5);border:1px solid rgba(251,146,60,0.12);border-radius:10px;padding:10px 12px;color:#e8edf5;font:13px 'DM Sans',sans-serif;text-align:left;cursor:pointer;transition:all 0.18s;line-height:1.4}
+.q-opt:hover{border-color:rgba(251,146,60,0.4);background:rgba(232,89,12,0.06);transform:translateX(2px)}
+.q-opt[data-h="regular"]:hover{border-color:rgba(239,68,68,0.5)}
+.q-opt[data-h="pontoon"]:hover{border-color:rgba(16,185,129,0.5)}
+.q-opt[data-h="speedboat"]:hover{border-color:rgba(59,130,246,0.5)}
+
+/* === MINI-GAME OVERLAY === */
+#mini{position:fixed;inset:0;z-index:50;background:rgba(3,7,18,0.85);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:16px}
+.mini-card{background:rgba(8,18,38,0.96);border:1px solid rgba(251,146,60,0.2);border-radius:14px;padding:28px 24px;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:0 24px 80px -12px rgba(0,0,0,0.7);position:relative}
+.mini-card .m-kicker{font:700 9px 'JetBrains Mono',monospace;letter-spacing:2px;text-transform:uppercase;color:#fb923c;margin-bottom:6px}
+.mini-card .m-title{font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:6px}
+.mini-card .m-sub{font-size:12.5px;color:#94a3b8;line-height:1.5;margin-bottom:14px}
+/* Override the global `canvas{position:fixed;inset:0}` rule (which is for the THREE.js scene)
+   so mini-game canvases stay in the card's normal flow. */
+.mini-card canvas{display:block;position:static !important;inset:auto !important;z-index:auto;background:#02060f;border:1px solid rgba(251,146,60,0.15);border-radius:8px;margin:8px auto;max-width:100%}
+

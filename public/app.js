@@ -1,4 +1,12 @@
 const DS=(()=>{
+// === GAME_MODE flag ===
+// 'game'     : live free-roam mode — funnel UI suppressed, no email gate, no discount bridge.
+// 'business' : legacy marketing demo — restores the email/address form, tier plans, discount banners,
+//              and Supabase saveLead/saveData/quote/pay pipeline. Kept intact for future reskin into
+//              in-game economy / promotional drops / tier cosmetics.
+// Flipping this constant fully restores the sales bridge — no business-mode code is deleted, only
+// gated on the way in.
+const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
@@ -17,7 +25,14 @@ function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('o
   // Hide touch controls when any card is showing
   const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
 
-let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null;
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
+// Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
+const DP_TYPES=[
+  {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
+  {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
+  {k:'runner',  col:0x60d0ff,n:'DOCK COLLAPSE',  open:'openRunner'},
+  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'}
+];
 // Evidence pool — one is rolled per run. Voice belongs to Lilly (country direct, swamp-sensitive).
 const EV=[
   {n:'Drift bottle',line:'Paper inside reads "they listen." First piece for the Castor Bayou case file.'},
@@ -29,6 +44,280 @@ let wps=[],wpI=0;
 const keys={};
 let tch={lY:0,rX:0};
 let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
+// === MINI-GAME SLOTS ===
+// Each mini-game key has an opener that pauses S.on while the overlay is up and a finish() helper
+// that re-arms the world. Battle/puzzle/runner/tetris bodies land in the next commits; the slots
+// are wired now so the drop-point spawner can target them.
+let miniActive=false;
+const mini={
+  finish(dp,score,radioLine,who){
+    if(score)S.score+=score;
+    if(radioLine)radio(radioLine,who||'self');
+    miniActive=false;S.on=true;
+    const el=$('mini');if(el)el.style.display='none';
+    if(dp)clearDropPoint(dp);
+  },
+  // === TETRIS: "stack the catch" — falling fish-shaped pieces on a 10x16 grid ===
+  openTetris(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    const COLS=10,ROWS=16,CELL=20;
+    const W=COLS*CELL,H=ROWS*CELL;
+    card.innerHTML=`
+      <div class="m-kicker" style="color:#10b981">Tackle Box · ${dp.userData.type.n}</div>
+      <div class="m-title">Stack the catch.</div>
+      <div class="m-sub">Pack the tackle box. Clear lines. Don’t stack out.</div>
+      <canvas id="m-tcv" width="${W}" height="${H}"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Lines</span><span class="sv g" id="m-tlines">0</span></div><div class="sr"><span class="sl">Score</span><span class="sv b" id="m-tscr">0</span></div></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">
+        <button class="btn bx" id="m-tl">◀</button>
+        <button class="btn bx" id="m-tr">▶</button>
+        <button class="btn bx" id="m-trot">↻</button>
+        <button class="btn bx" id="m-td">▼</button>
+      </div>
+      <button class="btn bx" id="m-tquit" style="margin-top:8px">Bail Out</button>`;
+    const cv=$('m-tcv'),ctx=cv.getContext('2d');
+    // 7 standard tetrominoes
+    const PIECES=[
+      {c:'#60d0ff',s:[[1,1,1,1]]},                     // I
+      {c:'#fbcf3b',s:[[1,1],[1,1]]},                   // O
+      {c:'#a78bfa',s:[[0,1,0],[1,1,1]]},               // T
+      {c:'#10b981',s:[[0,1,1],[1,1,0]]},               // S
+      {c:'#ef4444',s:[[1,1,0],[0,1,1]]},               // Z
+      {c:'#3b82f6',s:[[1,0,0],[1,1,1]]},               // J
+      {c:'#f59e0b',s:[[0,0,1],[1,1,1]]}                // L
+    ];
+    const G={grid:Array.from({length:ROWS},()=>Array(COLS).fill(0)),lines:0,score:0,alive:true};
+    const newPiece=()=>{
+      const p=PIECES[Math.floor(Math.random()*PIECES.length)];
+      G.cur={shape:p.s.map(r=>r.slice()),color:p.c,x:Math.floor(COLS/2)-Math.floor(p.s[0].length/2),y:0};
+      if(collides(G.cur,0,0)){G.alive=false;end()}
+    };
+    const collides=(p,dx,dy)=>{
+      for(let r=0;r<p.shape.length;r++)for(let c=0;c<p.shape[r].length;c++){
+        if(!p.shape[r][c])continue;
+        const ny=p.y+r+dy,nx=p.x+c+dx;
+        if(nx<0||nx>=COLS||ny>=ROWS)return true;
+        if(ny>=0&&G.grid[ny][nx])return true;
+      }
+      return false;
+    };
+    const lock=()=>{
+      G.cur.shape.forEach((row,r)=>row.forEach((v,c)=>{if(v&&G.cur.y+r>=0)G.grid[G.cur.y+r][G.cur.x+c]=G.cur.color}));
+      // Clear lines
+      let cleared=0;
+      for(let r=ROWS-1;r>=0;r--){if(G.grid[r].every(v=>v)){G.grid.splice(r,1);G.grid.unshift(Array(COLS).fill(0));cleared++;r++}}
+      if(cleared){G.lines+=cleared;G.score+=[0,40,100,300,1200][cleared]}
+      newPiece();
+    };
+    const rotate=()=>{
+      const r=G.cur.shape;const n=r[0].map((_,i)=>r.map(row=>row[i]).reverse());
+      const old=G.cur.shape;G.cur.shape=n;if(collides(G.cur,0,0))G.cur.shape=old;
+    };
+    const move=dx=>{if(!collides(G.cur,dx,0))G.cur.x+=dx};
+    const drop=()=>{
+      if(!collides(G.cur,0,1))G.cur.y++;
+      else lock();
+    };
+    const render=()=>{
+      ctx.fillStyle='#02060f';ctx.fillRect(0,0,W,H);
+      // grid lines
+      ctx.strokeStyle='rgba(251,146,60,0.06)';for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)ctx.strokeRect(c*CELL,r*CELL,CELL,CELL);
+      // locked cells
+      for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){if(G.grid[r][c]){ctx.fillStyle=G.grid[r][c];ctx.fillRect(c*CELL+1,r*CELL+1,CELL-2,CELL-2)}}
+      // current piece
+      if(G.cur){ctx.fillStyle=G.cur.color;G.cur.shape.forEach((row,r)=>row.forEach((v,c)=>{if(v)ctx.fillRect((G.cur.x+c)*CELL+1,(G.cur.y+r)*CELL+1,CELL-2,CELL-2)}))}
+      $('m-tlines').textContent=G.lines;$('m-tscr').textContent=G.score;
+    };
+    const tick=()=>{
+      if(!G.alive)return;
+      drop();render();
+      G.timer=setTimeout(tick,Math.max(200,520-G.lines*22));
+    };
+    const end=()=>{
+      if(G.timer)clearTimeout(G.timer);document.removeEventListener('keydown',keyHandler);
+      const line=G.lines>=4?'Tackle box packed. Clean.':G.lines>0?'Packed enough to ride out.':'Box overflowed. Bait’s lost.';
+      mini.finish(dp,G.score+G.lines*25,line,G.lines>=4?'lilly':'self');
+    };
+    const keyHandler=e=>{
+      if(!miniActive)return;
+      if(e.code==='ArrowLeft'){e.preventDefault();move(-1);render()}
+      if(e.code==='ArrowRight'){e.preventDefault();move(1);render()}
+      if(e.code==='ArrowUp'){e.preventDefault();rotate();render()}
+      if(e.code==='ArrowDown'){e.preventDefault();drop();render()}
+    };
+    document.addEventListener('keydown',keyHandler);
+    $('m-tl').onclick=()=>{move(-1);render()};
+    $('m-tr').onclick=()=>{move(1);render()};
+    $('m-trot').onclick=()=>{rotate();render()};
+    $('m-td').onclick=()=>{drop();render()};
+    $('m-tquit').onclick=()=>{G.alive=false;end()};
+    newPiece();render();
+    el.style.display='flex';tick();
+    radio('Tackle box overflowing. Pack it down.','self');
+  },
+  // === RUNNER: side-scrolling "dock collapse" — Lilly running across breaking planks ===
+  openRunner(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    const W=440,H=200;
+    card.innerHTML=`
+      <div class="m-kicker" style="color:#60d0ff">Dock Collapse · ${dp.userData.type.n}</div>
+      <div class="m-title">Run.</div>
+      <div class="m-sub">Planks falling behind you. Tap / Space to jump. Don’t stop. Don’t look back.</div>
+      <canvas id="m-rcv" width="${W}" height="${H}"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Distance</span><span class="sv b" id="m-rdist">0m</span></div></div>
+      <button class="btn bx" id="m-rquit">Bail Out</button>`;
+    const cv=$('m-rcv'),ctx=cv.getContext('2d');
+    // Game state
+    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:3,obstacles:[],t0:Date.now()};
+    const jump=()=>{if(G.grounded&&G.alive){G.vy=-9;G.grounded=false}};
+    // Spawn obstacles (gap between planks) at random intervals
+    const spawn=()=>{
+      const gap=60+Math.random()*30;G.obstacles.push({x:W+10,w:gap});
+      const nextIn=900+Math.random()*1200;
+      G.spawnTimer=setTimeout(spawn,nextIn);
+    };
+    G.spawnTimer=setTimeout(spawn,800);
+    const tick=()=>{
+      if(!G.alive){return}
+      // Physics
+      G.vy+=0.5;G.y+=G.vy;if(G.y>=H-40){G.y=H-40;G.vy=0;G.grounded=true}
+      G.dist+=G.speed;G.speed=Math.min(7,3+G.dist/2000);
+      // Move obstacles + collision
+      for(let i=G.obstacles.length-1;i>=0;i--){
+        const o=G.obstacles[i];o.x-=G.speed;
+        // Player is at x=60-78, y=(H-40)-32 .. (H-40)+10
+        const inX=(60+18>o.x)&&(60<o.x+o.w);
+        const onGround=G.y>=H-44;
+        if(inX&&onGround){G.alive=false;end();return}
+        if(o.x<-60)G.obstacles.splice(i,1);
+      }
+      // Render
+      ctx.fillStyle='#02060f';ctx.fillRect(0,0,W,H);
+      // sky band
+      const grd=ctx.createLinearGradient(0,0,0,H);grd.addColorStop(0,'#0c1822');grd.addColorStop(1,'#02060f');ctx.fillStyle=grd;ctx.fillRect(0,0,W,H);
+      // dock baseline + planks
+      ctx.fillStyle='#5a4210';ctx.fillRect(0,H-30,W,30);
+      ctx.fillStyle='#8B6914';for(let x=-G.dist%40;x<W;x+=40)ctx.fillRect(x,H-30,36,4);
+      // gaps
+      ctx.fillStyle='#02060f';G.obstacles.forEach(o=>ctx.fillRect(o.x,H-30,o.w,30));
+      // Lilly figure (simple stick)
+      ctx.fillStyle='#10b981';ctx.fillRect(60,G.y-20,18,28);
+      ctx.fillStyle='#d4a373';ctx.beginPath();ctx.arc(69,G.y-26,7,0,Math.PI*2);ctx.fill();
+      // HUD overlay
+      $('m-rdist').textContent=Math.round(G.dist/10)+'m';
+      G.raf=requestAnimationFrame(tick);
+    };
+    const end=()=>{
+      if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);
+      cv.onclick=null;document.removeEventListener('keydown',keyHandler);
+      const dist=Math.round(G.dist/10),score=Math.min(400,dist*2);
+      const line=dist>200?'You outran it. Barely.':'The dock took it. Hull held.';
+      mini.finish(dp,score,line,'lilly');
+    };
+    const keyHandler=e=>{if(e.code==='Space'){e.preventDefault();jump()}};
+    document.addEventListener('keydown',keyHandler);
+    cv.onclick=jump;cv.ontouchstart=e=>{e.preventDefault();jump()};
+    $('m-rquit').onclick=()=>{G.alive=false;end()};
+    el.style.display='flex';tick();
+    radio('Dock’s coming apart. Move.','self');
+  },
+  // === PUZZLE: 3-question lore quiz drawn from Castor Bayou canon ===
+  openPuzzle(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    // Question pool — canon-correct answer is always index 0; shuffled at render time.
+    const POOL=[
+      {q:'Why does the Garbone bait shop owner warn divers away from the Deep Dock?',a:['A cleanup crew went down there and never surfaced.','Bass season is closed and you’ll catch a fine.','The dock’s wood is rotten and unsafe.']},
+      {q:'What lies below the surface of the Sunk Road?',a:['A former roadway flooded after a dam failure — headlights still appear at night.','A cypress grove planted as a memorial.','A submarine training course from the 60s.']},
+      {q:'What is happening at the Quarantine Line?',a:['Corporate security blocks a contaminated canal full of fused barrels.','Tournament fishing checkpoint with weigh-in scales.','State park boundary with a no-wake zone.']},
+      {q:'Why does Lilly Loch transform?',a:['The bayou pressure rises and her body answers it.','She’s testing prototype superhero suits one at a time.','A fishing accident exposed her to a chemical spill.']},
+      {q:'What is the Flooded Chapel known for?',a:['It holds evidence that Bayou Bay has had cycles of water events before.','It was relocated and rebuilt on the new shoreline.','It’s a popular spot for sunrise weddings.']}
+    ];
+    const picks=[...POOL].sort(()=>Math.random()-0.5).slice(0,3);
+    // Shuffle each question's answers but track the canon-correct index.
+    const qs=picks.map(p=>{const order=p.a.map((a,i)=>({a,correct:i===0})).sort(()=>Math.random()-0.5);return{q:p.q,answers:order}});
+    let i=0,right=0;
+    const render=()=>{
+      const cur=qs[i];
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#fbcf3b">Cipher Float · ${dp.userData.type.n}</div>
+        <div class="m-title">${i+1}/3 · Read the water.</div>
+        <div class="m-sub">${cur.q}</div>
+        <div class="q-opts">
+          ${cur.answers.map((o,k)=>`<button class="q-opt" data-k="${k}">${o.a}</button>`).join('')}
+        </div>
+        <div class="sb"><div class="sr"><span class="sl">Correct so far</span><span class="sv g">${right}/3</span></div></div>`;
+      card.querySelectorAll('.q-opt').forEach(b=>b.onclick=()=>pick(parseInt(b.dataset.k)));
+    };
+    const pick=k=>{
+      const cur=qs[i];
+      if(cur.answers[k].correct){right++;radio('Right read. That tracks with the case file.','lilly')}
+      else radio('Wrong thread. Disinformation’s easy bait out here.','fly');
+      i++;
+      if(i>=qs.length){
+        const score=right===3?225:right*60;
+        const line=right===3?'Three for three. Castor Bayou opens up a little more.':right>0?'Some of it landed. The water remembers the rest.':'All bait, no catch. Don’t trust the easy answer here.';
+        mini.finish(dp,score,line,right===3?'lilly':'fly');
+      }else render();
+    };
+    el.style.display='flex';render();
+    radio('Cipher float in the shallows — three reads.','self');
+  },
+  // === BATTLE: surfaced cryptid combat using sonar pings ===
+  // The player has been ambushed by something that surfaced at this drop point. Each PING button
+  // press deals damage. Cryptid bites back on a timer reducing player hull. Win at 5 hits.
+  openBattle(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let hits=0,need=5,creatureHp=100,playerHull=Math.round(S.hull),lastBite=Date.now();
+    const render=()=>{
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#ef4444">Ambush · ${dp.userData.type.n}</div>
+        <div class="m-title">Something came up.</div>
+        <div class="m-sub">It surfaced under the boat. Light it up with the sonar before it tears through the hull.</div>
+        <div class="sb"><div class="sr"><span class="sl">Creature</span><span class="sv r">${creatureHp}%</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv ${playerHull<30?'r':playerHull<60?'y':'g'}">${playerHull}%</span></div><div class="sr"><span class="sl">Hits</span><span class="sv b">${hits}/${need}</span></div></div>
+        <button class="btn bp" id="m-ping" style="background:linear-gradient(135deg,#60d0ff,#3b82f6);box-shadow:0 4px 16px rgba(96,208,255,0.4)">Fire Sonar (Space)</button>
+        <button class="btn bx" id="m-flee">Fall Back</button>`;
+      $('m-ping').onclick=fire;$('m-flee').onclick=flee;
+    };
+    const fire=()=>{
+      if(creatureHp<=0)return;
+      creatureHp=Math.max(0,creatureHp-22);hits++;
+      if(creatureHp<=0){win();return}
+      render();
+    };
+    const flee=()=>{
+      // Falling back costs hull (the creature got a parting shot) but ends the mission alive.
+      S.hull=Math.max(1,S.hull-15);
+      mini.finish(dp,25,'Pulled back. It’s still down there.',S.bc==='speedboat'?'fly':'self');
+    };
+    const win=()=>{
+      S.hull=Math.min(100,Math.max(1,playerHull));  // apply remaining hull from battle state
+      mini.finish(dp,250,'Hit clean. It went back under — for now.','reel');
+    };
+    const lose=()=>{
+      mini.finish(dp,0,'It dragged us under. Hull breach.','reel');
+      S.hull=0;
+    };
+    // Bite tick: every 3s the creature damages the player's battle-state hull. Player hull persists.
+    const biteTimer=setInterval(()=>{
+      if(!miniActive||creatureHp<=0){clearInterval(biteTimer);return}
+      playerHull=Math.max(0,playerHull-8);S.hull=playerHull;
+      if(playerHull<=0){clearInterval(biteTimer);lose();return}
+      render();
+    },3000);
+    // Spacebar also fires while the overlay is up
+    const keyHandler=e=>{if(e.code==='Space'&&miniActive&&dp.userData.type.k==='battle'){e.preventDefault();fire()}};
+    document.addEventListener('keydown',keyHandler);
+    // Clean up the keyhandler when this mini ends.
+    const origFinish=mini.finish;
+    mini.finish=function(...args){document.removeEventListener('keydown',keyHandler);clearInterval(biteTimer);mini.finish=origFinish;return origFinish.apply(this,args)};
+    el.style.display='flex';render();
+    radio('Surfaced contact. Fire on it.','fly');
+  }
+};
 
 function initEngine(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
@@ -51,14 +340,16 @@ function initEngine(){
   scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;
 
   // Water — deeper blue-green, more reflective
-  waterGeo=new THREE.PlaneGeometry(800,800,80,80);
+  // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
+  waterGeo=new THREE.PlaneGeometry(1200,1200,96,96);
   const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();
+  if(GAME_MODE==='game')mkDropPoints();
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -166,6 +457,85 @@ function mkAI(){
     const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
     const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
     g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+// === DROP POINTS — randomly spawned mini-game anchors ===
+// Spawns 3 simultaneous drop points across the larger world; cleared drop points respawn at a
+// fresh random position with a fresh random type after a short delay.
+function mkDropPoint(type){
+  const g=new THREE.Group();
+  // Beacon column - thinner version of the dock pin marker, color-coded by type
+  const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,12,8),new THREE.MeshBasicMaterial({color:type.col,transparent:true,opacity:0.55}));beam.position.y=6;g.add(beam);
+  const tip=new THREE.Mesh(new THREE.SphereGeometry(1,12,12),new THREE.MeshStandardMaterial({color:type.col,emissive:type.col,emissiveIntensity:0.7}));tip.position.y=10;g.add(tip);
+  // Beacon ring on the water — same pattern as dock beacon
+  const ring=new THREE.Mesh(new THREE.RingGeometry(4,5,32),new THREE.MeshBasicMaterial({color:type.col,transparent:true,opacity:0.35,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.1;g.add(ring);
+  // Soft point light so it reads on dark water
+  const lt=new THREE.PointLight(type.col,1.2,28);lt.position.y=2;g.add(lt);
+  g.userData={type,ring,active:true};
+  return g;
+}
+function spawnDropPoint(){
+  const type=DP_TYPES[Math.floor(Math.random()*DP_TYPES.length)];
+  // Random position in the playable ring (radius 40-110 from origin, avoiding shores beyond ~140).
+  let x,z,tries=0;
+  do{const a=Math.random()*Math.PI*2,r=40+Math.random()*70;x=Math.cos(a)*r;z=Math.sin(a)*r;tries++}
+  while(tries<10&&dropPoints.some(d=>d.position.distanceTo(new THREE.Vector3(x,0,z))<30));
+  const dp=mkDropPoint(type);dp.position.set(x,0,z);scene.add(dp);dropPoints.push(dp);
+}
+function mkDropPoints(){for(let i=0;i<3;i++)spawnDropPoint()}
+function tickDropPoints(t){
+  for(let i=dropPoints.length-1;i>=0;i--){
+    const dp=dropPoints[i],u=dp.userData;
+    if(!u.active)continue;
+    // Animate ring opacity + tip bob
+    if(u.ring)u.ring.material.opacity=0.25+Math.sin(t*2+i)*0.15;
+    dp.children[1].position.y=10+Math.sin(t*1.5+i)*0.4;
+    // Proximity trigger
+    if(S.on&&!miniActive&&bMesh.position.distanceTo(dp.position)<5){
+      u.active=false;
+      // Hide the marker while the mini-game is open; respawn after the mini-game resolves.
+      dp.visible=false;
+      const fn=mini[u.type.open];
+      if(typeof fn==='function')fn(dp);else{
+        // Mini-game not built yet — placeholder: just clear it + radio + respawn.
+        radio('Drop point "'+u.type.n+'" reached — mini-game placeholder.','fly');
+        S.score+=50;clearDropPoint(dp);
+      }
+    }
+  }
+}
+function clearDropPoint(dp){
+  // Remove the resolved drop point and spawn a replacement at a new random spot.
+  scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
+  setTimeout(()=>{if(S.on&&dropPoints.length<3)spawnDropPoint()},2000);
+}
+
+function mkMist(){
+  // Low atmospheric mist over the water — Points cloud, slow rotation.
+  const cnt=400;const pos=new Float32Array(cnt*3);
+  for(let i=0;i<cnt;i++){const a=Math.random()*Math.PI*2,r=20+Math.random()*220;pos[i*3]=Math.cos(a)*r;pos[i*3+1]=0.4+Math.random()*1.6;pos[i*3+2]=Math.sin(a)*r}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const m=new THREE.PointsMaterial({color:0xb0c4d0,size:0.8,transparent:true,opacity:0.18,depthWrite:false});
+  const mist=new THREE.Points(g,m);scene.add(mist);scene._mist=mist;
+}
+
+function drawMinimap(){
+  const c=$('mm-canvas');if(!c)return;
+  const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42;  // scale: world u -> px
+  ctx.clearRect(0,0,W,H);
+  // ring background
+  ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // origin (dock)
+  ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
+  // boat dot
+  const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
+  // heading line
+  const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
+  ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
+  // drop points
+  dropPoints.forEach(dp=>{if(!dp.userData.active)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
 }
 
 function mkCryptid(){
@@ -386,8 +756,10 @@ function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').te
 function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
   if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
   if(p<2&&PH[p].check())setPh(p+1);
-  if(p>=1){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
+  if(p>=1)tickAI();
   if(p===2&&Math.abs(spd)>0.4)S.score=Math.max(0,S.score-2)}
+// Roaming AI boat motion — shared by business phases and free-roam.
+function tickAI(){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
 
 // === RENDER ===
 function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
@@ -399,6 +771,20 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
   // Foam ring grows with speed and pulses to read as turbulence
   if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
+  if(scene._sunDisc&&scene._sun){
+    const cyc=(t%360)/360,ang=cyc*Math.PI*2;
+    const sunY=Math.sin(ang)*60+30;const sunX=Math.cos(ang)*120;
+    scene._sunDisc.position.set(sunX,sunY,-280);if(scene._sunHalo)scene._sunHalo.position.copy(scene._sunDisc.position);
+    // Cool when low (night-ish), warm at midday.
+    const dayness=Math.max(0,Math.sin(ang));
+    scene._sun.intensity=0.4+dayness*1.0;
+    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030}
+  }
+  // Atmospheric mist drift — Points cloud spawned in mkMist(), shifts on the wind.
+  if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
+  // Minimap update
+  if(S.on&&$('mm-canvas')){drawMinimap()}
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
     const c=scene._cryptid;c.visible=true;
@@ -458,7 +844,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    tickPh();if(dd<8){S.pc=3;endGame(true)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI()}
+    // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
+    // runs end on hull=0 (sink) or player-triggered "End Run".
+    if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
@@ -478,13 +867,25 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
-  $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
-  $('nfo').textContent='WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
+  // Phase HUD is business-mode only — the free-roam world has no APPROACH/SHALLOWS/EXTRACTION arc.
+  $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';if(GAME_MODE==='business')$('phud').style.display='block';
+  // Minimap visible only in game mode (free-roam navigation aid).
+  const mm=$('minimap');if(mm)mm.style.display=GAME_MODE==='game'?'block':'none';
+  // Game-mode "End Run" button so the player can choose to end and see the recap.
+  const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
+  $('nfo').textContent=GAME_MODE==='game'?'WASD / Arrows · Space = Sonar Ping · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  if(GAME_MODE==='business')setPh(0);
+  else{
+    // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
+    // surge, roaming AI boats) should be live for the whole run. Activate them directly.
+    S.phase=1;aiB.forEach(a=>a.userData.on=true);radio(HERO[S.bc].voice.start);
+  }
+  show(null);
   // show(null) now handles touch display for mobile
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -506,8 +907,10 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
   // Tiered discount earned from run quality
   S.outcome=rl;S.discount=DISC[rl]||0;
-  paintDiscount();
-  saveData(won);show('s5')}
+  // Business-mode pipeline: paint the discount banner + send the analytics_events row.
+  // In game mode, s5 still shows score/civilians/evidence but no discount/plans bridge.
+  if(GAME_MODE==='business'){paintDiscount();saveData(won)}
+  show('s5')}
 
 // Paint the dynamic discount across s5 (result) and s3 (plans)
 function paintDiscount(){
@@ -538,22 +941,22 @@ async function launch(){if(!val())return;show('s2');setStep(1);$('lt').textConte
     await new Promise(r=>setTimeout(r,300));setStep(2);$('lt').textContent='Locating Waterway';$('lm').textContent='Geocoding your coordinates...';
     const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}
     setStep(3);$('lt').textContent='Reading Conditions';$('lm').textContent='Fetching live weather...';await fetchWx();
-    setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';await saveLead();
+    setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';if(GAME_MODE==='business')await saveLead();
     setStep(5);$('lt').textContent='Deploying';$('lm').textContent='Building the op...';await new Promise(r=>setTimeout(r,400));
-    startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)
+    startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)
   }catch(e){alert('Error: '+e.message);show('s1')}}
 async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent='Processing';$('lm').textContent='Analyzing...';$('skip-btn').style.display='none';
   try{
     setStep(2);const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}
     setStep(3);$('lm').textContent='Fetching conditions...';await fetchWx();
-    setStep(4);$('lm').textContent='Registering...';await saveLead();
+    setStep(4);$('lm').textContent='Registering...';if(GAME_MODE==='business')await saveLead();
     setStep(5);await new Promise(r=>setTimeout(r,300));
     $('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')
   }catch(e){alert('Error: '+e.message);show('s1')}}
 function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')}
-function playFromTier(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function playFromTier(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
-function replay(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function replay(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});mkBoat(c);const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
@@ -567,9 +970,44 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
+function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+  // Reset game-mode question state so the entry flow starts fresh on each "New Run".
+  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';S.lore={}}}
 
+// === GAME-MODE ENTRY: hero pick → Q1 → Q2 → free-roam ===
+// No email, no address. The two questions tag S.lore so radio chatter can reference them later;
+// they don't override the hero pick (player keeps the operative they selected).
+function beginRun(){
+  if(!S.lore)S.lore={};
+  $('op-grid').style.display='none';$('op-label').style.display='none';$('begin-btn').style.display='none';
+  $('s1-sub').textContent='Two reads before we shove off. Answer fast — the water doesn’t wait.';
+  $('q-1').style.display='block';
+}
+function qAns(n,h,tag){
+  if(!S.lore)S.lore={};
+  S.lore['q'+n]={hero:h,tag};
+  if(n===1){$('q-1').style.display='none';$('q-2').style.display='block'}
+  else{$('q-2').style.display='none';launchGame()}
+}
+function launchGame(){
+  // Game-mode entry bypasses the form/geocode/weather pipeline. Weather still gets a randomized
+  // fallback through fetchWx (its catch path). Lat/lng stay at the default constants.
+  S.addr='Castor Bayou';S.email='';
+  fetchWx().finally(()=>startGame());
+}
+
+// Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
+document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar};
+function endRun(){if(S.on)endGame(S.hull>0)}
+// QA hook (only active with ?qa=1) — force-opens a mini-game with a synthetic drop point so the
+// headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
+function qaOpen(kind){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  const type=DP_TYPES.find(d=>d.k===kind);if(!type)return false;
+  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);scene.add(dp);dropPoints.push(dp);
+  const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,mode:GAME_MODE};
 })();
 
