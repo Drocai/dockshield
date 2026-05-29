@@ -57,6 +57,48 @@ const mini={
     const el=$('mini');if(el)el.style.display='none';
     if(dp)clearDropPoint(dp);
   },
+  // === PUZZLE: 3-question lore quiz drawn from Castor Bayou canon ===
+  openPuzzle(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    // Question pool — canon-correct answer is always index 0; shuffled at render time.
+    const POOL=[
+      {q:'Why does the Garbone bait shop owner warn divers away from the Deep Dock?',a:['A cleanup crew went down there and never surfaced.','Bass season is closed and you’ll catch a fine.','The dock’s wood is rotten and unsafe.']},
+      {q:'What lies below the surface of the Sunk Road?',a:['A former roadway flooded after a dam failure — headlights still appear at night.','A cypress grove planted as a memorial.','A submarine training course from the 60s.']},
+      {q:'What is happening at the Quarantine Line?',a:['Corporate security blocks a contaminated canal full of fused barrels.','Tournament fishing checkpoint with weigh-in scales.','State park boundary with a no-wake zone.']},
+      {q:'Why does Lilly Loch transform?',a:['The bayou pressure rises and her body answers it.','She’s testing prototype superhero suits one at a time.','A fishing accident exposed her to a chemical spill.']},
+      {q:'What is the Flooded Chapel known for?',a:['It holds evidence that Bayou Bay has had cycles of water events before.','It was relocated and rebuilt on the new shoreline.','It’s a popular spot for sunrise weddings.']}
+    ];
+    const picks=[...POOL].sort(()=>Math.random()-0.5).slice(0,3);
+    // Shuffle each question's answers but track the canon-correct index.
+    const qs=picks.map(p=>{const order=p.a.map((a,i)=>({a,correct:i===0})).sort(()=>Math.random()-0.5);return{q:p.q,answers:order}});
+    let i=0,right=0;
+    const render=()=>{
+      const cur=qs[i];
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#fbcf3b">Cipher Float · ${dp.userData.type.n}</div>
+        <div class="m-title">${i+1}/3 · Read the water.</div>
+        <div class="m-sub">${cur.q}</div>
+        <div class="q-opts">
+          ${cur.answers.map((o,k)=>`<button class="q-opt" data-k="${k}">${o.a}</button>`).join('')}
+        </div>
+        <div class="sb"><div class="sr"><span class="sl">Correct so far</span><span class="sv g">${right}/3</span></div></div>`;
+      card.querySelectorAll('.q-opt').forEach(b=>b.onclick=()=>pick(parseInt(b.dataset.k)));
+    };
+    const pick=k=>{
+      const cur=qs[i];
+      if(cur.answers[k].correct){right++;radio('Right read. That tracks with the case file.','lilly')}
+      else radio('Wrong thread. Disinformation’s easy bait out here.','fly');
+      i++;
+      if(i>=qs.length){
+        const score=right===3?225:right*60;
+        const line=right===3?'Three for three. Castor Bayou opens up a little more.':right>0?'Some of it landed. The water remembers the rest.':'All bait, no catch. Don’t trust the easy answer here.';
+        mini.finish(dp,score,line,right===3?'lilly':'fly');
+      }else render();
+    };
+    el.style.display='flex';render();
+    radio('Cipher float in the shallows — three reads.','self');
+  },
   // === BATTLE: surfaced cryptid combat using sonar pings ===
   // The player has been ambushed by something that surfaced at this drop point. Each PING button
   // press deals damage. Cryptid bites back on a timer reducing player hull. Win at 5 hits.
