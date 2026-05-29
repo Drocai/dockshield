@@ -26,6 +26,39 @@ let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
 let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0};
 let equippedBait='';   // '' = bare hook, no bait bias
+// === BOAT UPGRADES ===
+// Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
+// tier ALSO attaches a visible part to the hull (bigger motor block, deck floodlights, hull
+// plating, antenna mast). Per-hero so each operative has its own boat and own upgrade ladder.
+const BOAT_UP={
+  engine:[
+    {n:'Stock Outboard',cost:0,  speedMul:1.00,e:'⚙️',d:'Came with the boat.'},
+    {n:'V-Tuned',       cost:60, speedMul:1.10,e:'🔥',d:'+10% top speed + acceleration.'},
+    {n:'Twin-Prop',     cost:180,speedMul:1.22,e:'🚀',d:'+22% top speed. Sounds mean.'}
+  ],
+  lights:[
+    {n:'Nav Lights',    cost:0,  range:0,    e:'💡',d:'Standard port + starboard.'},
+    {n:'Bow Spotlight', cost:55, range:1.4,  e:'🔦',d:'Cuts further into fog.'},
+    {n:'Floodlight Rig',cost:160,range:2.2,  e:'🌟',d:'Deck floodlights. Night-runs become easy.'}
+  ],
+  armor:[
+    {n:'Bare Hull',     cost:0,  resist:0,   e:'🧱',d:'Whatever the factory left.'},
+    {n:'Hull Plating',  cost:70, resist:0.08,e:'🛡️',d:'+8% damage resistance.'},
+    {n:'Reinforced Keel',cost:200,resist:0.18,e:'⛓️',d:'+18% damage resistance.'}
+  ],
+  electronics:[
+    {n:'Basic Sonar',   cost:0,  sonarBoost:0,    e:'📡',d:'Standard ping.'},
+    {n:'Wide-Sweep',    cost:65, sonarBoost:0.18, e:'🛰️',d:'+18% sonar range.'},
+    {n:'Depth Gauge',   cost:190,sonarBoost:0.32, e:'📊',d:'+32% sonar range + extra HUD depth pill.'}
+  ]
+};
+// Per-hero starter loadout — Reel V-Tuned engine, Lilly hull plating, Fly wide-sweep electronics.
+let boatUpgrades={
+  regular:  {engine:1,lights:0,armor:0,electronics:0},
+  pontoon:  {engine:0,lights:0,armor:1,electronics:0},
+  speedboat:{engine:0,lights:0,armor:0,electronics:1}
+};
+const eqUp=(slot)=>BOAT_UP[slot][(boatUpgrades[S.bc]||{})[slot]||0];
 const BAIT_TYPES={
   worm:    {n:'Worm',     c:'#a47a52', e:'🪱', desc:'+10% uncommon bias.'},
   cricket: {n:'Cricket',  c:'#8db347', e:'🦗', desc:'+18% uncommon, slight rare lift.'},
@@ -81,12 +114,13 @@ function loadSave(){
     if(d.duct)Object.assign(ductStats,d.duct);
     if(d.baitInv)Object.assign(baitInv,d.baitInv);
     if(typeof d.equippedBait==='string')equippedBait=d.equippedBait;
+    if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
   }catch(e){}
 }
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades}))}catch(e){}
 }
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
@@ -817,7 +851,10 @@ const SHOPS=[
   {id:'spillway',n:'Spillway Salvage',          x:170,  z:-30, col:0xa78bfa,
    blurb:'Salvaged from boats that didn\'t come back.',  sells:{reel:[2,3],line:[3],box:[2,3]}, consumables:['line','sonar','scout']},
   {id:'deep',    n:'The Deep Dock Outfitter',   x:-60,  z:170, col:0xef4444,
-   blurb:'Depth-rated gear. They know what\'s down there.', sells:{rod:[2,3],reel:[3],line:[3],box:[3]}, consumables:['hull','scout']}
+   blurb:'Depth-rated gear. They know what\'s down there.', sells:{rod:[2,3],reel:[3],line:[3],box:[3]}, consumables:['hull','scout']},
+  {id:'works',   n:'Castor Boatworks',           x:130,  z:130, col:0xf97316,
+   blurb:'Engines, plating, lights, electronics. Walk it out new.',
+   boatworks:true, consumables:['hull']}
 ];
 let shopMeshes=[];
 function mkShopStructure(shop){
@@ -1302,6 +1339,35 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
   // Foam ring under the boat — scales with speed for hull-water contact read
   const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.6,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.35,side:THREE.DoubleSide}));foam.rotation.x=-Math.PI/2;foam.position.y=-0.18;bMesh.add(foam);bMesh.userData.foam=foam;
+  // === Hero accent kit + upgrade-visible parts ===
+  // Hero accents pull from the boat color but layer kit on top so each operative reads at a glance.
+  const up=boatUpgrades[cls]||{};
+  if(cls==='regular'){
+    // The Reel: chrome trim strips + decal stripe + extra port spotlight
+    [[-1.2,1.05,1],[1.2,1.05,1]].forEach(([x,y,z])=>{const trim=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,3),new THREE.MeshStandardMaterial({color:0xe6e6e6,metalness:0.95,roughness:0.2}));trim.position.set(x,y,z);bMesh.add(trim)});
+    const decal=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.3),new THREE.MeshBasicMaterial({color:0xe8590c,transparent:true,opacity:0.95}));decal.position.set(0.81,1.55,-0.3);decal.rotation.y=Math.PI/2;bMesh.add(decal);
+  }else if(cls==='pontoon'){
+    // Lilly: wood plank texture on the cabin, inner-tube floats on the gunwale
+    const planks=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.22),new THREE.MeshStandardMaterial({color:0x9a6a32,roughness:0.95,emissive:0x1a0e02,emissiveIntensity:0.2}));planks.position.set(0,1.4,-0.3);bMesh.add(planks);
+    [[-1.3,0.6,0.5],[1.3,0.6,0.5],[-1.3,0.6,-1.4],[1.3,0.6,-1.4]].forEach(([x,y,z])=>{const tube=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.1,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0x2a1410,emissiveIntensity:0.3}));tube.rotation.x=Math.PI/2;tube.position.set(x,y,z);bMesh.add(tube)});
+  }else if(cls==='speedboat'){
+    // Fly: matte stealth panels + sonar mast on the cabin
+    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.24),new THREE.MeshStandardMaterial({color:0x1a2330,roughness:0.85,metalness:0.4}));panel.position.set(0,1.4,-0.3);bMesh.add(panel);
+    const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,2.2,6),new THREE.MeshStandardMaterial({color:0x2a3a4a,metalness:0.8}));mast.position.set(0,2.6,-0.3);bMesh.add(mast);
+    const dish=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,4,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x3b82f6,emissive:0x102a44,emissiveIntensity:0.5,side:THREE.DoubleSide}));dish.position.set(0,3.7,-0.3);dish.rotation.x=Math.PI;bMesh.add(dish);
+  }
+  // ENGINE: upgrade tier scales the motor block + tint
+  if((up.engine||0)>=1){const engBig=new THREE.Mesh(new THREE.BoxGeometry(0.9,1.5,1.1),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.85,roughness:0.25}));engBig.position.set(0,0.5,-3.1);bMesh.add(engBig)}
+  if((up.engine||0)>=2){const prop=new THREE.Mesh(new THREE.TorusGeometry(0.35,0.06,6,12),new THREE.MeshStandardMaterial({color:0xfb923c,emissive:0xe8590c,emissiveIntensity:0.6}));prop.rotation.x=Math.PI/2;prop.position.set(0,0.4,-3.5);bMesh.add(prop)}
+  // LIGHTS: tier 1 = bow spotlight, tier 2 = deck floodlights
+  if((up.lights||0)>=1){const spot=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.22,0.3,12),new THREE.MeshStandardMaterial({color:0xfff7d1,emissive:0xfff7d1,emissiveIntensity:0.8}));spot.rotation.x=Math.PI/2;spot.position.set(0,1.55,2.2);bMesh.add(spot);bMesh.add(new THREE.PointLight(0xffeecc,0.6,18))}
+  if((up.lights||0)>=2){[[-0.9,1.5,-1.6],[0.9,1.5,-1.6]].forEach(([x,y,z])=>{const fl=new THREE.Mesh(new THREE.SphereGeometry(0.16,8,6),new THREE.MeshStandardMaterial({color:0xffeecc,emissive:0xffeecc,emissiveIntensity:0.7}));fl.position.set(x,y,z);bMesh.add(fl)})}
+  // ARMOR: tier 1 = side plates, tier 2 = bow ram + keel band
+  if((up.armor||0)>=1){[[-1.18,0.55,0.5],[1.18,0.55,0.5]].forEach(([x,y,z])=>{const plate=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.45,2),new THREE.MeshStandardMaterial({color:0x4a4a4a,metalness:0.8,roughness:0.45}));plate.position.set(x,y,z);bMesh.add(plate)})}
+  if((up.armor||0)>=2){const ram=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,0.6),new THREE.MeshStandardMaterial({color:0x2a2a2a,metalness:0.9}));ram.position.set(0,0.4,4.1);bMesh.add(ram)}
+  // ELECTRONICS: tier 1 = small antenna, tier 2 = larger dish
+  if((up.electronics||0)>=1){const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,1.6,6),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x113a55,emissiveIntensity:0.7}));ant.position.set(0.5,2.2,-1);bMesh.add(ant)}
+  if((up.electronics||0)>=2){const radome=new THREE.Mesh(new THREE.SphereGeometry(0.28,12,8),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x102a44,emissiveIntensity:0.45,transparent:true,opacity:0.85}));radome.position.set(0,3.0,-0.6);bMesh.add(radome)}
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === WAKE PARTICLES ===
@@ -1386,18 +1452,22 @@ function fireSonar(){
   const now=Date.now()*0.001;
   // Sonar Bank buff: each press spends one banked ping with no 3s wait. Falls through to the
   // standard cooldown gate if the bank is empty.
+  // Sonar cooldown shortened by Fly's hero ability (3s → 2s) and not affected by upgrades; range
+  // (revealed in tickSonar / minimap reveal) widens with electronics.
+  const sonarCool=S.bc==='speedboat'?2:3;
   if(buffs.sonarBank>0){buffs.sonarBank--;persist()}
   else if(S.sonarReady&&now<S.sonarReady)return false;
-  else S.sonarReady=now+3;
-  S.lastPing=now;sfx('ping');S.pingReveal=now+4;
+  else S.sonarReady=now+sonarCool;
+  S.lastPing=now;sfx('ping');S.pingReveal=now+4+(eqUp('electronics').sonarBoost||0)*5;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
   ring.rotation.x=-Math.PI/2;ring.position.copy(origin);scene.add(ring);
   sonarRings.push({m:ring,t0:now});
-  // Highlight every stump within 25u for ~1.5s
+  const sonarRange=25*(1+(eqUp('electronics').sonarBoost||0));
+  // Highlight every stump within sonarRange for ~1.5s
   let pinged=0;
-  for(const s of stumps){if(s.position.distanceTo(origin)>25)continue;
+  for(const s of stumps){if(s.position.distanceTo(origin)>sonarRange)continue;
     const h=new THREE.Mesh(new THREE.RingGeometry(1.2,1.5,18),new THREE.MeshBasicMaterial({color:0xfb923c,transparent:true,opacity:0.65,side:THREE.DoubleSide}));
     h.rotation.x=-Math.PI/2;h.position.set(s.position.x,0.12,s.position.z);scene.add(h);
     stumpHighlights.push({m:h,t0:now});pinged++;
@@ -1768,6 +1838,8 @@ const ACH={
   first_forage:{n:'Off the Boat',d:'Foraged your first bait.'},
   worm_farmer:{n:'Worm Farmer',d:'Banked 50 worms.'},
   pantry_stocked:{n:'Pantry Stocked',d:'Every bait type at 5 or more.'},
+  first_upgrade:{n:'Wrench In Hand',d:'Bought your first boat upgrade.'},
+  boat_maxed:{n:'Tuned Up',d:'Maxed every upgrade slot on a hero boat.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
   gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
@@ -1861,7 +1933,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // While a cast is in flight the helm is locked — you can't drive off your own line. The boat
     // coasts to a stop via drag. (castLine already requires near-zero speed to start.)
     const frozen=_castInFlight;
-    if(!frozen&&(keys.ArrowUp||keys.KeyW||tch.lY>0.1))spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
+    // Engine upgrade multiplies top speed + accel; Fly's hero ability bumps top speed +5% extra.
+    const engM=eqUp('engine').speedMul*(S.bc==='speedboat'?1.05:1);
+    if(!frozen&&(keys.ArrowUp||keys.KeyW||tch.lY>0.1))spd=Math.min(spd+bt.ac*wxP*hullP*engM*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP*engM);
     // Reverse capped at -bt.mx*0.5 — the boat can back up but can't outrun itself in reverse.
     if(!frozen&&(keys.ArrowDown||keys.KeyS||tch.lY<-0.1))spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
     spd*=bt.dr;
@@ -1913,7 +1987,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       const dc=bMesh.position.distanceTo(c.position);
       if(dc<3){
         if(Math.abs(spd)<0.4){
-          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);sfx('rescue');
+          // Reel's hero ability: +25% bait yield from civilian rescues (rounded to whole bait).
+          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);const rescueBait=S.bc==='regular'?13:10;bait+=rescueBait;persist();sfx('rescue');
           $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
           $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
           if(S.civsSaved===1)radio(HERO[S.bc].voice.rescue);
@@ -1949,7 +2024,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
 
 // Tackle box → stump-damage resistance (0..~0.41) so a better box means a tougher run, while hull
 // stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
-function hullResist(){return Math.min(0.5,(eqBox().hullCap-100)/170)}
+// Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
+function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
@@ -2261,6 +2337,23 @@ const SHOP_ITEMS=[
 ];
 // openShop(shop) — shop is a SHOPS entry; omitted = the generic s1 Tackle Shop (all consumables,
 // no gear). Renders gear tiers (the shop's `sells` slots) + the shop's consumables.
+// Renders the Boatworks "Boat Upgrades" rows for the current hero. Each slot shows the next-step
+// tier (one above what you own) as buyable; already-owned tiers show ✓ OWNED.
+function renderBoatworksRows(){
+  const heroBoat=BT[S.bc].n;const hu=boatUpgrades[S.bc]||{};
+  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Boat Upgrades · ${heroBoat}</div>`;
+  for(const slot of ['engine','lights','armor','electronics']){
+    const cur=hu[slot]||0;
+    for(let tier=1;tier<BOAT_UP[slot].length;tier++){
+      const it=BOAT_UP[slot][tier];const owned=cur>=tier,buyable=cur===tier-1&&bait>=it.cost;
+      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
+        <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slot}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
+        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+      </div>`;
+    }
+  }
+  return html;
+}
 function openShop(shop){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
@@ -2298,6 +2391,7 @@ function openShop(shop){
       ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
     </div>
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
+    ${shop&&shop.boatworks?renderBoatworksRows():''}
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
     ${conRows}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
@@ -2305,6 +2399,7 @@ function openShop(shop){
   card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
   card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
+  card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<it.cost)return;bait-=it.cost;boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
   el.style.display='flex';
 }
 
