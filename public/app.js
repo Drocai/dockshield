@@ -25,7 +25,14 @@ function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('o
   // Hide touch controls when any card is showing
   const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
 
-let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null;
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
+// Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
+const DP_TYPES=[
+  {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
+  {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
+  {k:'runner',  col:0x60d0ff,n:'DOCK COLLAPSE',  open:'openRunner'},
+  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'}
+];
 // Evidence pool — one is rolled per run. Voice belongs to Lilly (country direct, swamp-sensitive).
 const EV=[
   {n:'Drift bottle',line:'Paper inside reads "they listen." First piece for the Castor Bayou case file.'},
@@ -37,6 +44,20 @@ let wps=[],wpI=0;
 const keys={};
 let tch={lY:0,rX:0};
 let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
+// === MINI-GAME SLOTS ===
+// Each mini-game key has an opener that pauses S.on while the overlay is up and a finish() helper
+// that re-arms the world. Battle/puzzle/runner/tetris bodies land in the next commits; the slots
+// are wired now so the drop-point spawner can target them.
+let miniActive=false;
+const mini={
+  finish(dp,score,radioLine,who){
+    if(score)S.score+=score;
+    if(radioLine)radio(radioLine,who||'self');
+    miniActive=false;S.on=true;
+    const el=$('mini');if(el)el.style.display='none';
+    if(dp)clearDropPoint(dp);
+  }
+};
 
 function initEngine(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x071520);scene.fog=new THREE.Fog(0x0b1e30,80,400);
@@ -68,6 +89,7 @@ function initEngine(){
 
   mkBoat('pontoon');
   mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();
+  if(GAME_MODE==='game')mkDropPoints();
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -175,6 +197,57 @@ function mkAI(){
     const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
     const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
     g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+// === DROP POINTS — randomly spawned mini-game anchors ===
+// Spawns 3 simultaneous drop points across the larger world; cleared drop points respawn at a
+// fresh random position with a fresh random type after a short delay.
+function mkDropPoint(type){
+  const g=new THREE.Group();
+  // Beacon column - thinner version of the dock pin marker, color-coded by type
+  const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,12,8),new THREE.MeshBasicMaterial({color:type.col,transparent:true,opacity:0.55}));beam.position.y=6;g.add(beam);
+  const tip=new THREE.Mesh(new THREE.SphereGeometry(1,12,12),new THREE.MeshStandardMaterial({color:type.col,emissive:type.col,emissiveIntensity:0.7}));tip.position.y=10;g.add(tip);
+  // Beacon ring on the water — same pattern as dock beacon
+  const ring=new THREE.Mesh(new THREE.RingGeometry(4,5,32),new THREE.MeshBasicMaterial({color:type.col,transparent:true,opacity:0.35,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.1;g.add(ring);
+  // Soft point light so it reads on dark water
+  const lt=new THREE.PointLight(type.col,1.2,28);lt.position.y=2;g.add(lt);
+  g.userData={type,ring,active:true};
+  return g;
+}
+function spawnDropPoint(){
+  const type=DP_TYPES[Math.floor(Math.random()*DP_TYPES.length)];
+  // Random position in the playable ring (radius 40-110 from origin, avoiding shores beyond ~140).
+  let x,z,tries=0;
+  do{const a=Math.random()*Math.PI*2,r=40+Math.random()*70;x=Math.cos(a)*r;z=Math.sin(a)*r;tries++}
+  while(tries<10&&dropPoints.some(d=>d.position.distanceTo(new THREE.Vector3(x,0,z))<30));
+  const dp=mkDropPoint(type);dp.position.set(x,0,z);scene.add(dp);dropPoints.push(dp);
+}
+function mkDropPoints(){for(let i=0;i<3;i++)spawnDropPoint()}
+function tickDropPoints(t){
+  for(let i=dropPoints.length-1;i>=0;i--){
+    const dp=dropPoints[i],u=dp.userData;
+    if(!u.active)continue;
+    // Animate ring opacity + tip bob
+    if(u.ring)u.ring.material.opacity=0.25+Math.sin(t*2+i)*0.15;
+    dp.children[1].position.y=10+Math.sin(t*1.5+i)*0.4;
+    // Proximity trigger
+    if(S.on&&!miniActive&&bMesh.position.distanceTo(dp.position)<5){
+      u.active=false;
+      // Hide the marker while the mini-game is open; respawn after the mini-game resolves.
+      dp.visible=false;
+      const fn=mini[u.type.open];
+      if(typeof fn==='function')fn(dp);else{
+        // Mini-game not built yet — placeholder: just clear it + radio + respawn.
+        radio('Drop point "'+u.type.n+'" reached — mini-game placeholder.','fly');
+        S.score+=50;clearDropPoint(dp);
+      }
+    }
+  }
+}
+function clearDropPoint(dp){
+  // Remove the resolved drop point and spawn a replacement at a new random spot.
+  scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
+  setTimeout(()=>{if(S.on&&dropPoints.length<3)spawnDropPoint()},2000);
 }
 
 function mkCryptid(){
@@ -467,6 +540,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
+    if(GAME_MODE==='game')tickDropPoints(t);
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
