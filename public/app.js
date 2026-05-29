@@ -1013,14 +1013,36 @@ function mkWaypoints(){
   });
 }
 
+// Hero hull silhouettes — each operative's boat has a distinct deck-plan profile, extruded from a
+// 2D THREE.Shape so the bow is a real point and the beam differs per hero (Lilly's pontoon is wide
+// + stable, the Fly's is narrow + sharp, the Reel's is balanced).
+const HULL_PROFILE={
+  regular:{halfBeam:1.15,bowZ:4.2,sternZ:-2.6,depth:0.95},   // The Reel — balanced runabout
+  pontoon:{halfBeam:1.5, bowZ:3.6,sternZ:-2.8,depth:1.05},   // Lilly Loch — wide stable barge
+  speedboat:{halfBeam:0.95,bowZ:4.6,sternZ:-2.4,depth:0.85}  // The Fly — narrow knife bow
+};
+function makeHullShape(p){
+  // Deck plan in the XZ plane (x = beam, y-of-shape = z fore/aft). Pointed bow, square transom.
+  const s=new THREE.Shape();
+  s.moveTo(-p.halfBeam,p.sternZ);
+  s.lineTo(p.halfBeam,p.sternZ);
+  s.lineTo(p.halfBeam,p.bowZ-1.3);
+  s.quadraticCurveTo(p.halfBeam,p.bowZ,0,p.bowZ);          // starboard bow sweep to the point
+  s.quadraticCurveTo(-p.halfBeam,p.bowZ,-p.halfBeam,p.bowZ-1.3);
+  s.lineTo(-p.halfBeam,p.sternZ);
+  return s;
+}
 function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THREE.Group();
-  // Hull — tapered bow using scaled boxes
-  const hullMain=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.9,4.5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35,metalness:0.15}));hullMain.position.y=0.45;hullMain.castShadow=true;bMesh.add(hullMain);
-  // Bow taper
-  const bow=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.7,1.5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35,metalness:0.15}));bow.position.set(0,0.4,3.2);bow.castShadow=true;bMesh.add(bow);
-  const bowTip=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.5,0.8),new THREE.MeshStandardMaterial({color:t.col,roughness:0.35}));bowTip.position.set(0,0.35,4);bMesh.add(bowTip);
-  // Stern
-  const stern=new THREE.Mesh(new THREE.BoxGeometry(2,0.7,0.6),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));stern.position.set(0,0.4,-2.5);bMesh.add(stern);
+  const prof=HULL_PROFILE[cls]||HULL_PROFILE.regular;
+  // Extruded hull — beveled top edge reads as a gunwale. Rotated so the extrude depth becomes height.
+  const hullGeo=new THREE.ExtrudeGeometry(makeHullShape(prof),{depth:prof.depth,bevelEnabled:true,bevelThickness:0.12,bevelSize:0.12,bevelSegments:2});
+  hullGeo.rotateX(-Math.PI/2);  // shape was in XZ; extrude along +Y -> stand it up as the hull height
+  const hull=new THREE.Mesh(hullGeo,new THREE.MeshStandardMaterial({color:t.col,roughness:0.32,metalness:0.18}));
+  hull.position.y=0.15;hull.castShadow=true;hull.receiveShadow=true;bMesh.add(hull);
+  // Interior deck floor so the hull doesn't look hollow from above.
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(prof.halfBeam*1.7,0.08,(prof.bowZ-prof.sternZ)*0.8),new THREE.MeshStandardMaterial({color:0x3a2a18,roughness:0.85}));deck.position.set(0,0.55,(prof.bowZ+prof.sternZ)/2-0.3);bMesh.add(deck);
+  // Stern transom block (motor mounts here)
+  const stern=new THREE.Mesh(new THREE.BoxGeometry(prof.halfBeam*1.8,0.7,0.5),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));stern.position.set(0,0.4,prof.sternZ);bMesh.add(stern);
   // Deck stripe
   const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.04,4.8),new THREE.MeshStandardMaterial({color:0xe8590c,emissive:0xe8590c,emissiveIntensity:0.15}));stripe.position.y=0.92;bMesh.add(stripe);
   // Cabin
