@@ -22,6 +22,17 @@ let bestScore=0,muted=false,bait=0,achievements=new Set();
 let ductStats={sightings:0,attempts:0,nearCatches:0};
 // Active buffs (consumable items from the tackle shop). Persists across runs until consumed.
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
+// Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
+// bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0};
+let equippedBait='';   // '' = bare hook, no bait bias
+const BAIT_TYPES={
+  worm:    {n:'Worm',     c:'#a47a52', e:'🪱', desc:'+10% uncommon bias.'},
+  cricket: {n:'Cricket',  c:'#8db347', e:'🦗', desc:'+18% uncommon, slight rare lift.'},
+  minnow:  {n:'Minnow',   c:'#7ec8e3', e:'🐠', desc:'+20% rare odds (pike-biased).'},
+  frog:    {n:'Frog',     c:'#5fa75f', e:'🐸', desc:'+25% rare, lures bass.'},
+  crayfish:{n:'Crayfish', c:'#cf4040', e:'🦞', desc:'+30% rare + 10% legendary.'}
+};
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
 // improve the fishing loop: rod = fight control, reel = rare odds, line = max landable rarity,
@@ -68,12 +79,14 @@ function loadSave(){
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
     if(d.duct)Object.assign(ductStats,d.duct);
+    if(d.baitInv)Object.assign(baitInv,d.baitInv);
+    if(typeof d.equippedBait==='string')equippedBait=d.equippedBait;
   }catch(e){}
 }
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait}))}catch(e){}
 }
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
@@ -117,7 +130,19 @@ function rollFish(spot){
   const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
   const tourney=buffs.rareLine>0;
   const reelBonus=eqReel().rare;  // equipped reel's permanent rare-odds multiplier
-  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;return {...f,w}});
+  // Bait pantry bias — consumed in castLine before the roll runs; bias is read here.
+  const useBait=equippedBait&&baitInv[equippedBait]>0?equippedBait:'';
+  const baitBias=f=>{
+    if(!useBait)return 1;
+    if(useBait==='worm')return f.r==='uncommon'?1.10:1;
+    if(useBait==='cricket')return f.r==='uncommon'?1.18:f.r==='rare'?1.05:1;
+    if(useBait==='minnow')return f.r==='rare'?1.20:f.n==='Three-eyed pike'?1.5:1;
+    if(useBait==='frog')return f.r==='rare'?1.25:f.n==='Largemouth bass'?1.5:1;
+    if(useBait==='crayfish')return f.r==='rare'?1.30:f.r==='legendary'?1.10:1;
+    return 1;
+  };
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;w*=baitBias(f);return {...f,w}});
+  if(useBait){baitInv[useBait]=Math.max(0,baitInv[useBait]-1);persist()}
   if(tourney){buffs.rareLine--;persist()}
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
   for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
@@ -581,6 +606,119 @@ const mini={
     mini.addTeardown(()=>clearInterval(biteTimer));
     el.style.display='flex';render();
     radio('Surfaced contact. Fire on it.','fly');
+  },
+
+  // === FORAGE: WORM DIG ===
+  // 6x4 grid of dirt clods on a 320x220 canvas. Click a clod → it crumbles, ~50% chance of a worm,
+  // ~15% chance of a cricket bonus, rest empty. 22s timer. Clods regrow on a 1.8s cycle.
+  openForageWorm(camp){
+    miniActive=true;S.on=false;_catchOpen=true;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=320,H=220,cols=6,rows=4,cell=44,off=18;
+    card.innerHTML=`<div class="m-kicker" style="color:#a47a52">Worm Dig · ${camp.userData.camp.n}</div>
+      <div class="m-title">Dig the soft clods.</div>
+      <div class="m-sub">Click dirt to dig. Worms + the odd cricket. 22 seconds.</div>
+      <canvas id="m-fw-cv" width="${W}" height="${H}" style="background:#2a1d0e;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Worms</span><span class="sv g" id="m-fw-w">0</span></div><div class="sr"><span class="sl">Crickets</span><span class="sv y" id="m-fw-c">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fw-t">22</span></div></div>
+      <button class="btn bx" id="m-fw-q">Pack Up</button>`;
+    const cv=$('m-fw-cv'),ctx=cv.getContext('2d');
+    const clods=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)clods.push({x:off+c*cell,y:off+r*cell,r:Math.random()<0.05?0:1,t:0});
+    let worms=0,crickets=0,t=22;const G={alive:true};
+    const draw=()=>{ctx.clearRect(0,0,W,H);for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill()}}};
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const c of clods){if(c.r>0&&Math.hypot(c.x-mx,c.y-my)<20){c.r=0;c.t=0;sfx('dig');const roll=Math.random();if(roll<0.55){worms++;baitInv.worm++;$('m-fw-w').textContent=worms}else if(roll<0.7){crickets++;baitInv.cricket++;$('m-fw-c').textContent=crickets}draw();persist();break}}};
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fw-t').textContent=t;for(const c of clods){if(c.r===0){c.t++;if(c.t>10){c.r=1;c.t=0}}}draw();if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);const total=worms+crickets;onUnlock('first_forage');if(total>=8)onUnlock('worm_farmer');mini.finishForage(`${worms} worms${crickets?', '+crickets+' crickets':''}.`,worms*4+crickets*8)}},1000);
+    const rf=setInterval(()=>draw(),120);
+    $('m-fw-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',worms*4+crickets*8)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onclick=null});
+    draw();el.style.display='flex';
+  },
+
+  // === FORAGE: BUG CATCH (crickets) ===
+  // Bugs scuttle across the card. Tap to swat. 22s.
+  openForageBug(camp){
+    miniActive=true;S.on=false;_catchOpen=true;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=340,H=220;
+    card.innerHTML=`<div class="m-kicker" style="color:#8db347">Bug Catch · ${camp.userData.camp.n}</div>
+      <div class="m-title">Swat fast.</div>
+      <div class="m-sub">Crickets are quick. Don't think — tap.</div>
+      <canvas id="m-fb-cv" width="${W}" height="${H}" style="background:#1a2a14;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Crickets</span><span class="sv g" id="m-fb-c">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fb-t">22</span></div></div>
+      <button class="btn bx" id="m-fb-q">Pack Up</button>`;
+    const cv=$('m-fb-cv'),ctx=cv.getContext('2d');
+    const bugs=[];const G={alive:true};let crickets=0,t=22;
+    const spawn=()=>{if(bugs.length>5)return;const fromLeft=Math.random()<0.5;bugs.push({x:fromLeft?-10:W+10,y:20+Math.random()*(H-40),vx:(fromLeft?1:-1)*(1.3+Math.random()*1.7),vy:(Math.random()-0.5)*0.3,life:1})};
+    const draw=()=>{ctx.clearRect(0,0,W,H);for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}};
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const b of bugs){if(b.life>0&&Math.hypot(b.x-mx,b.y-my)<14){b.life=0;crickets++;baitInv.cricket++;$('m-fb-c').textContent=crickets;sfx('swat');persist();break}}};
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fb-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);onUnlock('first_forage');mini.finishForage(`${crickets} crickets in the box.`,crickets*6)}},1000);
+    const sp=setInterval(spawn,500);
+    const rf=setInterval(()=>{if(!G.alive)return;for(let i=bugs.length-1;i>=0;i--){const b=bugs[i];if(b.life<=0&&Math.random()<0.4){bugs.splice(i,1);continue}b.x+=b.vx;b.y+=b.vy;if(b.x<-20||b.x>W+20)b.life=0}draw()},40);
+    $('m-fb-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);mini.finishForage('Packed it in.',crickets*6)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);cv.onclick=null});
+    draw();el.style.display='flex';
+  },
+
+  // === FORAGE: FROG GRAB ===
+  // Frogs hop, pause ~700ms, hop again. Tap during the still window.
+  openForageFrog(camp){
+    miniActive=true;S.on=false;_catchOpen=true;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=340,H=220;
+    card.innerHTML=`<div class="m-kicker" style="color:#5fa75f">Frog Grab · ${camp.userData.camp.n}</div>
+      <div class="m-title">Catch them while they're still.</div>
+      <div class="m-sub">Frogs pause, then hop. Tap them during the pause.</div>
+      <canvas id="m-fg-cv" width="${W}" height="${H}" style="background:#1c2a16;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Frogs</span><span class="sv g" id="m-fg-f">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fg-t">25</span></div></div>
+      <button class="btn bx" id="m-fg-q">Pack Up</button>`;
+    const cv=$('m-fg-cv'),ctx=cv.getContext('2d');
+    const frogs=[{x:W/2,y:H/2,still:0.7,t:0}];const G={alive:true};let caught=0,t=25;
+    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}};
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(let i=0;i<frogs.length;i++){const f=frogs[i];if(Math.hypot(f.x-mx,f.y-my)<16&&f.t>=f.still){caught++;baitInv.frog++;$('m-fg-f').textContent=caught;sfx('croak');persist();frogs.splice(i,1);if(frogs.length<2)frogs.push({x:30+Math.random()*(W-60),y:30+Math.random()*(H-60),still:0.5+Math.random()*0.5,t:0});break}}};
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fg-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} frogs.`,caught*12)}},1000);
+    const rf=setInterval(()=>{if(!G.alive)return;for(const f of frogs){f.t+=0.06;if(f.t>f.still+0.6){f.x=30+Math.random()*(W-60);f.y=30+Math.random()*(H-60);f.t=0;f.still=0.5+Math.random()*0.5}}draw()},60);
+    $('m-fg-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',caught*12)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onclick=null});
+    draw();el.style.display='flex';
+  },
+
+  // === FORAGE: MINNOW NET ===
+  // Drag the net (click + drag) across moving minnows. Anything inside the swept rectangle when
+  // released counts. 22s timer; 3-second cooldown between sweeps.
+  openForageMinnow(camp){
+    miniActive=true;S.on=false;_catchOpen=true;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=340,H=220;
+    card.innerHTML=`<div class="m-kicker" style="color:#7ec8e3">Minnow Net · ${camp.userData.camp.n}</div>
+      <div class="m-title">Sweep them up.</div>
+      <div class="m-sub">Click + drag to draw a net. Release to scoop minnows inside.</div>
+      <canvas id="m-fm-cv" width="${W}" height="${H}" style="background:#10303a;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Minnows</span><span class="sv g" id="m-fm-m">0</span></div><div class="sr"><span class="sl">Crayfish</span><span class="sv y" id="m-fm-y">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fm-t">22</span></div></div>
+      <button class="btn bx" id="m-fm-q">Pack Up</button>`;
+    const cv=$('m-fm-cv'),ctx=cv.getContext('2d');
+    const m=[];const G={alive:true,drag:null};let caught=0,cray=0,t=22;
+    for(let i=0;i<10;i++)m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'});
+    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}};
+    const xy=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]};
+    cv.onmousedown=e=>{if(!G.alive)return;const[x,y]=xy(e);G.drag={x0:x,y0:y,x1:x,y1:y}};
+    cv.onmousemove=e=>{if(!G.drag)return;const[x,y]=xy(e);G.drag.x1=x;G.drag.y1=y};
+    cv.onmouseup=()=>{if(!G.drag)return;const d=G.drag;const minX=Math.min(d.x0,d.x1),maxX=Math.max(d.x0,d.x1),minY=Math.min(d.y0,d.y1),maxY=Math.max(d.y0,d.y1);for(let i=m.length-1;i>=0;i--){const f=m[i];if(f.x>=minX&&f.x<=maxX&&f.y>=minY&&f.y<=maxY){if(f.r==='cray'){cray++;baitInv.crayfish++;$('m-fm-y').textContent=cray}else{caught++;baitInv.minnow++;$('m-fm-m').textContent=caught}m.splice(i,1);m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'})}}sfx('net');persist();G.drag=null};
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fm-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} minnows${cray?', '+cray+' crayfish':''}.`,caught*5+cray*20)}},1000);
+    const rf=setInterval(()=>{if(!G.alive)return;for(const f of m){f.x+=f.vx;f.y+=f.vy;if(f.x<0||f.x>W)f.vx=-f.vx;if(f.y<0||f.y>H)f.vy=-f.vy}draw()},40);
+    $('m-fm-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',caught*5+cray*20)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onmousedown=null;cv.onmousemove=null;cv.onmouseup=null});
+    draw();el.style.display='flex';
+  },
+
+  // Forage finish: pantry-checked achievements, score bonus, clear overlay, resume run.
+  finishForage(msg,bonus){
+    this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
+    if(bonus)S.score+=bonus;
+    radio(msg,'lilly');sfx('win');
+    miniActive=false;S.on=true;_catchOpen=false;
+    const el=$('mini');if(el){el.style.display='none';const c=$('mini-card');if(c)c.innerHTML=''}
+    const stocked=Object.values(BAIT_TYPES).every(k=>baitInv[Object.keys(BAIT_TYPES).find(key=>BAIT_TYPES[key].n===k.n)]>=5);
+    if(stocked)onUnlock('pantry_stocked');
+    if((baitInv.worm||0)>=50)onUnlock('worm_farmer');
   }
 };
 
@@ -627,7 +765,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();mkCamps();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
@@ -640,6 +778,7 @@ function initEngine(){
       else castLine();
     }
     if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
+    if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
@@ -709,6 +848,44 @@ function tickShops(){
   const p=$('shop-prompt');if(!p)return;
   if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.shop.col.toString(16).padStart(6,'0')}">${near.userData.shop.n}</b> — press <b>E</b> to dock & shop`}
   else if(near){p.style.display='block';p.innerHTML='Slow to a stop to dock at the shop'}
+  else p.style.display='none';
+}
+
+// === SHORE FORAGING CAMPS ===
+// Visible little driftwood + lantern + bait-sign shacks at lake-edge spots away from bait shops.
+// Beach the boat within range + slow → "FORAGE HERE" prompt → press G to open a forage overlay.
+// Each camp lists which mini-games it offers (variety per location, replay value).
+const CAMPS=[
+  {id:'south_bank', n:'South Bank Worm Beds', x:75,  z:155, col:0xa47a52, games:['worm','cricket']},
+  {id:'west_marsh', n:'West Marsh Frog Pond', x:-180,z:-25, col:0x5fa75f, games:['frog','cricket']},
+  {id:'north_creek',n:'North Creek Minnow Run',x:-25,z:-180,col:0x7ec8e3, games:['minnow','worm']},
+  {id:'east_rocks', n:'East Rocks Crayfish Hole',x:185,z:80, col:0xcf4040, games:['crayfish','minnow']}
+];
+let campMeshes=[];
+function mkCampStructure(c){
+  const g=new THREE.Group();
+  // Driftwood pile + little plank deck so it reads as a beached camp.
+  for(let i=0;i<3;i++){const log=new THREE.Mesh(new THREE.CylinderGeometry(0.18+i*0.06,0.16,2.5,8),new THREE.MeshStandardMaterial({color:0x5a4210,roughness:0.95}));log.rotation.z=Math.PI/2;log.rotation.y=i*0.4;log.position.set(0,0.35,-0.4+i*0.4);g.add(log)}
+  const plank=new THREE.Mesh(new THREE.BoxGeometry(2.5,0.12,1.6),new THREE.MeshStandardMaterial({color:0x6a4f1a,roughness:0.9}));plank.position.set(0,0.4,1.2);g.add(plank);
+  // Sign painted in the camp's bait color.
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.6,0.06),new THREE.MeshStandardMaterial({color:c.col,emissive:c.col,emissiveIntensity:0.55}));sign.position.set(0,1.5,1.4);g.add(sign);
+  const post=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,2,6),new THREE.MeshStandardMaterial({color:0x5a4210}));post.position.set(0,1,1.4);g.add(post);
+  const glow=new THREE.Sprite(new THREE.SpriteMaterial({color:c.col,blending:THREE.AdditiveBlending,transparent:true,opacity:0.45,depthWrite:false}));glow.scale.set(5,5,5);glow.position.set(0,1.5,1.4);g.add(glow);
+  const lt=new THREE.PointLight(c.col,0.7,18);lt.position.set(0,2,0.5);g.add(lt);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(4,5,32),new THREE.MeshBasicMaterial({color:c.col,transparent:true,opacity:0.18,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.08;g.add(ring);g.userData.ring=ring;
+  g.position.set(c.x,0,c.z);g.userData.camp=c;scene.add(g);
+  return g;
+}
+function mkCamps(){if(GAME_MODE!=='game')return;campMeshes=CAMPS.map(mkCampStructure)}
+let _nearCamp=null;
+function tickCamps(){
+  if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('forage-prompt');if(p)p.style.display='none';return}
+  let near=null;
+  for(const m of campMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.12+Math.sin(Date.now()*0.003+m.position.x)*0.09;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
+  _nearCamp=near;
+  const p=$('forage-prompt');if(!p)return;
+  if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.camp.col.toString(16).padStart(6,'0')}">${near.userData.camp.n}</b> — press <b>G</b> to forage`}
+  else if(near){p.style.display='block';p.innerHTML='Slow to a stop to forage here'}
   else p.style.display='none';
 }
 
@@ -1588,6 +1765,9 @@ const ACH={
   duct_sighting:{n:'Tape on the Water',d:'Spotted Duct the rubber ducky.'},
   duct_near_miss:{n:'So Close',d:'Got Duct past 60% before he escaped.'},
   duct_ten_attempts:{n:'Obsessed',d:'Tried to land Duct 10 times. You will not.'},
+  first_forage:{n:'Off the Boat',d:'Foraged your first bait.'},
+  worm_farmer:{n:'Worm Farmer',d:'Banked 50 worms.'},
+  pantry_stocked:{n:'Pantry Stocked',d:'Every bait type at 5 or more.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
   gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
@@ -1743,7 +1923,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickFishJumps(t);maybeSpawnDuct();tickDuct(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -1818,7 +1998,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -2038,6 +2218,33 @@ function peekTrophies(){
 // Dock at a lake bait shop mid-run: pause the world, open that shop, resume on close.
 let _shopResumeRun=false;
 function dockShop(shop){if(S.on){S.on=false;_shopResumeRun=true}const p=$('shop-prompt');if(p)p.style.display='none';sfx('win');radio('Tied off at '+shop.n+'. Take your time.','self');openShop(shop)}
+// Beach the boat at a shore camp — open a picker of the camp's foraging games. Picking a game
+// fires the matching mini.openForage* opener. Closes via Cast Off back to the run.
+function dockCamp(camp,mesh){
+  if(S.on){S.on=false;_shopResumeRun=true}
+  const p=$('forage-prompt');if(p)p.style.display='none';
+  sfx('win');radio('Beached at '+camp.n+'. Dig in.','self');
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const gameMeta={
+    worm:    {n:'Dig Worm Beds',  c:'#a47a52', e:'🪱', d:'Click clods for worms + the odd cricket.', fn:'openForageWorm'},
+    cricket: {n:'Swat Crickets',  c:'#8db347', e:'🦗', d:'Bugs run across the patch. Tap to swat.',     fn:'openForageBug'},
+    frog:    {n:'Grab Frogs',     c:'#5fa75f', e:'🐸', d:'They pause, then hop. Catch the pause.',     fn:'openForageFrog'},
+    minnow:  {n:'Net Minnows',    c:'#7ec8e3', e:'🐠', d:'Click + drag a net rectangle to scoop.',     fn:'openForageMinnow'},
+    crayfish:{n:'Net the Crayfish',c:'#cf4040',e:'🦞', d:'Drag-net rocky water. Rare crayfish drop.',  fn:'openForageMinnow'}  // shares the minnow board (with crayfish bias from the spawn pool)
+  };
+  const rows=camp.games.map(k=>{const g=gameMeta[k];if(!g)return '';
+    return `<button class="btn forage-row" data-fn="${g.fn}" style="width:100%;text-align:left;background:rgba(3,7,18,0.5);border:1px solid ${g.c}33;border-left:3px solid ${g.c};border-radius:8px;padding:10px 12px;margin:5px 0;color:#e8edf5">
+      <div style="font-weight:600;color:${g.c};font-size:13px">${g.e} ${g.n}</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.4;margin-top:2px">${g.d}</div></button>`}).join('');
+  card.innerHTML=`<div class="m-kicker" style="color:#${camp.col.toString(16).padStart(6,'0')}">Shore Camp</div>
+    <div class="m-title">${camp.n}</div>
+    <div class="m-sub">Pick what you're after. Bait stays in your pantry.</div>
+    ${rows}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Cast Off</button>`;
+  card.querySelectorAll('.forage-row').forEach(btn=>btn.onclick=()=>{const fn=btn.dataset.fn;_peekOpen=false;const c2=$('mini-card');if(c2)c2.innerHTML='';if(typeof mini[fn]==='function')mini[fn](mesh)});
+  el.style.display='flex';
+}
 function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;
   // If we paused a live run to dock at a shop, resume it now.
   if(_shopResumeRun){_shopResumeRun=false;S.on=true}}
@@ -2085,12 +2292,18 @@ function openShop(shop){
     <div class="m-title" style="font-size:18px">${title}</div>
     ${shop?`<div class="m-sub" style="font-style:italic">"${shop.blurb}"</div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px"><span style="color:#94a3b8">Bait on hand</span><span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Bait Pantry · equip one for your next casts</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+      <button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>
+      ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
+    </div>
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
     ${conRows}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
   const reopen=()=>openShop(shop);
   card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
+  card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
   card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
   el.style.display='flex';
 }
@@ -2117,6 +2330,7 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
       Space — Sonar Ping<br>
       F — Cast (when stopped)<br>
       E — Dock at a bait shop<br>
+      G — Beach at a shore camp (forage)<br>
       P — Photo mode (orbit cam)<br>
       Esc — Bail mini-game / close menus
     </div>
@@ -2209,6 +2423,6 @@ function qaOpen(kind){
 // QA hook for Duct — spawns him near the boat for smoke tests. Must override DUCT.x/z AFTER
 // spawnDuct() (which randomizes them) so tickDuct keeps him in range.
 function qaSpawnDuct(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(DUCT.active)despawnDuct();spawnDuct();DUCT.x=bMesh.position.x+8;DUCT.z=bMesh.position.z;DUCT.vx=0;DUCT.vz=0;DUCT.mesh.position.set(DUCT.x,0,DUCT.z);return true}
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,togglePhoto,duct:()=>openDuctChase(),mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},mode:GAME_MODE};
 })();
 
