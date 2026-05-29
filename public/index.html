@@ -31,6 +31,8 @@
 <button id="end-run" onclick="DS.endRun()" style="display:none">END RUN</button>
 <div id="ww">SURGE WARNING</div>
 <div id="radio"><span class="r-who">Lilly Loch</span><span class="r-line"></span></div>
+<!-- Cinematic vignette + color grade over the 3D scene (below HUD), pure CSS, zero perf cost. -->
+<div id="grade"></div>
 <!-- Hull-damage red flash overlay — opacity is driven from JS, pointer-events:none. -->
 <div id="dmg-flash"></div>
 <!-- Wet-screen droplet overlay — canvas2D, above the THREE.js scene, below the HUD. -->

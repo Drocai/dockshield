@@ -46,9 +46,15 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 
 - `README.md` rewritten for the game (was stale DaaS marketing copy).
 - `.gitignore` added (node_modules, env, vercel, QA scratch).
+- `package.json` + committed smoke harness (`test/smoke.js`) → `npm run verify`.
 - Stale merged remote branches pruned; Phase IV trilogy (#10–#12) merged & verified live.
-- `app.js` audited + optimized (see commit history for the pass).
+- `app.js` audited + optimized (overlay/timer leaks, GPU disposal, loop perf) — see `AUDIT.md`.
 - Legacy SQL: `full_schema.sql` is canonical; `schema.sql` / `schema_v2.sql` are historical split versions.
+
+### Immersion pass (high-ROI)
+- **Audio**: continuous speed-pitched motor loop + ambient water-lap bed (WebAudio, mute-gated).
+- **Camera feel**: speed-punch FOV (widens with throttle), screen-shake on surge/impact.
+- **Visual grade**: cinematic vignette + letterbox haze overlay (`#grade`, pure CSS, shown during a run).
 
 ---
 

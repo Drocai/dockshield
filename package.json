@@ -1,0 +1,13 @@
+{
+  "name": "dockshield",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DockShield: The Depth — a free-roam THREE.js boat game on Castor Bayou.",
+  "scripts": {
+    "check": "node --check public/app.js",
+    "serve": "python3 -m http.server 8765 --directory public",
+    "smoke": "node test/smoke.js",
+    "verify": "npm run check && npm run smoke"
+  },
+  "license": "UNLICENSED"
+}
