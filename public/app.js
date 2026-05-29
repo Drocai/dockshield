@@ -1119,7 +1119,7 @@ function splash(pos,n=14,color=0xcfe8ff,power=1){
 }
 // Ambient fish jumps near fishing spots — a little fish mesh arcs out of the water and splashes back.
 let fishJumps=[];
-const jumpGeo=new THREE.CapsuleGeometry?new THREE.CapsuleGeometry(0.18,0.5,3,6):new THREE.CylinderGeometry(0.18,0.1,0.7,6);
+const jumpGeo=THREE.CapsuleGeometry?new THREE.CapsuleGeometry(0.18,0.5,3,6):new THREE.CylinderGeometry(0.18,0.1,0.7,6);
 function spawnFishJump(){
   if(!FISH_SPOTS.length)return;
   const spot=FISH_SPOTS[Math.floor(Math.random()*FISH_SPOTS.length)];
