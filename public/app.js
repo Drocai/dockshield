@@ -9,6 +9,9 @@ const DS=(()=>{
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
+// Persistent evidence catalog (kept across runs in-memory; survives reset() so the player builds
+// up a Castor Bayou case file over multiple sessions in one browser tab).
+const evidenceCatalog=new Set();
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
 // Voice lines lean on the Character Bible: Reel = bold/quotable, Fly = dry/short, Lilly = country direct.
 const HERO={
@@ -177,7 +180,9 @@ const mini={
       <button class="btn bx" id="m-rquit">Bail Out</button>`;
     const cv=$('m-rcv'),ctx=cv.getContext('2d');
     // Game state
-    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:3,obstacles:[],t0:Date.now()};
+    // Starting speed ramps with missions cleared this run so each subsequent runner is harder.
+    const startSpd=Math.min(5,3+0.4*(S.missionsCleared||0));
+    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:startSpd,obstacles:[],t0:Date.now()};
     const jump=()=>{if(G.grounded&&G.alive){G.vy=-9;G.grounded=false}};
     // Spawn obstacles (gap between planks) at random intervals
     const spawn=()=>{
@@ -542,6 +547,15 @@ function mkMist(){
   const mist=new THREE.Points(g,m);scene.add(mist);scene._mist=mist;
 }
 
+// Named world POIs — pulled from the Castor Bayou canon (04_World_Locations). Visible on the
+// minimap as small labeled dots so players can mentally chart the lake.
+const POIS=[
+  {n:'Castor Marina',x:0,z:-120,c:'#fb923c'},
+  {n:'Sunk Road',x:-80,z:30,c:'#94a3b8'},
+  {n:'Flooded Chapel',x:90,z:55,c:'#a78bfa'},
+  {n:'Quarantine Line',x:60,z:-60,c:'#f59e0b'},
+  {n:'Deep Dock',x:-50,z:-105,c:'#ef4444'}
+];
 function drawMinimap(){
   const c=$('mm-canvas');if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42;  // scale: world u -> px
@@ -549,8 +563,13 @@ function drawMinimap(){
   // ring background
   ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
   ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // POIs first (drawn under everything else)
+  POIS.forEach(p=>{const px=W/2+p.x*scl,pz=H/2+p.z*scl;ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
   // origin (dock)
   ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
+  // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
+  const now=Date.now()*0.001;
+  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx,bz,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
   // boat dot
   const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
@@ -682,7 +701,7 @@ function fireSonar(){
   if(!S.on)return false;
   const now=Date.now()*0.001;
   if(S.sonarReady&&now<S.sonarReady)return false;
-  S.sonarReady=now+3;
+  S.sonarReady=now+3;S.lastPing=now;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -867,7 +886,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       if(evidence.userData.ring)evidence.userData.ring.material.opacity=0.35+Math.sin(t*3)*0.2;
       if(bMesh.position.distanceTo(evidence.position)<2){
         evidence.userData.collected=true;evidence.visible=false;
-        S.evCollected=EV[Math.floor(Math.random()*EV.length)];S.score+=75;
+        // Prefer evidence the player hasn't seen yet so the catalog actually grows.
+        const fresh=EV.filter(e=>!evidenceCatalog.has(e.n));
+        S.evCollected=(fresh.length?fresh:EV)[Math.floor(Math.random()*((fresh.length?fresh:EV).length))];
+        evidenceCatalog.add(S.evCollected.n);S.score+=75;
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
         radio(HERO[S.bc].voice.evidence);
@@ -973,6 +995,17 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
+  // Score-tier medal — game mode only. Thresholds tuned to a mix of mission play + free-roam exploration.
+  const medalEl=$('r-medal'),medalIcon=$('r-medal-icon'),medalTier=$('r-medal-tier');
+  if(medalEl&&GAME_MODE==='game'){
+    const s=S.score;
+    let icon,tier,col;
+    if(s>=4000){icon='🏆';tier='GOLD · LEGEND';col='#fbcf3b'}
+    else if(s>=2000){icon='🥈';tier='SILVER · OPERATOR';col='#cbd5e1'}
+    else if(s>=800){icon='🥉';tier='BRONZE · RIDER';col='#d97706'}
+    else{icon='🐟';tier='ROOKIE';col='#94a3b8'}
+    medalEl.style.display='block';medalIcon.textContent=icon;medalTier.textContent=tier;medalTier.style.color=col;
+  }else if(medalEl)medalEl.style.display='none';
   // Tiered discount earned from run quality
   S.outcome=rl;S.discount=DISC[rl]||0;
   // Business-mode pipeline: paint the discount banner + send the analytics_events row.
