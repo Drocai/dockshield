@@ -31,6 +31,11 @@ function initEngine(){
   scene.add(new THREE.HemisphereLight(0x6090b0,0x1a3020,0.4));
   // Subtle golden hour rim light
   const rim=new THREE.DirectionalLight(0xffaa55,0.3);rim.position.set(-60,30,-80);scene.add(rim);
+  scene._sun=sun;scene._rim=rim;
+  // Visible sun disc on the horizon — readable anchor in the sky
+  const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(9,20,20),new THREE.MeshBasicMaterial({color:0xffd28a,transparent:true,opacity:0.85}));sunDisc.position.set(120,55,-280);scene.add(sunDisc);
+  const sunHalo=new THREE.Mesh(new THREE.SphereGeometry(16,16,16),new THREE.MeshBasicMaterial({color:0xffb060,transparent:true,opacity:0.18}));sunHalo.position.copy(sunDisc.position);scene.add(sunHalo);
+  scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;
 
   // Water — deeper blue-green, more reflective
   waterGeo=new THREE.PlaneGeometry(800,800,80,80);
@@ -187,6 +192,8 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   const pR=new THREE.PointLight(0x00ff00,0.5,8);pR.position.set(1.2,1.3,2.5);bMesh.add(pR);
   // Headlight
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
+  // Foam ring under the boat — scales with speed for hull-water contact read
+  const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.6,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.35,side:THREE.DoubleSide}));foam.rotation.x=-Math.PI/2;foam.position.y=-0.18;bMesh.add(foam);bMesh.userData.foam=foam;
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === WAKE PARTICLES ===
@@ -232,13 +239,22 @@ function applyWeatherVisuals(){
   // Fog density based on visibility
   const vis=Math.max(w.v||10000,1000);
   scene.fog.near=Math.min(vis*0.008,80);scene.fog.far=Math.min(vis*0.04,400);
-  // Sky/fog color shift for conditions
+  // Sky/fog/sun color shift for conditions
   if(w.c==='Rain'||w.c==='Drizzle'){
     scene.background.set(0x0a1218);scene.fog.color.set(0x0a1218);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0x7a8090);scene._sunDisc.material.opacity=0.35}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0x6070a0);
+    if(scene._sun)scene._sun.intensity=0.8;
   }else if(w.c==='Clouds'||w.c==='Overcast'){
     scene.background.set(0x0c1822);scene.fog.color.set(0x0c1822);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0xccc0a0);scene._sunDisc.material.opacity=0.55}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0xb09870);
+    if(scene._sun)scene._sun.intensity=1.0;
   }else{
     scene.background.set(0x071520);scene.fog.color.set(0x0b1e30);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0xffd28a);scene._sunDisc.material.opacity=0.85}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0xffb060);
+    if(scene._sun)scene._sun.intensity=1.4;
   }
   // Spawn rain particles if raining
   if((w.c==='Rain'||w.c==='Drizzle')&&rainDrops.length===0){
@@ -285,6 +301,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   // Pin bob
   if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
+  // Foam ring grows with speed and pulses to read as turbulence
+  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  // Sun halo pulse
+  if(scene._sunHalo)scene._sunHalo.material.opacity=0.15+Math.sin(t*0.6)*0.05;
 
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     // Hull damage cripples handling when below 30%
