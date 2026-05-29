@@ -617,7 +617,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();mkPOIs();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();mkPOIs();mkShops();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
@@ -625,6 +625,7 @@ function initEngine(){
     keys[e.code]=true;
     if(e.code==='Space'&&S.on&&!miniActive){e.preventDefault();fireSonar()}
     if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
+    if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
     if(e.code==='Escape'&&miniActive){e.preventDefault();
@@ -649,6 +650,51 @@ function initEngine(){
     document.addEventListener('touchend',e=>{for(const t of e.changedTouches){if(t.identifier===lId){lId=null;tch.lY=0;$('tkL').style.transform='translate(-50%,-50%)'}if(t.identifier===rId){rId=null;tch.rX=0;$('tkR').style.transform='translate(-50%,-50%)'}}});
   }
   loop();
+}
+
+// === BAIT SHOPS ===
+// Dockable shop POIs scattered around the lake. Each carries a curated slice of the gear ladder
+// plus consumables. Drive within range + stop → "DOCK TO SHOP" prompt → opens that shop's UI.
+const SHOPS=[
+  {id:'garbone', n:'Garbone Bait & Cold Beer', x:-150, z:60,  col:0xfbcf3b,
+   blurb:'Old men, bad advice, surprisingly good line.', sells:{rod:[1],reel:[1],line:[1,2],box:[1]}, consumables:['hull','sonar']},
+  {id:'marina',  n:'Castor Marina Pro Shop',    x:10,   z:-150,col:0x60d0ff,
+   blurb:'Tournament gear. Pricey, but it holds.',       sells:{rod:[1,2],reel:[1,2],line:[2],box:[1,2]}, consumables:['hull','scout','line']},
+  {id:'spillway',n:'Spillway Salvage',          x:170,  z:-30, col:0xa78bfa,
+   blurb:'Salvaged from boats that didn\'t come back.',  sells:{reel:[2,3],line:[3],box:[2,3]}, consumables:['line','sonar','scout']},
+  {id:'deep',    n:'The Deep Dock Outfitter',   x:-60,  z:170, col:0xef4444,
+   blurb:'Depth-rated gear. They know what\'s down there.', sells:{rod:[2,3],reel:[3],line:[3],box:[3]}, consumables:['hull','scout']}
+];
+let shopMeshes=[];
+function mkShopStructure(shop){
+  const g=new THREE.Group();
+  // Dock platform
+  for(let i=0;i<5;i++){const plank=new THREE.Mesh(new THREE.BoxGeometry(6,0.14,1.2),new THREE.MeshStandardMaterial({color:i%2?0x7a5c14:0x8B6914,roughness:0.85}));plank.position.set(0,0.3,-3+i*1.3);plank.castShadow=true;g.add(plank)}
+  // Shack
+  const wall=new THREE.Mesh(new THREE.BoxGeometry(4,2.4,3.2),new THREE.MeshStandardMaterial({color:0x4a3420,roughness:0.9}));wall.position.set(0,1.5,2.2);wall.castShadow=true;g.add(wall);
+  // Roof — angled box
+  const roof=new THREE.Mesh(new THREE.BoxGeometry(4.6,0.3,3.8),new THREE.MeshStandardMaterial({color:0x2a1d10,roughness:0.9}));roof.position.set(0,2.85,2.2);roof.rotation.x=0.12;g.add(roof);
+  // Neon sign — color-coded, emissive, with a glow sprite
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.7,0.1),new THREE.MeshStandardMaterial({color:shop.col,emissive:shop.col,emissiveIntensity:0.8}));sign.position.set(0,2.1,0.6);g.add(sign);
+  const signGlow=new THREE.Sprite(new THREE.SpriteMaterial({color:shop.col,blending:THREE.AdditiveBlending,transparent:true,opacity:0.5,depthWrite:false}));signGlow.scale.set(8,8,8);signGlow.position.set(0,2.1,0.6);g.add(signGlow);g.userData.signGlow=signGlow;
+  const lt=new THREE.PointLight(shop.col,1.0,30);lt.position.set(0,3,0);g.add(lt);
+  // Beacon ring on the water so it's findable from a distance
+  const ring=new THREE.Mesh(new THREE.RingGeometry(6,7,32),new THREE.MeshBasicMaterial({color:shop.col,transparent:true,opacity:0.2,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.08;g.add(ring);g.userData.ring=ring;
+  g.position.set(shop.x,0,shop.z);g.userData.shop=shop;scene.add(g);
+  return g;
+}
+function mkShops(){if(GAME_MODE!=='game')return;shopMeshes=SHOPS.map(mkShopStructure)}
+// Proximity → dock prompt. Opening requires the player to be slow + close.
+let _nearShop=null;
+function tickShops(){
+  if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('shop-prompt');if(p)p.style.display='none';return}
+  let near=null;
+  for(const m of shopMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
+  _nearShop=near;
+  const p=$('shop-prompt');if(!p)return;
+  if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.shop.col.toString(16).padStart(6,'0')}">${near.userData.shop.n}</b> — press <b>E</b> to dock & shop`}
+  else if(near){p.style.display='block';p.innerHTML='Slow to a stop to dock at the shop'}
+  else p.style.display='none';
 }
 
 function mkDock(){
@@ -886,6 +932,8 @@ function drawMinimap(){
   const proj=(wx,wz)=>{let px=wx*scl,pz=wz*scl;const d=Math.hypot(px,pz);if(d>R){px=px/d*R;pz=pz/d*R}return[W/2+px,H/2+pz]};
   // POIs first (drawn under everything else)
   POIS.forEach(p=>{const[px,pz]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
+  // Bait shops — small diamond markers in their sign color so the player can navigate to gear.
+  shopMeshes.forEach(m=>{const[sx,sz]=proj(m.position.x,m.position.z);ctx.save();ctx.translate(sx,sz);ctx.rotate(Math.PI/4);ctx.fillStyle='#'+m.userData.shop.col.toString(16).padStart(6,'0');ctx.fillRect(-2.2,-2.2,4.4,4.4);ctx.restore()});
   // origin (dock)
   ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
   // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
@@ -1237,7 +1285,9 @@ const ACH={
   deep_dock:{n:'Into The Depth',d:'Faced the thing under the Deep Dock.'},
   codex_half:{n:'Field Naturalist',d:'Logged 6 species in the Fish Codex.'},
   codex_full:{n:'Castor Compendium',d:'Logged all 12 species.'},
-  bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'}
+  bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'},
+  first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
+  fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'}
 };
 function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
@@ -1389,7 +1439,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI()}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops()}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -1454,7 +1504,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';_nearShop=null;aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog so it can't pop over the result screen.
   cancelCast();if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -1671,7 +1721,12 @@ function peekTrophies(){
     <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
   el.style.display='flex';
 }
-function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;/* never resume the loop — peek is a menu overlay, S.on stays as-is */}
+// Dock at a lake bait shop mid-run: pause the world, open that shop, resume on close.
+let _shopResumeRun=false;
+function dockShop(shop){if(S.on){S.on=false;_shopResumeRun=true}const p=$('shop-prompt');if(p)p.style.display='none';sfx('win');radio('Tied off at '+shop.n+'. Take your time.','self');openShop(shop)}
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;
+  // If we paused a live run to dock at a shop, resume it now.
+  if(_shopResumeRun){_shopResumeRun=false;S.on=true}}
 // Fish Codex — the full collection screen. Caught species show in color with their lore line;
 // uncaught ones show as locked ??? silhouettes grouped by rarity. Reuses the peek overlay frame.
 // === TACKLE SHOP ===
@@ -1683,25 +1738,46 @@ const SHOP_ITEMS=[
   {id:'line',n:'Tournament Line',c:'#a78bfa',cost:40,desc:'Next 5 casts triple-weight rare + legendary fish.',fn:()=>{buffs.rareLine+=5}},
   {id:'scout',n:'Scout Flare',c:'#fbcf3b',cost:30,desc:'Reveals all active beacons + civilians for 30s on the minimap.',fn:()=>{buffs.scoutPing=Date.now()*0.001+30}}
 ];
-function openShop(){
+// openShop(shop) — shop is a SHOPS entry; omitted = the generic s1 Tackle Shop (all consumables,
+// no gear). Renders gear tiers (the shop's `sells` slots) + the shop's consumables.
+function openShop(shop){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
-  const rows=SHOP_ITEMS.map(it=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:rgba(3,7,18,0.5);border:1px solid ${it.c}33;border-left:3px solid ${it.c};border-radius:8px;margin:6px 0">
-      <div style="flex:1;min-width:0;padding-right:12px"><div style="font-weight:600;color:${it.c};font-size:12.5px">${it.n} · <span style="color:#fbcf3b;font-family:'JetBrains Mono',monospace">${it.cost} bait</span></div><div style="font-size:11px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.desc}</div></div>
-      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:8px 14px;margin:0;background:${bait>=it.cost?it.c:'#374151'};font-size:11px">${bait>=it.cost?'BUY':'—'}</button>
+  const title=shop?shop.n:'Tackle Shop';
+  const titleCol=shop?'#'+shop.col.toString(16).padStart(6,'0'):'#fbcf3b';
+  const slotLabel={rod:'Rod',reel:'Reel',line:'Line',box:'Tackle Box'};
+  // Gear rows — only the tiers this shop stocks AND that are the next-or-owned step (no buying tier
+  // 3 before tier 2). A tier is buyable if it's exactly one above what you own.
+  let gearHtml='';
+  if(shop&&shop.sells){
+    for(const slot of Object.keys(shop.sells)){
+      for(const tier of shop.sells[slot]){
+        const it=GEAR[slot][tier];const owned=gear[slot]>=tier;const buyable=gear[slot]===tier-1&&bait>=it.cost;
+        gearHtml+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
+          <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slotLabel[slot]}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
+          <button class="btn bp gear-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?titleCol:'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+        </div>`;
+      }
+    }
+  }
+  const conIds=shop?shop.consumables:SHOP_ITEMS.map(i=>i.id);
+  const conRows=SHOP_ITEMS.filter(it=>conIds.includes(it.id)).map(it=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-left:3px solid ${it.c};border-radius:8px;margin:5px 0">
+      <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;color:${it.c};font-size:12.5px">${it.n}</div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.desc}</div></div>
+      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:7px 13px;margin:0;background:${bait>=it.cost?it.c:'#374151'};font-size:11px">${bait>=it.cost?it.cost+' bait':'—'}</button>
     </div>`).join('');
   card.innerHTML=`
-    <div class="m-kicker" style="color:#fbcf3b">Tackle Shop</div>
-    <div class="m-title">Bait on hand: <span style="color:#fbcf3b">${bait}</span></div>
-    <div class="m-sub">Spend fish currency on consumable gear. Active buffs travel with you across runs.</div>
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">Active Buffs</div>
-    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;font-size:11.5px;color:#cbd5e1;margin-bottom:8px">
-      Sonar bank: <span style="color:#60d0ff">${buffs.sonarBank||0}</span> &nbsp;·&nbsp; Rare line: <span style="color:#a78bfa">${buffs.rareLine||0}</span> &nbsp;·&nbsp; Scout flare: <span style="color:#fbcf3b">${(buffs.scoutPing||0)>Date.now()*0.001?'live':'—'}</span>
-    </div>
-    ${rows}
-    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
-  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');openShop()});
+    <div class="m-kicker" style="color:${titleCol}">${shop?'Bait Shop':'Tackle Shop'}</div>
+    <div class="m-title" style="font-size:18px">${title}</div>
+    ${shop?`<div class="m-sub" style="font-style:italic">"${shop.blurb}"</div>`:''}
+    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px"><span style="color:#94a3b8">Bait on hand</span><span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
+    ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
+    ${conRows}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
+  const reopen=()=>openShop(shop);
+  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
+  card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
   el.style.display='flex';
 }
 
@@ -1779,6 +1855,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,mode:GAME_MODE};
 })();
 
