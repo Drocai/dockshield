@@ -50,7 +50,13 @@ let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
 // are wired now so the drop-point spawner can target them.
 let miniActive=false;
 const mini={
+  // Each mini-game registers its tear-down hooks here (event listeners, intervals, RAFs).
+  // mini.finish() drains them in a single sweep, regardless of which exit path fires.
+  _teardowns:[],
+  addTeardown(fn){this._teardowns.push(fn)},
   finish(dp,score,radioLine,who){
+    // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
+    this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     miniActive=false;S.on=true;
@@ -136,7 +142,6 @@ const mini={
       G.timer=setTimeout(tick,Math.max(200,520-G.lines*22));
     };
     const end=()=>{
-      if(G.timer)clearTimeout(G.timer);document.removeEventListener('keydown',keyHandler);
       const line=G.lines>=4?'Tackle box packed. Clean.':G.lines>0?'Packed enough to ride out.':'Box overflowed. Bait’s lost.';
       mini.finish(dp,G.score+G.lines*25,line,G.lines>=4?'lilly':'self');
     };
@@ -148,6 +153,7 @@ const mini={
       if(e.code==='ArrowDown'){e.preventDefault();drop();render()}
     };
     document.addEventListener('keydown',keyHandler);
+    mini.addTeardown(()=>{if(G.timer)clearTimeout(G.timer);G.alive=false;document.removeEventListener('keydown',keyHandler)});
     $('m-tl').onclick=()=>{move(-1);render()};
     $('m-tr').onclick=()=>{move(1);render()};
     $('m-trot').onclick=()=>{rotate();render()};
@@ -211,8 +217,6 @@ const mini={
       G.raf=requestAnimationFrame(tick);
     };
     const end=()=>{
-      if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);
-      cv.onclick=null;document.removeEventListener('keydown',keyHandler);
       const dist=Math.round(G.dist/10),score=Math.min(400,dist*2);
       const line=dist>200?'You outran it. Barely.':'The dock took it. Hull held.';
       mini.finish(dp,score,line,'lilly');
@@ -220,6 +224,8 @@ const mini={
     const keyHandler=e=>{if(e.code==='Space'){e.preventDefault();jump()}};
     document.addEventListener('keydown',keyHandler);
     cv.onclick=jump;cv.ontouchstart=e=>{e.preventDefault();jump()};
+    // Teardown — drained by mini.finish() on any exit path.
+    mini.addTeardown(()=>{if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);G.alive=false;cv.onclick=null;cv.ontouchstart=null;document.removeEventListener('keydown',keyHandler)});
     $('m-rquit').onclick=()=>{G.alive=false;end()};
     el.style.display='flex';tick();
     radio('Dock’s coming apart. Move.','self');
@@ -312,9 +318,9 @@ const mini={
     // Spacebar also fires while the overlay is up
     const keyHandler=e=>{if(e.code==='Space'&&miniActive&&dp.userData.type.k==='battle'){e.preventDefault();fire()}};
     document.addEventListener('keydown',keyHandler);
-    // Clean up the keyhandler when this mini ends.
-    const origFinish=mini.finish;
-    mini.finish=function(...args){document.removeEventListener('keydown',keyHandler);clearInterval(biteTimer);mini.finish=origFinish;return origFinish.apply(this,args)};
+    // Register teardown — drained by mini.finish() regardless of exit path. No wrapper chain.
+    mini.addTeardown(()=>document.removeEventListener('keydown',keyHandler));
+    mini.addTeardown(()=>clearInterval(biteTimer));
     el.style.display='flex';render();
     radio('Surfaced contact. Fire on it.','fly');
   }
@@ -732,22 +738,35 @@ function tickRain(){
 }
 
 // === RADIO CHATTER ===
-// Single-line overlay, fades after ~4s. Voice picks the right hero based on `who`:
-// 'self' = the player's selected hero; otherwise a fixed role for that beat.
-function radio(text,who='self'){
-  const el=$('radio');if(!el)return;
-  let hero;
-  if(who==='self')hero=HERO[S.bc];
-  else if(who==='reel')hero=HERO.regular;
-  else if(who==='lilly')hero=HERO.pontoon;
-  else if(who==='fly')hero=HERO.speedboat;
-  else hero=HERO[S.bc];
+// Queued single-line overlay. Rapid radio() calls no longer overwrite mid-sentence — they line up
+// and play in order, each holding the overlay ~3.2s with a 200ms hand-off between lines.
+const _radioQ=[];let _radioBusy=false;
+function _drainRadio(){
+  if(_radioBusy||!_radioQ.length)return;
+  const {text,who}=_radioQ.shift();
+  const el=$('radio');if(!el){_drainRadio();return}
+  let hero;if(who==='reel')hero=HERO.regular;else if(who==='lilly')hero=HERO.pontoon;else if(who==='fly')hero=HERO.speedboat;else hero=HERO[S.bc];
   el.style.borderLeftColor=hero.badge;
   el.querySelector('.r-who').textContent=hero.n;
   el.querySelector('.r-who').style.color=hero.badge;
   el.querySelector('.r-line').textContent=text;
   el.style.display='block';el.style.opacity='1';
-  clearTimeout(radio._t);radio._t=setTimeout(()=>{el.style.opacity='0';setTimeout(()=>{if(el.style.opacity==='0')el.style.display='none'},400)},4000);
+  _radioBusy=true;
+  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>{
+    if(el.style.opacity==='0')el.style.display='none';
+    _radioBusy=false;_drainRadio();
+  },400)},3200);
+}
+function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_radioQ.length>4)_radioQ.splice(0,_radioQ.length-4);_drainRadio()}
+
+// === HULL-DAMAGE VISUAL FEEDBACK ===
+// Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
+// instead of a strobe. Intensity 0..1.
+let _dmgFade=null;
+function flashDamage(intensity){
+  const el=$('dmg-flash');if(!el)return;
+  el.style.opacity=Math.min(0.85,intensity).toFixed(2);
+  clearTimeout(_dmgFade);_dmgFade=setTimeout(()=>{el.style.opacity='0'},220);
 }
 
 // === 3-PHASE MISSION ===
@@ -820,7 +839,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
-    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++}else if(d<6){S.near++}}
+    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){flashDamage(1);endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++;if(S.hull%5<0.4)flashDamage(0.35)}else if(d<6){S.near++}}
     if(S.hull<=0){endGame(false);return}
     // Evidence pickup — drive over to collect, any speed.
     if(evidence&&!evidence.userData.collected){
