@@ -12,6 +12,8 @@ const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1
 // Persistent evidence catalog (kept across runs in-memory; survives reset() so the player builds
 // up a Castor Bayou case file over multiple sessions in one browser tab).
 const evidenceCatalog=new Set();
+// Persistent fish trophy catalog — both clicker rares and free-roam fishing land here.
+const fishCatalog=new Set();
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
 // Voice lines lean on the Character Bible: Reel = bold/quotable, Fly = dry/short, Lilly = country direct.
 const HERO={
@@ -34,7 +36,9 @@ const DP_TYPES=[
   {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
   {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
   {k:'runner',  col:0x60d0ff,n:'DOCK COLLAPSE',  open:'openRunner'},
-  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'}
+  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'},
+  {k:'rescue',  col:0xff6b35,n:'DOCK RESCUE',    open:'openDockRescue'},
+  {k:'clicker', col:0xa78bfa,n:'BAITWELL HAUL',  open:'openClicker'}
 ];
 // Evidence pool — one is rolled per run. Voice belongs to Lilly (country direct, swamp-sensitive).
 const EV=[
@@ -165,6 +169,71 @@ const mini={
     newPiece();render();
     el.style.display='flex';tick();
     radio('Tackle box overflowing. Pack it down.','self');
+  },
+  // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
+  // Each tap adds +6 integrity; integrity also drops -1.4/tick on a 400ms timer. Win at 100,
+  // lose if it hits 0. Home-dock rescues land here when the player supplied an address.
+  openDockRescue(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let hp=42,won=null,clicks=0;
+    const isHome=dp&&dp.userData.isHome;
+    const render=()=>{
+      const barCol=hp<25?'#ef4444':hp<60?'#f59e0b':'#10b981';
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#ff6b35">${isHome?'YOUR HOME DOCK':'DOCK RESCUE'} · ${dp.userData.type.n}</div>
+        <div class="m-title">${isHome?'Your dock is failing.':'A neighbor’s dock is going under.'}</div>
+        <div class="m-sub">${isHome?'You pinned this spot from the address you gave us. Hold the boards together.':'Pier integrity bleeding. Pound it back up before the water claims it.'}</div>
+        <div class="sb"><div class="sr"><span class="sl">Integrity</span><span class="sv" style="color:${barCol}">${Math.round(hp)}%</span></div><div class="sr"><span class="sl">Hammer strikes</span><span class="sv b">${clicks}</span></div></div>
+        <div style="height:14px;background:rgba(3,7,18,0.5);border-radius:6px;overflow:hidden;margin:8px 0"><div id="m-dr-bar" style="height:100%;background:${barCol};width:${hp}%;transition:width 0.18s,background 0.3s"></div></div>
+        <button class="btn bp" id="m-dr-hit" style="background:linear-gradient(135deg,#ff6b35,#e8590c);box-shadow:0 4px 16px rgba(255,107,53,0.4)">SHORE IT UP</button>
+        <button class="btn bx" id="m-dr-bail">Walk Away</button>`;
+      $('m-dr-hit').onclick=hit;$('m-dr-bail').onclick=bail;
+    };
+    const hit=()=>{if(won!==null)return;clicks++;hp=Math.min(100,hp+6);if(hp>=100){won=true;done()}else render()};
+    const bail=()=>{if(won===null){won=false;done(true)}};
+    const done=(bailed)=>{
+      const score=won?(isHome?350:200)+clicks*3:bailed?0:0;
+      const line=won?(isHome?'Your dock holds. The water moves on.':'Pier locked down. Neighbor owes you.'):
+                bailed?'Walked off. The water took the rest.':'Couldn’t hold it. The boards went under.';
+      if(won)S.hull=Math.min(100,S.hull+10);  // reward the player's hull for a clean repair
+      mini.finish(dp,score,line,won?'lilly':'fly');
+    };
+    const drainT=setInterval(()=>{if(won!==null)return;hp=Math.max(0,hp-1.4);if(hp<=0){won=false;done()}else{const bar=$('m-dr-bar');if(bar)bar.style.width=hp+'%';const intEl=card.querySelector('.sv');if(intEl)intEl.textContent=Math.round(hp)+'%'}},400);
+    mini.addTeardown(()=>clearInterval(drainT));
+    el.style.display='flex';render();
+    radio(isHome?'Your dock’s on fire — we’re there.':'Dock failing on the map. Move.','reel');
+  },
+  // === CLICKER (Baitwell Haul): chill 12-second click frenzy + payout ===
+  // Tap to haul fish out of the baitwell. 12s timer. Final score = catches * 8 + rare-roll bonus.
+  // Players can also see this as the "easy fun" loop the user asked for — no fail state.
+  openClicker(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let catches=0,bonus=0,t=12,done=false;
+    const RARE=['Channel cat','Spotted gar','Bowfin','Mud carp','Albino bream','Three-eyed pike'];
+    const rares=[];
+    const render=()=>{
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#a78bfa">${dp.userData.type.n}</div>
+        <div class="m-title">Baitwell haul.</div>
+        <div class="m-sub">Tap fast — the baitwell’s overflowing. ${t}s left. Some hauls turn up things you don’t recognize.</div>
+        <div class="sb"><div class="sr"><span class="sl">Catches</span><span class="sv g">${catches}</span></div><div class="sr"><span class="sl">Rare finds</span><span class="sv y">${rares.length}</span></div><div class="sr"><span class="sl">Time</span><span class="sv b">${t}s</span></div></div>
+        <button class="btn bp" id="m-c-hit" style="background:linear-gradient(135deg,#a78bfa,#7c3aed);box-shadow:0 4px 16px rgba(167,139,250,0.4);padding:18px;font-size:15px">HAUL</button>
+        ${rares.length?'<div style="font:11px \'JetBrains Mono\',monospace;color:#fde68a;margin-top:6px;line-height:1.6">'+rares.map(r=>'· '+r).join('<br>')+'</div>':''}`;
+      $('m-c-hit').onclick=hit;
+    };
+    const hit=()=>{if(done)return;catches++;
+      // 1 in 12 chance per click for a rare drop; each rare = +60 bonus + collection note.
+      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r)}
+      render();
+    };
+    const tick=setInterval(()=>{if(done)return;t--;if(t<=0){done=true;clearInterval(tick);const score=catches*8+bonus;
+      const line=rares.length>=2?'Whatever’s in this baitwell is not from this lake.':catches>40?'You ripped the baitwell. Good haul.':'Easy haul.';
+      mini.finish(dp,score,line,'lilly')}else render()},1000);
+    mini.addTeardown(()=>clearInterval(tick));
+    el.style.display='flex';render();
+    radio('Baitwell’s alive. Pull what you can.','self');
   },
   // === RUNNER: side-scrolling "dock collapse" — Lilly running across breaking planks ===
   openRunner(dp){
@@ -535,7 +604,16 @@ function clearDropPoint(dp){
 function resetDropPoints(){
   if(_dpRespawnT){clearTimeout(_dpRespawnT);_dpRespawnT=null}
   dropPoints.slice().forEach(dp=>{scene.remove(dp)});dropPoints.length=0;
-  if(GAME_MODE==='game'){for(let i=0;i<3;i++)spawnDropPoint()}
+  if(GAME_MODE!=='game')return;
+  // Home dock from the address field — always a 'rescue' drop point at the deterministic spot.
+  const home=S.homeAddr?addrToPos(S.homeAddr):null;
+  if(home){
+    const type=DP_TYPES.find(d=>d.k==='rescue');
+    const dp=mkDropPoint(type);dp.position.set(home.x,0,home.z);dp.userData.isHome=true;scene.add(dp);dropPoints.push(dp);
+    radio('Home dock pinned at '+S.homeAddr+'. Marked on the map.','self');
+  }
+  // Fill the remaining slots with random drops so total active is 3.
+  for(let i=dropPoints.length;i<3;i++)spawnDropPoint();
 }
 
 function mkMist(){
@@ -1086,9 +1164,21 @@ function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb'
 // they don't override the hero pick (player keeps the operative they selected).
 function beginRun(){
   if(!S.lore)S.lore={};
+  // Capture optional home dock address — used in launchGame() to spawn a personal rescue
+  // mission at a deterministic spot derived from the address text.
+  const hd=$('f-home-addr');S.homeAddr=hd?hd.value.trim():'';
   $('op-grid').style.display='none';$('op-label').style.display='none';$('begin-btn').style.display='none';
+  const wrap=$('home-dock-wrap');if(wrap)wrap.style.display='none';
   $('s1-sub').textContent='Two reads before we shove off. Answer fast — the water doesn’t wait.';
   $('q-1').style.display='block';
+}
+// Deterministic position from address text — same address always lands at the same spot, but
+// different addresses spread across the playable ring. No real geocode call needed.
+function addrToPos(addr){
+  if(!addr)return null;
+  let h=0;for(let i=0;i<addr.length;i++){h=((h<<5)-h+addr.charCodeAt(i))|0}
+  const ang=(Math.abs(h)%360)*Math.PI/180,r=70+(Math.abs(h>>3)%50);
+  return {x:Math.cos(ang)*r,z:Math.sin(ang)*r};
 }
 function qAns(n,h,tag){
   if(!S.lore)S.lore={};
