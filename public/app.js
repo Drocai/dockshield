@@ -9,11 +9,24 @@ const DS=(()=>{
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
-// Persistent evidence catalog (kept across runs in-memory; survives reset() so the player builds
-// up a Castor Bayou case file over multiple sessions in one browser tab).
+// === PERSISTENCE ===
+// Trophy catalog, evidence case file, best score, and the mute pref persist to localStorage so the
+// Pokemon-style collection survives reloads, not just same-tab sessions. Guarded for private-mode
+// browsers where localStorage throws.
+const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
-// Persistent fish trophy catalog — both clicker rares and free-roam fishing land here.
 const fishCatalog=new Set();
+let bestScore=0,muted=false;
+function loadSave(){
+  try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
+    (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
+    bestScore=d.best||0;muted=!!d.muted;
+  }catch(e){}
+}
+function persist(){
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],best:bestScore,muted}))}catch(e){}
+}
+loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
 const FISH=[
@@ -46,7 +59,10 @@ const FISH_SPOTS=[
 function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
 // Weighted roll, optionally with a 3x bonus on bias species.
 function rollFish(spot){
-  let pool=FISH.map(f=>({...f,w:spot&&spot.bias.includes(f.n)?f.w*3:f.w}));
+  // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2), so storms are
+  // the best time to fish for the Castor Bayou specials.
+  const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;return {...f,w}});
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
   for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
 }
@@ -104,6 +120,7 @@ const mini={
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
+    sfx(score>0?'win':'click');
     miniActive=false;S.on=true;
     S.missionsCleared=(S.missionsCleared||0)+1;
     const el=$('mini');if(el){el.style.display='none';const card=$('mini-card');if(card)card.innerHTML=''}
@@ -263,7 +280,7 @@ const mini={
     };
     const hit=()=>{if(done)return;catches++;
       // 1 in 12 chance per click for a rare drop; each rare = +60 bonus + collection note.
-      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r)}
+      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r);persist()}
       render();
     };
     const tick=setInterval(()=>{if(done)return;t--;if(t<=0){done=true;clearInterval(tick);const score=catches*8+bonus;
@@ -473,11 +490,15 @@ function initEngine(){
 
   document.addEventListener('keydown',e=>{
     keys[e.code]=true;
-    if(e.code==='Space'&&S.on)e.preventDefault();
-    if(e.code==='Space'&&S.on)fireSonar();
+    if(e.code==='Space'&&S.on&&!miniActive){e.preventDefault();fireSonar()}
     if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
-    // Escape bails out of any open mini-game with zero score and no radio line.
-    if(e.code==='Escape'&&miniActive){e.preventDefault();const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+    // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
+    // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
+    if(e.code==='Escape'&&miniActive){e.preventDefault();
+      if(_catchOpen){if(!_catchBusy){_catchBusy=true;closeCatch('Threw it back.')}}
+      else if(_peekOpen)closePeek();
+      else{const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+    }
   });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
@@ -699,21 +720,35 @@ function drawMinimap(){
   // ring background
   ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
   ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // Clip everything below to the dial so nothing (boat, drop points, POIs) bleeds past the rim
+  // once the player drives out near the world edge.
+  ctx.save();ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.clip();
+  // Project world coords to minimap px, clamping anything beyond the dial radius to the rim so it
+  // still reads as a direction marker instead of disappearing.
+  const R=W/2-4;
+  const proj=(wx,wz)=>{let px=wx*scl,pz=wz*scl;const d=Math.hypot(px,pz);if(d>R){px=px/d*R;pz=pz/d*R}return[W/2+px,H/2+pz]};
   // POIs first (drawn under everything else)
-  POIS.forEach(p=>{const px=W/2+p.x*scl,pz=H/2+p.z*scl;ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
+  POIS.forEach(p=>{const[px,pz]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
   // origin (dock)
   ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
   // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
   const now=Date.now()*0.001;
-  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx,bz,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
+  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,[bx2,bz2]=proj(bMesh.position.x,bMesh.position.z);ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx2,bz2,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
   // boat dot
-  const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
+  const[bx,bz]=proj(bMesh.position.x,bMesh.position.z);
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
   // heading line
   const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
-  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  // Sonar reveal: for ~4s after a ping, surviving civilians (orange) + uncollected evidence (gold)
+  // blip on the minimap so the ping is a real recon tool, not just a debris highlighter.
+  if(S.pingReveal&&Date.now()*0.001<S.pingReveal){
+    civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
+    if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
+  }
+  ctx.restore();
 }
 
 function mkCryptid(){
@@ -837,7 +872,7 @@ function fireSonar(){
   if(!S.on)return false;
   const now=Date.now()*0.001;
   if(S.sonarReady&&now<S.sonarReady)return false;
-  S.sonarReady=now+3;S.lastPing=now;
+  S.sonarReady=now+3;S.lastPing=now;sfx('ping');S.pingReveal=now+4;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -934,39 +969,53 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 // When the boat is stopped (or near-stopped) in game mode, F (or the FISH touch button) casts.
 // 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
 // Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
-let _castInFlight=false;
+let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
+function cancelCast(){
+  // Hard-stop any in-flight cast: clear the animation interval and dispose the ring mesh.
+  if(_castAnim){clearInterval(_castAnim);_castAnim=null}
+  if(_castRing){scene.remove(_castRing);_castRing.geometry.dispose();_castRing.material.dispose();_castRing=null}
+  _castInFlight=false;
+}
 function castLine(){
-  if(!S.on||GAME_MODE!=='game'||miniActive)return false;
+  if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
   if(_castInFlight)return false;
+  // Don't start a cast right on top of a beacon — the proximity trigger would open the mission and
+  // cancel the cast anyway. Tell the player to back off the marker.
+  if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
   _castInFlight=true;
   const spot=fishingSpot(bMesh.position);
-  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');
+  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');sfx('cast');
   // Visual: shrinking ring on the water at the boat's bow. Disposes when cast resolves.
   const ringMesh=new THREE.Mesh(new THREE.RingGeometry(1,1.2,24),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
   ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
   // Offset ahead of the bow
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);ringMesh.position.add(fwd);
-  scene.add(ringMesh);
+  scene.add(ringMesh);_castRing=ringMesh;
   const t0=Date.now();
-  const anim=setInterval(()=>{
+  _castAnim=setInterval(()=>{
+    // If the run ended while the line was out, bail without popping a dialog over the result screen.
+    if(!S.on){cancelCast();return}
     const age=(Date.now()-t0)/2500;
-    if(age>=1){clearInterval(anim);scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castInFlight=false;resolveCast(spot);return}
+    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;_castInFlight=false;resolveCast(spot);return}
     const sc=1+age*4;ringMesh.scale.set(sc,sc,sc);ringMesh.material.opacity=0.7*(1-age);
   },50);
 }
 function resolveCast(spot){
+  if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
   const fish=rollFish(spot);
   runCatches.push(fish);
-  if(fish.r==='legendary'||fish.r==='rare')fishCatalog.add(fish.n);
+  // Every species caught enters the catalog (drives the Fish Codex completion). The Trophy Board
+  // showcase filters this to rare/legendary at render time.
+  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist()}
+  sfx(fish.r==='legendary'?'legendary':'catch');
   showCatchDialog(fish,spot);
 }
 function showCatchDialog(fish,spot){
-  // Reuse the #mini overlay frame so the catch dialog lives in the same layer as mini-games but
-  // doesn't set miniActive — the world keeps ticking; only S.on briefly freezes via miniActive=true
-  // via a dedicated flag would cause issues; instead block input by pausing S.on.
+  // Catch dialog reuses the #mini overlay. _catchOpen distinguishes it from a real mini-game so the
+  // global Escape handler routes to closeCatch (not mini.finish, which would corrupt drop points).
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
-  miniActive=true;S.on=false;
+  miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
   card.innerHTML=`
     <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${spot?spot.n:'Open water'} · ${fish.r.toUpperCase()}</div>
     <div class="m-title" style="font-size:30px;display:flex;gap:10px;align-items:center;justify-content:center">${fish.e}<span>${fish.n}</span></div>
@@ -974,16 +1023,38 @@ function showCatchDialog(fish,spot){
     <div class="sb"><div class="sr"><span class="sl">Score if kept</span><span class="sv g">+${fish.s}</span></div><div class="sr"><span class="sl">Score if released</span><span class="sv b">+${Math.round(fish.s*0.2)}</span></div><div class="sr"><span class="sl">Trophy</span><span class="sv ${fish.r==='legendary'||fish.r==='rare'?'g':'y'}">${fish.r==='legendary'||fish.r==='rare'?'YES':'no'}</span></div></div>
     <button class="btn bp" id="m-k">Keep</button>
     <button class="btn bx" id="m-r">Release (heals hull +1)</button>`;
-  $('m-k').onclick=()=>{S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
-  $('m-r').onclick=()=>{S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
+  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
+  $('m-r').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
   el.style.display='flex';
 }
 function closeCatch(msg){
   const el=$('mini'),card=$('mini-card');
   if(card)card.innerHTML='';if(el)el.style.display='none';
-  miniActive=false;S.on=true;
+  miniActive=false;_catchOpen=false;
+  // Only resume the world if the run is actually still live (guard against a dialog that somehow
+  // outlived endGame).
+  if(S.played&&!$('s5').classList.contains('off')){/* run already ended — stay on result screen */}
+  else S.on=true;
   radio(msg,'lilly');
 }
+
+// === AUDIO (WebAudio SFX) ===
+// Tiny oscillator-based blips, lazily created on first sound (browsers require a user gesture to
+// start an AudioContext). Muted state persists. Each cue is a short freq sweep — no asset loading.
+let _audioCtx=null,_sndGate={};
+function sfx(type){
+  if(muted)return;
+  try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+  const ctx=_audioCtx,now=ctx.currentTime;
+  // rate-limit per type so rapid triggers (e.g. clicker) don't machine-gun
+  if(_sndGate[type]&&now<_sndGate[type])return;_sndGate[type]=now+0.04;
+  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth']}[type]||[300,360,.08,'sine'];
+  const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
+  o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
+  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(0.06,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
+  o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
+}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(!muted)sfx('click')}
 
 // === HULL-DAMAGE VISUAL FEEDBACK ===
 // Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
@@ -1028,7 +1099,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
-    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030}
+    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
+      // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
+      if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}
   }
   // Atmospheric mist drift — Points cloud spawned in mkMist(), shifts on the wind.
   if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
@@ -1049,11 +1122,14 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     // Hull damage cripples handling when below 30%
     const hullP=S.hull<30?0.55:(S.hull<60?0.85:1);
-    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
+    // While a cast is in flight the helm is locked — you can't drive off your own line. The boat
+    // coasts to a stop via drag. (castLine already requires near-zero speed to start.)
+    const frozen=_castInFlight;
+    if(!frozen&&(keys.ArrowUp||keys.KeyW||tch.lY>0.1))spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
     // Reverse capped at -bt.mx*0.5 — the boat can back up but can't outrun itself in reverse.
-    if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
+    if(!frozen&&(keys.ArrowDown||keys.KeyS||tch.lY<-0.1))spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
     spd*=bt.dr;
-    if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
+    if(!frozen&&Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
@@ -1066,7 +1142,11 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // total distance traveled (S.dist already accumulates each frame's movement).
     if(GAME_MODE==='business'){if(dd<150)S.score+=Math.max(0,Math.round(as*0.3))}
     else{S.score+=Math.max(0,Math.round(as*0.15))}
-    $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
+    $('h-spd').textContent=as.toFixed(1)+' kn';
+    // Distance HUD: business mode shows distance to the dock objective; free-roam shows distance
+    // to the nearest active beacon (or "—" if none) since the dock isn't the goal.
+    if(GAME_MODE==='game'){let nd=Infinity;for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<nd)nd=dist}$('h-dst').textContent=nd===Infinity?'—':nd.toFixed(0)+'m';const dl=$('h-dst').previousElementSibling;if(dl&&dl.textContent!=='Beacon')dl.textContent='Beacon'}
+    else $('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
@@ -1082,7 +1162,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
         // Prefer evidence the player hasn't seen yet so the catalog actually grows.
         const fresh=EV.filter(e=>!evidenceCatalog.has(e.n));
         S.evCollected=(fresh.length?fresh:EV)[Math.floor(Math.random()*((fresh.length?fresh:EV).length))];
-        evidenceCatalog.add(S.evCollected.n);S.score+=75;
+        evidenceCatalog.add(S.evCollected.n);persist();S.score+=75;
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
         radio(HERO[S.bc].voice.evidence);
@@ -1095,7 +1175,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       const dc=bMesh.position.distanceTo(c.position);
       if(dc<3){
         if(Math.abs(spd)<0.4){
-          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);
+          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);sfx('rescue');
           $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
           $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
           if(S.civsSaved===1)radio(HERO[S.bc].voice.rescue);
@@ -1121,6 +1201,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   ren.render(scene,cam)}
 
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+  // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
+  // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
+  cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
+  {const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML='';const re=$('radio');if(re)re.style.display='none'}
   // HUD pills + dmg flash reset to clean slate each run.
   const hs=$('h-sonar');if(hs){hs.textContent='READY';hs.style.color='#60d0ff'}
   const hh=$('h-hull');if(hh){hh.textContent='100%';hh.style.color='#fb923c'}
@@ -1128,7 +1212,11 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   // Drop points wipe + respawn so a new run doesn't inherit prior markers / pending timers.
   resetDropPoints();
   civs.forEach(c=>{c.userData.saved=false;c.visible=true});
-  if(evidence){evidence.userData.collected=false;evidence.visible=true}
+  if(evidence){evidence.userData.collected=false;evidence.visible=true;
+    // Re-roll the evidence position each run so it isn't the same fixed crate every time. Free-roam
+    // spreads it across the world; business keeps it in the original shallows corridor.
+    if(GAME_MODE==='game'){const a=Math.random()*Math.PI*2,r=45+Math.random()*65;evidence.position.set(Math.cos(a)*r,0,Math.sin(a)*r)}
+    else evidence.position.set((Math.random()-0.5)*30,0,-60-Math.random()*30)}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
@@ -1141,6 +1229,10 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
   $('nfo').textContent=GAME_MODE==='game'?'WASD/Arrows · Space=Sonar · F=Cast (when stopped) · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  // Free-roam weather drifts: refetch + re-apply visuals every 45s so a long session sees the
+  // sky/wind/rain actually change instead of being frozen at the launch reading.
+  if(_wxTimer)clearInterval(_wxTimer);
+  if(GAME_MODE==='game')_wxTimer=setInterval(()=>{if(S.on)fetchWx();else{clearInterval(_wxTimer);_wxTimer=null}},45000);
   if(GAME_MODE==='business')setPh(0);
   else{
     // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
@@ -1153,6 +1245,9 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 
 // === RESULT → SALES BRIDGE ===
 function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
+  // Tear down any in-flight cast / open catch dialog so it can't pop over the result screen.
+  cancelCast();if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
+  if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -1192,11 +1287,12 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
     haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
     haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
   }else if(haulWrap)haulWrap.style.display='none';
-  // Persistent trophy board (rare + legendary uniques across all runs in this tab).
+  // Persistent trophy board (rare + legendary uniques across all runs).
   const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
-  if(trWrap&&GAME_MODE==='game'&&fishCatalog.size>0){
-    trWrap.style.display='block';trCount.textContent=fishCatalog.size;
-    trList.innerHTML=[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:3px 7px;color:${col}">${e} ${n}</span>`}).join('');
+  const trophies=trophyFish();
+  if(trWrap&&GAME_MODE==='game'&&trophies.length>0){
+    trWrap.style.display='block';trCount.textContent=trophies.length;
+    trList.innerHTML=trophies.map(f=>`<span style="background:rgba(8,18,38,0.6);border:1px solid ${RARE_COLOR[f.r]};border-radius:6px;padding:3px 7px;color:${RARE_COLOR[f.r]}">${f.e} ${f.n}</span>`).join('');
   }else if(trWrap)trWrap.style.display='none';
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
@@ -1217,6 +1313,8 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Business-mode pipeline: paint the discount banner + send the analytics_events row.
   // In game mode, s5 still shows score/civilians/evidence but no discount/plans bridge.
   if(GAME_MODE==='business'){paintDiscount();saveData(won)}
+  // New best-score tracking (game mode) — persisted + surfaced on the recap.
+  if(GAME_MODE==='game'){const nb=S.score>bestScore;if(nb)bestScore=S.score;persist();const be=$('r-best');if(be){be.textContent=(nb?'NEW BEST · ':'Best · ')+bestScore;be.style.color=nb?'#10b981':'#94a3b8'}}
   show('s5')}
 
 // Paint the dynamic discount across s5 (result) and s3 (plans)
@@ -1324,23 +1422,46 @@ function launchGame(){
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();refreshTrophyPeek();
+{const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
 // Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
+let _peekOpen=false;
+// Trophy = caught species that's rare or legendary. Commons/uncommons fill the Codex but don't
+// earn a trophy chip.
+function trophyFish(){return FISH.filter(f=>fishCatalog.has(f.n)&&(f.r==='rare'||f.r==='legendary'))}
 function peekTrophies(){
-  if(fishCatalog.size===0)return;
+  if(trophyFish().length===0)return;
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
-  miniActive=true;
+  miniActive=true;_peekOpen=true;
   card.innerHTML=`
     <div class="m-kicker" style="color:#a78bfa">Trophy Board</div>
-    <div class="m-title">${fishCatalog.size} unique trophy${fishCatalog.size===1?'':'s'} pulled out of Castor Bayou.</div>
-    <div class="m-sub">Rares + legendaries you've landed across all your sessions in this browser tab.</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';const r=f?f.r:'';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:5px 9px;color:${col};font:12px 'DM Sans',sans-serif">${e} ${n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${r}</span></span>`}).join('')}</div>
+    <div class="m-title">${trophyFish().length} trophy catch${trophyFish().length===1?'':'es'} pulled out of Castor Bayou.</div>
+    <div class="m-sub">Rares + legendaries you've landed. Saved across reloads. Best score: ${bestScore}.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${trophyFish().map(f=>`<span style="background:rgba(8,18,38,0.6);border:1px solid ${RARE_COLOR[f.r]};border-radius:6px;padding:5px 9px;color:${RARE_COLOR[f.r]};font:12px 'DM Sans',sans-serif">${f.e} ${f.n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${f.r}</span></span>`).join('')}</div>
     <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
   el.style.display='flex';
 }
-function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false}
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;/* never resume the loop — peek is a menu overlay, S.on stays as-is */}
+// Fish Codex — the full collection screen. Caught species show in color with their lore line;
+// uncaught ones show as locked ??? silhouettes grouped by rarity. Reuses the peek overlay frame.
+function openCodex(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const caught=fishCatalog.size,total=FISH.length;
+  const byTier=r=>FISH.filter(f=>f.r===r);
+  const tierBlock=(label,r)=>{const list=byTier(r);if(!list.length)return '';
+    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?f.f:'Not yet caught'}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#60d0ff">Fish Codex</div>
+    <div class="m-title">${caught} / ${total} species landed.</div>
+    <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
+    ${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  el.style.display='flex';
+}
 // Show the trophy peek button on s1 only if there's something to show.
 function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
 
@@ -1358,6 +1479,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,mode:GAME_MODE};
 })();
 

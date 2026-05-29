@@ -11,7 +11,7 @@
 </head>
 <body>
 
-<div id="hud"><div class="hi"><span class="lbl">Operative</span><span class="val" id="h-hero">LILLY LOCH</span></div><div class="hi"><span class="lbl">Speed</span><span class="val" id="h-spd">0</span></div><div class="hi"><span class="lbl">Hull</span><span class="val" id="h-hull">100%</span></div><div class="hi"><span class="lbl">Civilians</span><span class="val" id="h-civ">0/3</span></div><div class="hi"><span class="lbl">Sonar</span><span class="val" id="h-sonar" style="color:#60d0ff">READY</span></div><div class="hi"><span class="lbl">Evidence</span><span class="val" id="h-ev" style="color:#475569">0/1</span></div><div class="hi"><span class="lbl">Distance</span><span class="val" id="h-dst">--</span></div><div class="hi"><span class="lbl">Heading</span><span class="val" id="h-hdg">N</span></div><div class="hi"><span class="lbl">Score</span><span class="val" id="h-scr">0</span></div></div>
+<div id="hud"><div class="hi"><span class="lbl">Operative</span><span class="val" id="h-hero">LILLY LOCH</span></div><div class="hi"><span class="lbl">Speed</span><span class="val" id="h-spd">0</span></div><div class="hi"><span class="lbl">Hull</span><span class="val" id="h-hull">100%</span></div><div class="hi"><span class="lbl">Civilians</span><span class="val" id="h-civ">0/0</span></div><div class="hi"><span class="lbl">Sonar</span><span class="val" id="h-sonar" style="color:#60d0ff">READY</span></div><div class="hi"><span class="lbl">Evidence</span><span class="val" id="h-ev" style="color:#475569">0/1</span></div><div class="hi"><span class="lbl">Distance</span><span class="val" id="h-dst">--</span></div><div class="hi"><span class="lbl">Heading</span><span class="val" id="h-hdg">N</span></div><div class="hi"><span class="lbl">Score</span><span class="val" id="h-scr">0</span></div></div>
 <div id="phud"><div id="pn"></div><div id="pd"></div><div id="pbar"><div id="pfill"></div></div></div>
 <div id="wxb"><div style="font-size:7.5px;color:#475569;letter-spacing:1px;text-transform:uppercase">Weather</div><div id="wx-c" style="color:#fb923c;font-weight:600">--</div><div id="wx-w" style="color:#94a3b8;font-size:8.5px"></div></div>
 <div id="minimap" style="position:fixed;top:55px;right:12px;z-index:15;display:none;pointer-events:none"><canvas id="mm-canvas" width="110" height="110" style="border-radius:50%"></canvas></div>
@@ -63,6 +63,10 @@
     <button class="btn bp biz-only" onclick="DS.launch()">Launch Rescue Op</button>
     <button class="btn bp game-only" id="begin-btn" onclick="DS.beginRun()">Begin Your Run</button>
     <button class="btn bx game-only" id="trophy-peek-btn" onclick="DS.peekTrophies()" style="display:none">View Trophy Board</button>
+    <div class="game-only" style="display:flex;gap:6px">
+      <button class="btn bx" id="codex-btn" onclick="DS.openCodex()" style="flex:1">Fish Codex</button>
+      <button class="btn bx" id="mute-btn" onclick="DS.toggleMute()" style="flex:1">🔊 Sound On</button>
+    </div>
     <div class="ordiv biz-only"><hr><span>or</span><hr></div>
     <button class="btn bx biz-only" onclick="DS.skip()">Skip to Protection Plans</button>
     <div class="cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg><span>The Depth · We Hold The Line</span></div>
@@ -103,6 +107,7 @@
   </div>
   <div id="s5" class="card off">
     <h2 id="rt" style="text-align:center"></h2>
+    <div id="r-best" style="text-align:center;font:700 10px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#94a3b8;margin-bottom:6px"></div>
     <div id="r-medal" style="text-align:center;margin-bottom:8px;display:none"><span id="r-medal-icon" style="font-size:36px"></span><div id="r-medal-tier" style="font:700 11px 'JetBrains Mono',monospace;letter-spacing:2px;margin-top:2px"></div></div>
     <p class="sub" id="rm" style="text-align:center"></p>
     <div class="sb"><div class="sr"><span class="sl">Score</span><span class="sv b" id="r-scr">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv" id="r-time">0s</span></div><div class="sr"><span class="sl">Civilians Saved</span><span class="sv g" id="r-civ">0/3</span></div><div class="sr"><span class="sl">Max Speed</span><span class="sv" id="r-spd">0</span></div><div class="sr"><span class="sl">Hull Remaining</span><span class="sv" id="r-hull">100%</span></div><div class="sr"><span class="sl">Near Misses</span><span class="sv y" id="r-near">0</span></div><div class="sr"><span class="sl">Phases</span><span class="sv b" id="r-ph">0/3</span></div></div>
