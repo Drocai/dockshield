@@ -1015,6 +1015,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
   // Minimap update
   if(S.on&&$('mm-canvas')){drawMinimap()}
+  // Named fishing-spot indicator — fades in when the boat enters a spot's radius.
+  if(S.on&&GAME_MODE==='game'){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
     const c=scene._cryptid;c.visible=true;
@@ -1131,7 +1133,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -1164,6 +1166,19 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Evidence reveal — show flavor line only if collected; otherwise hide the block
   const evWrap=$('r-ev-wrap'),evName=$('r-ev-name'),evLine=$('r-ev-line');
   if(evWrap){if(S.evCollected){evWrap.style.display='block';evName.textContent=S.evCollected.n;evLine.textContent=S.evCollected.line}else{evWrap.style.display='none'}}
+  // Run-haul summary by rarity, only painted in game mode and only if anything was caught.
+  const haulWrap=$('r-haul-wrap'),haulTotal=$('r-haul-total'),haulDetail=$('r-haul-detail');
+  if(haulWrap&&GAME_MODE==='game'&&runCatches.length>0){
+    const byR={common:0,uncommon:0,rare:0,legendary:0};runCatches.forEach(f=>byR[f.r]++);
+    haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
+    haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
+  }else if(haulWrap)haulWrap.style.display='none';
+  // Persistent trophy board (rare + legendary uniques across all runs in this tab).
+  const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
+  if(trWrap&&GAME_MODE==='game'&&fishCatalog.size>0){
+    trWrap.style.display='block';trCount.textContent=fishCatalog.size;
+    trList.innerHTML=[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:3px 7px;color:${col}">${e} ${n}</span>`}).join('');
+  }else if(trWrap)trWrap.style.display='none';
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';

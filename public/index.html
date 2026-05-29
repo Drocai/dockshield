@@ -16,6 +16,8 @@
 <div id="wxb"><div style="font-size:7.5px;color:#475569;letter-spacing:1px;text-transform:uppercase">Weather</div><div id="wx-c" style="color:#fb923c;font-weight:600">--</div><div id="wx-w" style="color:#94a3b8;font-size:8.5px"></div></div>
 <div id="minimap" style="position:fixed;top:55px;right:12px;z-index:15;display:none;pointer-events:none"><canvas id="mm-canvas" width="110" height="110" style="border-radius:50%"></canvas></div>
 <div id="nfo">WASD / Arrows · Space = Sonar Ping · Drive to a drop point to start a mission</div>
+<!-- Named-spot indicator: fades in when the boat enters a FISH_SPOT, fades out when it leaves. -->
+<div id="spot-tag" style="display:none;position:fixed;top:55px;left:140px;z-index:15;background:rgba(8,18,38,0.85);border:1px solid rgba(251,207,59,0.35);border-left:3px solid #fbcf3b;color:#fde68a;font:600 11px 'JetBrains Mono',monospace;letter-spacing:1px;padding:6px 12px;border-radius:6px;pointer-events:none"></div>
 <button id="end-run" onclick="DS.endRun()" style="display:none">END RUN</button>
 <div id="ww">SURGE WARNING</div>
 <div id="radio"><span class="r-who">Lilly Loch</span><span class="r-line"></span></div>
@@ -105,6 +107,13 @@
     <div class="sb"><div class="sr"><span class="sl">Score</span><span class="sv b" id="r-scr">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv" id="r-time">0s</span></div><div class="sr"><span class="sl">Civilians Saved</span><span class="sv g" id="r-civ">0/3</span></div><div class="sr"><span class="sl">Max Speed</span><span class="sv" id="r-spd">0</span></div><div class="sr"><span class="sl">Hull Remaining</span><span class="sv" id="r-hull">100%</span></div><div class="sr"><span class="sl">Near Misses</span><span class="sv y" id="r-near">0</span></div><div class="sr"><span class="sl">Phases</span><span class="sv b" id="r-ph">0/3</span></div></div>
     <div class="rcard" id="rc"><div class="rl" id="rlbl">Risk Assessment</div><div class="rmsg" id="rmsg"></div></div>
     <div id="r-ev-wrap" class="incv" style="display:none;background:rgba(251,207,59,0.08);border-color:rgba(251,207,59,0.25);text-align:left"><div class="ic-t" style="color:#fbcf3b">Evidence Recovered · <span id="r-ev-name">—</span></div><div class="ic-d" id="r-ev-line" style="color:#fde68a"></div></div>
+    <!-- Run's fish haul: per-rarity counts + total. Trophy collection lives below. -->
+    <div id="r-haul-wrap" class="sb" style="display:none"><div class="sr"><span class="sl">This Run's Haul</span><span class="sv b" id="r-haul-total">0</span></div><div id="r-haul-detail" style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.7;padding-top:6px"></div></div>
+    <!-- Persistent trophy board — uniques collected across all sessions. Hidden when empty. -->
+    <div id="r-trophy-wrap" style="display:none;background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.2);border-radius:10px;padding:12px 14px;margin:10px 0">
+      <div style="font:700 10px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;margin-bottom:6px">TROPHY BOARD · <span id="r-trophy-count">0</span> CAUGHT</div>
+      <div id="r-trophy-list" style="display:flex;flex-wrap:wrap;gap:4px;font-size:11px;color:#cbd5e1"></div>
+    </div>
     <div class="incv" id="r-disc-wrap"><div class="ic-t">Discount Unlocked</div><div class="ic-d"><span class="dbadge" id="r-disc-badge">15% OFF</span> <span id="r-disc-text">your first month of protection</span></div></div>
     <button class="btn bgreen" id="r-disc-btn" onclick="DS.showTiers()">View Plans — 15% Off Applied</button>
     <button class="btn bx" onclick="DS.replay()">Run It Again</button>
