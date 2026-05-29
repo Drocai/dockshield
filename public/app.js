@@ -695,7 +695,9 @@ function resetDropPoints(){
   if(home){
     const type=DP_TYPES.find(d=>d.k==='rescue');
     const dp=mkDropPoint(type);dp.position.set(home.x,0,home.z);dp.userData.isHome=true;scene.add(dp);dropPoints.push(dp);
-    radio('Home dock pinned at '+S.homeAddr+'. Marked on the map.','self');
+    // Prefer the geocoded formatted name (truncated) over the raw user input — looks legit on the radio.
+    const nm=S.homeLoc&&S.homeLoc.formatted?S.homeLoc.formatted.split(',').slice(0,2).join(',').trim():S.homeAddr;
+    radio('Home dock pinned at '+nm+'. Marked on the map.','self');
   }
   // Fill the remaining slots with random drops so total active is 3.
   for(let i=dropPoints.length;i<3;i++)spawnDropPoint();
@@ -1445,6 +1447,15 @@ function beginRun(){
 // Deterministic position from address text — same address always lands at the same spot, but
 // different addresses spread across the playable ring. No real geocode call needed.
 function addrToPos(addr){
+  // Prefer real geocoded coordinates if /api/geocode returned them — pack lat/lng into the same
+  // playable ring so the spot is reproducible across sessions for a given address. Fallback to a
+  // hash of the raw string for offline / 4xx cases.
+  if(S.homeLoc){
+    // Hash the lat/lng pair so two near-by addresses still scatter. lat ~ -90..90, lng ~ -180..180.
+    const seed=Math.round(S.homeLoc.lat*1000)*7919+Math.round(S.homeLoc.lng*1000);
+    const ang=(Math.abs(seed)%360)*Math.PI/180,r=70+(Math.abs(seed>>3)%50);
+    return {x:Math.cos(ang)*r,z:Math.sin(ang)*r};
+  }
   if(!addr)return null;
   let h=0;for(let i=0;i<addr.length;i++){h=((h<<5)-h+addr.charCodeAt(i))|0}
   const ang=(Math.abs(h)%360)*Math.PI/180,r=70+(Math.abs(h>>3)%50);
@@ -1456,10 +1467,18 @@ function qAns(n,h,tag){
   if(n===1){$('q-1').style.display='none';$('q-2').style.display='block'}
   else{$('q-2').style.display='none';launchGame()}
 }
-function launchGame(){
-  // Game-mode entry bypasses the form/geocode/weather pipeline. Weather still gets a randomized
-  // fallback through fetchWx (its catch path). Lat/lng stay at the default constants.
-  S.addr='Castor Bayou';S.email='';
+async function launchGame(){
+  // Game-mode entry: if the player supplied a Home Dock address, hit the /api/geocode route to
+  // get real lat/lng + a formatted name. Weather then uses the geocoded lat/lng (OpenWeatherMap
+  // demo key still falls back to random in fetchWx's catch). S.homeLoc stores the canonical
+  // location object so the radio + boss-arena prompts can reference it.
+  S.addr='Castor Bayou';S.email='';S.homeLoc=null;
+  if(S.homeAddr){
+    try{
+      const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:S.homeAddr})});
+      if(r.ok){const d=await r.json();if(d.lat&&d.lng){S.lat=d.lat;S.lng=d.lng;S.homeLoc={lat:d.lat,lng:d.lng,formatted:d.formatted||S.homeAddr,confidence:d.confidence||'fallback'}}}
+    }catch(e){}
+  }
   fetchWx().finally(()=>startGame());
 }
 
