@@ -27,15 +27,32 @@
   <div id="s1" class="card">
     <div class="logo"><i><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></i><div><b>Dock<span>Shield</span></b><small>The Depth · Search &amp; Rescue</small></div></div>
     <h2>Answer The Call · Castor Bayou</h2>
-    <p class="sub">The water is rising in Bayou Bay. Something is moving below it. Run a rescue op through Castor Bayou in <span class="hl">live weather</span> — or skip to lock down your dock. <span class="live-pill"><span class="live-dot"></span>LIVE</span></p>
-    <label>Your Waterway</label><input type="text" id="f-addr" placeholder="6950 Holiday Rd, Buford, GA 30518">
-    <label>Email</label><input type="email" id="f-email" placeholder="name@domain.com">
-    <label style="margin-top:4px">Select Operative</label>
-    <div class="boat-g"><div class="bo" data-b="regular" onclick="DS.boat('regular')"><div class="bi">&#127907;</div><div class="bn">The Reel</div><div class="bkit">Casting rod grapnel</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:60%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:70%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:65%"></div></div></div></div></div><div class="bo on" data-b="pontoon" onclick="DS.boat('pontoon')" style="border-color:#10b981;background:#10b98114"><div class="bi">&#127800;</div><div class="bn">Lilly Loch</div><div class="bkit">Swamp strength</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:35%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:50%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:95%"></div></div></div></div></div><div class="bo" data-b="speedboat" onclick="DS.boat('speedboat')"><div class="bi">&#127919;</div><div class="bn">The Fly</div><div class="bkit">Fly-line tripwires</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:95%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:85%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:30%"></div></div></div></div></div></div>
-    <div class="incv"><div class="ic-t">Run The Op</div><div class="ic-d">Complete the rescue run to unlock <span class="dbadge">15% OFF</span> your first month</div></div>
-    <button class="btn bp" onclick="DS.launch()">Launch Rescue Op</button>
-    <div class="ordiv"><hr><span>or</span><hr></div>
-    <button class="btn bx" onclick="DS.skip()">Skip to Protection Plans</button>
+    <p class="sub" id="s1-sub">The water is rising in Bayou Bay. Something is moving below it. Pick your operative — then we ride out. <span class="live-pill"><span class="live-dot"></span>LIVE</span></p>
+    <div class="biz-only"><label>Your Waterway</label><input type="text" id="f-addr" placeholder="6950 Holiday Rd, Buford, GA 30518"><label>Email</label><input type="email" id="f-email" placeholder="name@domain.com"></div>
+    <label style="margin-top:4px" id="op-label">Select Operative</label>
+    <div class="boat-g" id="op-grid"><div class="bo" data-b="regular" onclick="DS.boat('regular')"><div class="bi">&#127907;</div><div class="bn">The Reel</div><div class="bkit">Casting rod grapnel</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:60%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:70%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:65%"></div></div></div></div></div><div class="bo on" data-b="pontoon" onclick="DS.boat('pontoon')" style="border-color:#10b981;background:#10b98114"><div class="bi">&#127800;</div><div class="bn">Lilly Loch</div><div class="bkit">Swamp strength</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:35%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:50%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:95%"></div></div></div></div></div><div class="bo" data-b="speedboat" onclick="DS.boat('speedboat')"><div class="bi">&#127919;</div><div class="bn">The Fly</div><div class="bkit">Fly-line tripwires</div><div class="bstats"><div class="bstat"><div class="bstat-l">SPD</div><div class="bstat-bar"><div class="bstat-fill" style="width:95%"></div></div></div><div class="bstat"><div class="bstat-l">HND</div><div class="bstat-bar"><div class="bstat-fill" style="width:85%"></div></div></div><div class="bstat"><div class="bstat-l">STB</div><div class="bstat-bar"><div class="bstat-fill" style="width:30%"></div></div></div></div></div></div>
+    <!-- Game-mode entry: two-question lore intake. Each answer leans into one hero and tags S.lore. -->
+    <div class="game-only q-step" id="q-1" style="display:none">
+      <label style="margin-top:8px">Question 1 · What pulled you to Castor Bayou?</label>
+      <div class="q-opts">
+        <button class="q-opt" data-h="regular" onclick="DS.qAns(1,'regular','spotlight')">A live-streamed rescue gone wrong on the marina deck.</button>
+        <button class="q-opt" data-h="speedboat" onclick="DS.qAns(1,'speedboat','pattern')">A pattern in the missing-boat reports nobody else sees.</button>
+        <button class="q-opt" data-h="pontoon" onclick="DS.qAns(1,'pontoon','pull')">The water has been pulling at you since you could walk.</button>
+      </div>
+    </div>
+    <div class="game-only q-step" id="q-2" style="display:none">
+      <label style="margin-top:8px">Question 2 · When the radio goes silent mid-channel, what's your first move?</label>
+      <div class="q-opts">
+        <button class="q-opt" data-h="regular" onclick="DS.qAns(2,'regular','charge')">Push throttle. Make noise. Show whoever's out there we're already here.</button>
+        <button class="q-opt" data-h="speedboat" onclick="DS.qAns(2,'speedboat','watch')">Cut the motor. Read the wake. Whatever's listening is going to slip first.</button>
+        <button class="q-opt" data-h="pontoon" onclick="DS.qAns(2,'pontoon','feel')">Hand on the gunwale. The water tells you before the radio does.</button>
+      </div>
+    </div>
+    <div class="biz-only incv"><div class="ic-t">Run The Op</div><div class="ic-d">Complete the rescue run to unlock <span class="dbadge">15% OFF</span> your first month</div></div>
+    <button class="btn bp biz-only" onclick="DS.launch()">Launch Rescue Op</button>
+    <button class="btn bp game-only" id="begin-btn" onclick="DS.beginRun()">Begin Your Run</button>
+    <div class="ordiv biz-only"><hr><span>or</span><hr></div>
+    <button class="btn bx biz-only" onclick="DS.skip()">Skip to Protection Plans</button>
     <div class="cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg><span>The Depth · We Hold The Line</span></div>
   </div>
   <div id="s2" class="card off"><div style="text-align:center">

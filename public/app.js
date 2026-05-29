@@ -577,11 +577,35 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
+function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+  // Reset game-mode question state so the entry flow starts fresh on each "New Run".
+  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';S.lore={}}}
+
+// === GAME-MODE ENTRY: hero pick → Q1 → Q2 → free-roam ===
+// No email, no address. The two questions tag S.lore so radio chatter can reference them later;
+// they don't override the hero pick (player keeps the operative they selected).
+function beginRun(){
+  if(!S.lore)S.lore={};
+  $('op-grid').style.display='none';$('op-label').style.display='none';$('begin-btn').style.display='none';
+  $('s1-sub').textContent='Two reads before we shove off. Answer fast — the water doesn’t wait.';
+  $('q-1').style.display='block';
+}
+function qAns(n,h,tag){
+  if(!S.lore)S.lore={};
+  S.lore['q'+n]={hero:h,tag};
+  if(n===1){$('q-1').style.display='none';$('q-2').style.display='block'}
+  else{$('q-2').style.display='none';launchGame()}
+}
+function launchGame(){
+  // Game-mode entry bypasses the form/geocode/weather pipeline. Weather still gets a randomized
+  // fallback through fetchWx (its catch path). Lat/lng stay at the default constants.
+  S.addr='Castor Bayou';S.email='';
+  fetchWx().finally(()=>startGame());
+}
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,mode:GAME_MODE};
 })();
 

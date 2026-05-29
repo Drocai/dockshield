@@ -111,3 +111,13 @@ body.mode-game button.bx[onclick*="skip"],
 body.mode-game button.bx[onclick*="showTiers"],
 body.mode-game button.bgreen{display:none !important}
 
+body.mode-game .biz-only{display:none !important}
+body.mode-business .game-only{display:none !important}
+
+.q-opts{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
+.q-opt{background:rgba(3,7,18,0.5);border:1px solid rgba(251,146,60,0.12);border-radius:10px;padding:10px 12px;color:#e8edf5;font:13px 'DM Sans',sans-serif;text-align:left;cursor:pointer;transition:all 0.18s;line-height:1.4}
+.q-opt:hover{border-color:rgba(251,146,60,0.4);background:rgba(232,89,12,0.06);transform:translateX(2px)}
+.q-opt[data-h="regular"]:hover{border-color:rgba(239,68,68,0.5)}
+.q-opt[data-h="pontoon"]:hover{border-color:rgba(16,185,129,0.5)}
+.q-opt[data-h="speedboat"]:hover{border-color:rgba(59,130,246,0.5)}
+
