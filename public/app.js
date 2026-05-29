@@ -19,6 +19,39 @@ const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
 // Active buffs (consumable items from the tackle shop). Persists across runs until consumed.
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
+// === GEAR PROGRESSION ===
+// Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
+// improve the fishing loop: rod = fight control, reel = rare odds, line = max landable rarity,
+// box = hull cap + bait capacity. `gear` holds the equipped tier index per slot (0 = starter).
+const GEAR={
+  rod:[
+    {n:'Cane Pole',         cost:0,   control:1.0, e:'🎋', d:'Starter. Snaps under a real fight.'},
+    {n:'Graphite Rod',      cost:45,  control:1.35,e:'🎣', d:'Stiffer backbone — gators tire faster.'},
+    {n:'Reel\'s Tournament Rod',cost:140,control:1.8, e:'🏆', d:'The Reel\'s own rig. Heroic hook-sets.'},
+    {n:'Depth Harpoon Rod', cost:360, control:2.4, e:'🔱', d:'Built for what lives under the Deep Dock.'}
+  ],
+  reel:[
+    {n:'Spincast',          cost:0,   rare:1.0,  e:'🌀', d:'Gets the job done.'},
+    {n:'Baitcaster',        cost:55,  rare:1.25, e:'⚙️', d:'+25% rare & legendary odds.'},
+    {n:'Sealed Drag Reel',  cost:160, rare:1.6,  e:'🛞', d:'+60% rare odds. Survives blackwater.'},
+    {n:'Loch Special',      cost:400, rare:2.1,  e:'💠', d:'Lilly tuned it. The water answers.'}
+  ],
+  line:[
+    {n:'8lb Mono',          cost:0,   strength:1, e:'➰', d:'Lands up to uncommon cleanly.'},
+    {n:'20lb Braid',        cost:60,  strength:2, e:'🪢', d:'Holds rare fish without snapping.'},
+    {n:'40lb Fluoro',       cost:175, strength:3, e:'🧵', d:'Legendary-rated. Nearly invisible.'},
+    {n:'Depth Cable',       cost:420, strength:4, e:'⛓️', d:'Will not break. Tested on the boss.'}
+  ],
+  box:[
+    {n:'Bucket',            cost:0,   hullCap:100, baitCap:400, e:'🪣', d:'Holds the basics.'},
+    {n:'Tackle Box',        cost:70,  hullCap:120, baitCap:800, e:'🧰', d:'+20 hull cap, more bait room.'},
+    {n:'Field Locker',      cost:200, hullCap:140, baitCap:1500,e:'🗃️', d:'+40 hull cap. Pro storage.'},
+    {n:'Depth Case',        cost:480, hullCap:170, baitCap:5000,e:'🧊', d:'+70 hull cap. Carries it all.'}
+  ]
+};
+let gear={rod:0,reel:0,line:0,box:0};
+// Convenience accessors for the equipped tier objects.
+const eqRod=()=>GEAR.rod[gear.rod],eqReel=()=>GEAR.reel[gear.reel],eqLine=()=>GEAR.line[gear.line],eqBox=()=>GEAR.box[gear.box];
 // Graphics quality preference (separate small key so a settings wipe doesn't reset gfx).
 let gfxQuality='medium';
 try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
@@ -28,10 +61,13 @@ function loadSave(){
     (d.ach||[]).forEach(n=>achievements.add(n));
     bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;
     if(d.buffs)Object.assign(buffs,d.buffs);
+    if(d.gear)Object.assign(gear,d.gear);
   }catch(e){}
 }
 function persist(){
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs}))}catch(e){}
+  // Bait is capped by the equipped box capacity.
+  bait=Math.min(bait,eqBox().baitCap);
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear}))}catch(e){}
 }
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
@@ -70,7 +106,8 @@ function rollFish(spot){
   // Line shop buff multiplies rare+legendary weight again (×3) for the next 5 casts.
   const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
   const tourney=buffs.rareLine>0;
-  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;return {...f,w}});
+  const reelBonus=eqReel().rare;  // equipped reel's permanent rare-odds multiplier
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;return {...f,w}});
   if(tourney){buffs.rareLine--;persist()}
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
   for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
@@ -1316,7 +1353,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hb=$('h-bait');if(hb)hb.textContent=bait;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
-    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){flashDamage(1);endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++;if(S.hull%5<0.4)flashDamage(0.35)}else if(d<6){S.near++}}
+    const dmgMul=1-hullResist();
+    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){flashDamage(1);endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35*dmgMul);S.near++;if(S.hull%5<0.4)flashDamage(0.35)}else if(d<6){S.near++}}
     if(S.hull<=0){endGame(false);return}
     // Evidence pickup — drive over to collect, any speed.
     if(evidence&&!evidence.userData.collected){
@@ -1366,6 +1404,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
+// Tackle box → stump-damage resistance (0..~0.41) so a better box means a tougher run, while hull
+// stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
+function hullResist(){return Math.min(0.5,(eqBox().hullCap-100)/170)}
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
