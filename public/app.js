@@ -476,8 +476,13 @@ function initEngine(){
     if(e.code==='Space'&&S.on)e.preventDefault();
     if(e.code==='Space'&&S.on)fireSonar();
     if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
-    // Escape bails out of any open mini-game with zero score and no radio line.
-    if(e.code==='Escape'&&miniActive){e.preventDefault();const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+    // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
+    // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
+    if(e.code==='Escape'&&miniActive){e.preventDefault();
+      if(_catchOpen){if(!_catchBusy){_catchBusy=true;closeCatch('Threw it back.')}}
+      else if(_peekOpen)closePeek();
+      else{const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+    }
   });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
@@ -934,9 +939,15 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 // When the boat is stopped (or near-stopped) in game mode, F (or the FISH touch button) casts.
 // 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
 // Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
-let _castInFlight=false;
+let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false;
+function cancelCast(){
+  // Hard-stop any in-flight cast: clear the animation interval and dispose the ring mesh.
+  if(_castAnim){clearInterval(_castAnim);_castAnim=null}
+  if(_castRing){scene.remove(_castRing);_castRing.geometry.dispose();_castRing.material.dispose();_castRing=null}
+  _castInFlight=false;
+}
 function castLine(){
-  if(!S.on||GAME_MODE!=='game'||miniActive)return false;
+  if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
   if(_castInFlight)return false;
   _castInFlight=true;
@@ -947,26 +958,28 @@ function castLine(){
   ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
   // Offset ahead of the bow
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);ringMesh.position.add(fwd);
-  scene.add(ringMesh);
+  scene.add(ringMesh);_castRing=ringMesh;
   const t0=Date.now();
-  const anim=setInterval(()=>{
+  _castAnim=setInterval(()=>{
+    // If the run ended while the line was out, bail without popping a dialog over the result screen.
+    if(!S.on){cancelCast();return}
     const age=(Date.now()-t0)/2500;
-    if(age>=1){clearInterval(anim);scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castInFlight=false;resolveCast(spot);return}
+    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;_castInFlight=false;resolveCast(spot);return}
     const sc=1+age*4;ringMesh.scale.set(sc,sc,sc);ringMesh.material.opacity=0.7*(1-age);
   },50);
 }
 function resolveCast(spot){
+  if(!S.on)return;  // run ended during the cast — drop it silently
   const fish=rollFish(spot);
   runCatches.push(fish);
   if(fish.r==='legendary'||fish.r==='rare')fishCatalog.add(fish.n);
   showCatchDialog(fish,spot);
 }
 function showCatchDialog(fish,spot){
-  // Reuse the #mini overlay frame so the catch dialog lives in the same layer as mini-games but
-  // doesn't set miniActive — the world keeps ticking; only S.on briefly freezes via miniActive=true
-  // via a dedicated flag would cause issues; instead block input by pausing S.on.
+  // Catch dialog reuses the #mini overlay. _catchOpen distinguishes it from a real mini-game so the
+  // global Escape handler routes to closeCatch (not mini.finish, which would corrupt drop points).
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
-  miniActive=true;S.on=false;
+  miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
   card.innerHTML=`
     <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${spot?spot.n:'Open water'} · ${fish.r.toUpperCase()}</div>
     <div class="m-title" style="font-size:30px;display:flex;gap:10px;align-items:center;justify-content:center">${fish.e}<span>${fish.n}</span></div>
@@ -974,14 +987,18 @@ function showCatchDialog(fish,spot){
     <div class="sb"><div class="sr"><span class="sl">Score if kept</span><span class="sv g">+${fish.s}</span></div><div class="sr"><span class="sl">Score if released</span><span class="sv b">+${Math.round(fish.s*0.2)}</span></div><div class="sr"><span class="sl">Trophy</span><span class="sv ${fish.r==='legendary'||fish.r==='rare'?'g':'y'}">${fish.r==='legendary'||fish.r==='rare'?'YES':'no'}</span></div></div>
     <button class="btn bp" id="m-k">Keep</button>
     <button class="btn bx" id="m-r">Release (heals hull +1)</button>`;
-  $('m-k').onclick=()=>{S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
-  $('m-r').onclick=()=>{S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
+  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
+  $('m-r').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
   el.style.display='flex';
 }
 function closeCatch(msg){
   const el=$('mini'),card=$('mini-card');
   if(card)card.innerHTML='';if(el)el.style.display='none';
-  miniActive=false;S.on=true;
+  miniActive=false;_catchOpen=false;
+  // Only resume the world if the run is actually still live (guard against a dialog that somehow
+  // outlived endGame).
+  if(S.played&&!$('s5').classList.contains('off')){/* run already ended — stay on result screen */}
+  else S.on=true;
   radio(msg,'lilly');
 }
 
@@ -1121,6 +1138,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   ren.render(scene,cam)}
 
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+  // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
+  // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
+  cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
+  {const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML='';const re=$('radio');if(re)re.style.display='none'}
   // HUD pills + dmg flash reset to clean slate each run.
   const hs=$('h-sonar');if(hs){hs.textContent='READY';hs.style.color='#60d0ff'}
   const hh=$('h-hull');if(hh){hh.textContent='100%';hh.style.color='#fb923c'}
@@ -1153,6 +1174,8 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 
 // === RESULT → SALES BRIDGE ===
 function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
+  // Tear down any in-flight cast / open catch dialog so it can't pop over the result screen.
+  cancelCast();if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -1328,10 +1351,11 @@ initEngine();refreshTrophyPeek();
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
 // Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
+let _peekOpen=false;
 function peekTrophies(){
   if(fishCatalog.size===0)return;
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
-  miniActive=true;
+  miniActive=true;_peekOpen=true;
   card.innerHTML=`
     <div class="m-kicker" style="color:#a78bfa">Trophy Board</div>
     <div class="m-title">${fishCatalog.size} unique trophy${fishCatalog.size===1?'':'s'} pulled out of Castor Bayou.</div>
@@ -1340,7 +1364,7 @@ function peekTrophies(){
     <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
   el.style.display='flex';
 }
-function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false}
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;/* never resume the loop — peek is a menu overlay, S.on stays as-is */}
 // Show the trophy peek button on s1 only if there's something to show.
 function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
 
