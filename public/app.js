@@ -72,23 +72,27 @@ function persist(){
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
+// fight: 0 = no struggle (lands instantly), 1..3 = fight intensity. line: minimum line strength
+// needed to land cleanly (1..4) — under-gunned line shrinks the safe zone and risks a snap.
+// gator: true = a thrashing reptile catch with its own fight flavor + harder pull.
 const FISH=[
-  // common
-  {n:'Bluegill',     r:'common',  w:24, s:8,  e:'🐟', f:'Easy money — fries up clean.'},
-  {n:'Crappie',      r:'common',  w:20, s:10, e:'🐟', f:'Schools where the shadows fall.'},
-  {n:'Channel cat',  r:'common',  w:16, s:14, e:'🐡', f:'Bottom feeder. Big enough.'},
-  // uncommon
-  {n:'Largemouth bass', r:'uncommon', w:12, s:25, e:'🎣', f:'The Reel would already be on camera.'},
-  {n:'Striper',      r:'uncommon', w:10, s:30, e:'🐠', f:'Fights like it owes you money.'},
-  {n:'Spotted gar',  r:'uncommon', w:8,  s:35, e:'🦈', f:'Teeth older than the marina.'},
-  // rare
-  {n:'Bowfin',       r:'rare',    w:5,  s:65, e:'🐉', f:'Living fossil. Lillyloved them as a kid.'},
-  {n:'Alligator gar',r:'rare',    w:4,  s:90, e:'🐊', f:'Folks say they used to be bigger. They’re right.'},
-  {n:'Mud carp',     r:'rare',    w:3,  s:110,e:'🪲', f:'The Quarantine Line outflow grew these.'},
-  // legendary (Castor Bayou specials)
-  {n:'Albino bream', r:'legendary', w:1.2, s:280, e:'👻', f:'White as wet paper. Found near the Flooded Chapel.'},
-  {n:'Three-eyed pike',r:'legendary', w:0.9, s:420, e:'🐲', f:'Pulled from the Sunk Road waters. Lilly looked at it too long.'},
-  {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', f:'Doesn’t look right. Something else is on the line below this one.'}
+  // common (no fight)
+  {n:'Bluegill',     r:'common',  w:24, s:8,  e:'🐟', fight:0, line:1, f:'Easy money — fries up clean.'},
+  {n:'Crappie',      r:'common',  w:20, s:10, e:'🐟', fight:0, line:1, f:'Schools where the shadows fall.'},
+  {n:'Channel cat',  r:'common',  w:16, s:14, e:'🐡', fight:0, line:1, f:'Bottom feeder. Big enough.'},
+  // uncommon (light fight)
+  {n:'Largemouth bass', r:'uncommon', w:12, s:25, e:'🎣', fight:1, line:1, f:'The Reel would already be on camera.'},
+  {n:'Striper',      r:'uncommon', w:10, s:30, e:'🐠', fight:1, line:1, f:'Fights like it owes you money.'},
+  {n:'Spotted gar',  r:'uncommon', w:8,  s:35, e:'🦈', fight:1, line:2, gator:true, f:'Teeth older than the marina.'},
+  // rare (real fight)
+  {n:'Bowfin',       r:'rare',    w:5,  s:65, e:'🐉', fight:2, line:2, f:'Living fossil. Lilly loved them as a kid.'},
+  {n:'Alligator gar',r:'rare',    w:4,  s:90, e:'🐊', fight:2, line:2, gator:true, f:'Folks say they used to be bigger. They’re right.'},
+  {n:'Mud carp',     r:'rare',    w:3,  s:110,e:'🪲', fight:2, line:3, f:'The Quarantine Line outflow grew these.'},
+  {n:'Bull gator',   r:'rare',    w:2.2,s:160,e:'🐊', fight:3, line:3, gator:true, f:'Not a fish. Hooked it anyway. It is NOT happy.'},
+  // legendary (Castor Bayou specials — heavy fights)
+  {n:'Albino bream', r:'legendary', w:1.2, s:280, e:'👻', fight:2, line:3, f:'White as wet paper. Found near the Flooded Chapel.'},
+  {n:'Three-eyed pike',r:'legendary', w:0.9, s:420, e:'🐲', fight:3, line:3, f:'Pulled from the Sunk Road waters. Lilly looked at it too long.'},
+  {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', fight:3, line:4, gator:true, f:'Doesn’t look right. Something else is on the line below this one.'}
 ];
 const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
 // Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
@@ -1076,6 +1080,45 @@ function tickWakes(){
   }
 }
 
+// === SPLASH + FISH-JUMP PARTICLES ===
+// Reuses the wakes[] array + tickWakes() lifecycle (gravity-arc droplets) for splash bursts.
+const splashGeo=new THREE.SphereGeometry(0.14,5,4);
+function splash(pos,n=14,color=0xcfe8ff,power=1){
+  for(let i=0;i<n&&wakes.length<260;i++){
+    const p=new THREE.Mesh(splashGeo,new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.8}));
+    p.position.copy(pos);p.position.y=0.2;
+    const a=Math.random()*Math.PI*2,sp=(0.04+Math.random()*0.09)*power;
+    p.userData={life:1,decay:0.02+Math.random()*0.02,vy:0.06+Math.random()*0.08*power,vx:Math.cos(a)*sp,vz:Math.sin(a)*sp};
+    scene.add(p);wakes.push(p);
+  }
+}
+// Ambient fish jumps near fishing spots — a little fish mesh arcs out of the water and splashes back.
+let fishJumps=[];
+const jumpGeo=new THREE.CapsuleGeometry?new THREE.CapsuleGeometry(0.18,0.5,3,6):new THREE.CylinderGeometry(0.18,0.1,0.7,6);
+function spawnFishJump(){
+  if(!FISH_SPOTS.length)return;
+  const spot=FISH_SPOTS[Math.floor(Math.random()*FISH_SPOTS.length)];
+  const a=Math.random()*Math.PI*2,r=Math.random()*spot.r;
+  const x=spot.x+Math.cos(a)*r,z=spot.z+Math.sin(a)*r;
+  const m=new THREE.Mesh(jumpGeo,new THREE.MeshStandardMaterial({color:0x8fb8c8,roughness:0.4,metalness:0.3,emissive:0x16323c,emissiveIntensity:0.3}));
+  m.position.set(x,0,z);m.rotation.z=Math.PI/2.4;scene.add(m);
+  splash(m.position,8,0xbfe0ef,0.7);
+  fishJumps.push({m,t0:Date.now()*0.001,dur:0.9+Math.random()*0.3,x,z,vx:(Math.random()-0.5)*0.4,vz:(Math.random()-0.5)*0.4,splashed:false});
+}
+function tickFishJumps(t){
+  // Occasionally spawn one when the world is live (cheap; 3D draw stays light).
+  if(S.on&&Math.random()<0.012)spawnFishJump();
+  for(let i=fishJumps.length-1;i>=0;i--){
+    const j=fishJumps[i],age=(t-j.t0)/j.dur;
+    if(age>=1){if(!j.splashed)splash(j.m.position,10,0xbfe0ef,0.8);scene.remove(j.m);j.m.material.dispose();fishJumps.splice(i,1);continue}
+    // Parabolic arc.
+    j.m.position.x=j.x+j.vx*age;j.m.position.z=j.z+j.vz*age;
+    j.m.position.y=Math.sin(age*Math.PI)*1.6;
+    j.m.rotation.x=age*Math.PI*1.4;
+    if(age>0.9&&!j.splashed){j.splashed=true;splash(j.m.position,8,0xbfe0ef,0.7)}
+  }
+}
+
 // === SONAR PING ===
 function fireSonar(){
   if(!S.on)return false;
@@ -1217,13 +1260,82 @@ function castLine(){
 function resolveCast(spot){
   if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
   const fish=rollFish(spot);
+  // Bite splash at the bow where the line went out.
+  const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);const bp=bMesh.position.clone().add(fwd);bp.y=0.2;
+  splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);
+  sfx('cast');
+  // No-fight species land immediately; anything with a fight goes through the tension minigame.
+  if(!fish.fight){landFish(fish,spot)}
+  else openFight(fish,spot);
+}
+// Logs the catalog + plays the catch sting + opens the keep/release dialog.
+function landFish(fish,spot){
   runCatches.push(fish);
-  // Every species caught enters the catalog (drives the Fish Codex completion). The Trophy Board
-  // showcase filters this to rare/legendary at render time.
   if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
+  if(fish.gator)onUnlock('gator_wrangler');
   sfx(fish.r==='legendary'?'legendary':'catch');
   showCatchDialog(fish,spot);
 }
+// === FISHING FIGHT ===
+// Hold REEL (button or Space) to raise tension into the green band; release to let it fall. A
+// progress bar fills while tension sits in the band and drains when it's out. Fill to 100% = landed.
+// Line strength vs the fish's required line sets how wide the band is + how fast tension spikes;
+// rod control widens the band. If tension pegs the red max, the line snaps and the fish escapes.
+function openFight(fish,spot){
+  miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
+  const card=$('mini-card'),el=$('mini');if(!card||!el){landFish(fish,spot);return}
+  const lineStr=eqLine().strength,control=eqRod().control;
+  const deficit=Math.max(0,fish.line-lineStr);           // how under-gunned we are (0 = fine)
+  const bandHalf=Math.max(0.07,(0.16+control*0.06)-deficit*0.05); // green band half-width (0..1)
+  const bandCenter=0.55;
+  const climb=0.011+fish.fight*0.004+deficit*0.006;       // tension rise while reeling
+  const fall=0.013+fish.fight*0.002;                      // tension fall while not reeling
+  const drift=deficit*0.004;                              // under-gunned line creeps toward snap
+  let tension=0.3,progress=0,reeling=false,over=false;
+  card.innerHTML=`
+    <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${fish.gator?'GATOR ON THE LINE':'FISH ON'} · ${spot?spot.n:'Open water'}</div>
+    <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">${fish.e}<span>${fish.n}</span></div>
+    <div class="m-sub">${fish.gator?'It is thrashing. Keep tension in the green — too hard and the line goes.':'Work it in. Hold REEL to build tension, ease off before it snaps.'} ${deficit>0?'<b style="color:#ef4444">Your line is under-rated for this fish — band is tight.</b>':''}</div>
+    <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
+      <div id="f-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
+      <div id="f-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
+    </div>
+    <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
+    <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="f-prog" style="height:100%;width:0%;background:${RARE_COLOR[fish.r]};transition:width 0.05s"></div></div>
+    <button class="btn bp" id="f-reel" style="background:linear-gradient(135deg,${RARE_COLOR[fish.r]},#0a4a3a);user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bx" id="f-cut">Cut Line</button>`;
+  const bandEl=$('f-band'),tenEl=$('f-ten'),progEl=$('f-prog');
+  const paintBand=()=>{bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%'};
+  paintBand();
+  const reelBtn=$('f-reel');
+  const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.3)':'none'};
+  reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
+  reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
+  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
+  $('f-cut').onclick=()=>finishFight(false,'Cut the line. It wins this round.');
+  const tick=setInterval(()=>{
+    if(over)return;
+    tension+=(reeling?climb:-fall)+drift;
+    if(tension>=1){over=true;sfx('hit');flashDamage(0.3);finishFight(false,fish.gator?'It rolled and snapped the line clean.':'SNAP. Line gone. Should\'ve eased off.');return}
+    tension=Math.max(0,tension);
+    const inBand=Math.abs(tension-bandCenter)<=bandHalf;
+    progress+=inBand?1.1:-0.8;progress=Math.max(0,Math.min(100,progress));
+    if(inBand&&Math.random()<0.3)sfx('click');
+    if(progress>=100){over=true;finishFight(true);return}
+    tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+  },50);
+  const finishFight=(won,msg)=>{
+    over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);
+    if(won){landFish(fish,spot)}
+    else{miniActive=false;_catchOpen=false;const e2=$('mini');if(e2)e2.style.display='none';const c2=$('mini-card');if(c2)c2.innerHTML='';if(!(S.played&&!$('s5').classList.contains('off')))S.on=true;radio(msg,'lilly')}
+  };
+  // Wire teardown so endGame/Escape can't strand the interval.
+  _fightCleanup=()=>{clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
+  el.style.display='flex';
+  radio(fish.gator?'Gator! Hold the line — easy, easy.':'Fish on. Work it in.','self');
+}
+let _fightCleanup=null;
 function showCatchDialog(fish,spot){
   // Catch dialog reuses the #mini overlay. _catchOpen distinguishes it from a real mini-game so the
   // global Escape handler routes to closeCatch (not mini.finish, which would corrupt drop points).
@@ -1245,6 +1357,7 @@ function showCatchDialog(fish,spot){
   el.style.display='flex';
 }
 function closeCatch(msg){
+  if(_fightCleanup){_fightCleanup();_fightCleanup=null}  // kill any live fight interval/listeners
   const el=$('mini'),card=$('mini-card');
   if(card)card.innerHTML='';if(el)el.style.display='none';
   miniActive=false;_catchOpen=false;
@@ -1287,7 +1400,8 @@ const ACH={
   codex_full:{n:'Castor Compendium',d:'Logged all 12 species.'},
   bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
-  fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'}
+  fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
+  gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
 };
 function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
@@ -1439,7 +1553,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops()}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickFishJumps(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -1505,8 +1619,8 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 
 // === RESULT → SALES BRIDGE ===
 function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';_nearShop=null;aiB.forEach(a=>a.userData.on=false);
-  // Tear down any in-flight cast / open catch dialog so it can't pop over the result screen.
-  cancelCast();if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
+  // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
+  cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
