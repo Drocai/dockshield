@@ -479,7 +479,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
   $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
-  $('nfo').textContent='WASD / Arrows · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
+  $('nfo').textContent='WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
   // show(null) now handles touch display for mobile
 }
 
