@@ -2,7 +2,9 @@ const DS=(()=>{
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+// Discount tiers earned by run outcome
+const DISC={'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id));
   // Hide touch controls when any card is showing
@@ -29,6 +31,11 @@ function initEngine(){
   scene.add(new THREE.HemisphereLight(0x6090b0,0x1a3020,0.4));
   // Subtle golden hour rim light
   const rim=new THREE.DirectionalLight(0xffaa55,0.3);rim.position.set(-60,30,-80);scene.add(rim);
+  scene._sun=sun;scene._rim=rim;
+  // Visible sun disc on the horizon — readable anchor in the sky
+  const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(9,20,20),new THREE.MeshBasicMaterial({color:0xffd28a,transparent:true,opacity:0.85}));sunDisc.position.set(120,55,-280);scene.add(sunDisc);
+  const sunHalo=new THREE.Mesh(new THREE.SphereGeometry(16,16,16),new THREE.MeshBasicMaterial({color:0xffb060,transparent:true,opacity:0.18}));sunHalo.position.copy(sunDisc.position);scene.add(sunHalo);
+  scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;
 
   // Water — deeper blue-green, more reflective
   waterGeo=new THREE.PlaneGeometry(800,800,80,80);
@@ -185,6 +192,8 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   const pR=new THREE.PointLight(0x00ff00,0.5,8);pR.position.set(1.2,1.3,2.5);bMesh.add(pR);
   // Headlight
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
+  // Foam ring under the boat — scales with speed for hull-water contact read
+  const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.6,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.35,side:THREE.DoubleSide}));foam.rotation.x=-Math.PI/2;foam.position.y=-0.18;bMesh.add(foam);bMesh.userData.foam=foam;
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === WAKE PARTICLES ===
@@ -230,13 +239,22 @@ function applyWeatherVisuals(){
   // Fog density based on visibility
   const vis=Math.max(w.v||10000,1000);
   scene.fog.near=Math.min(vis*0.008,80);scene.fog.far=Math.min(vis*0.04,400);
-  // Sky/fog color shift for conditions
+  // Sky/fog/sun color shift for conditions
   if(w.c==='Rain'||w.c==='Drizzle'){
     scene.background.set(0x0a1218);scene.fog.color.set(0x0a1218);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0x7a8090);scene._sunDisc.material.opacity=0.35}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0x6070a0);
+    if(scene._sun)scene._sun.intensity=0.8;
   }else if(w.c==='Clouds'||w.c==='Overcast'){
     scene.background.set(0x0c1822);scene.fog.color.set(0x0c1822);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0xccc0a0);scene._sunDisc.material.opacity=0.55}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0xb09870);
+    if(scene._sun)scene._sun.intensity=1.0;
   }else{
     scene.background.set(0x071520);scene.fog.color.set(0x0b1e30);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0xffd28a);scene._sunDisc.material.opacity=0.85}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0xffb060);
+    if(scene._sun)scene._sun.intensity=1.4;
   }
   // Spawn rain particles if raining
   if((w.c==='Rain'||w.c==='Drizzle')&&rainDrops.length===0){
@@ -283,26 +301,44 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   // Pin bob
   if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
+  // Foam ring grows with speed and pulses to read as turbulence
+  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  // Sun halo pulse
+  if(scene._sunHalo)scene._sunHalo.material.opacity=0.15+Math.sin(t*0.6)*0.05;
 
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
-    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx);if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd-=bt.ac*0.5;spd*=bt.dr;
-    if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
+    // Hull damage cripples handling when below 30%
+    const hullP=S.hull<30?0.55:(S.hull<60?0.85:1);
+    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd-=bt.ac*0.5;spd*=bt.dr;
+    if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
+    // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
+    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400)}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
     const dd=bMesh.position.distanceTo(dockPos);if(dd<150)S.score+=Math.max(0,Math.round(as*0.3));
     $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
-    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<6)S.near++}
+    // Hull HUD + color states
+    const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
+    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++}else if(d<6){S.near++}}
+    if(S.hull<=0){endGame(false);return}
     spawnWake();tickWakes();tickRain();
     tickPh();if(dd<8){S.pc=3;endGame(true)}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
-  }else{cam.position.x=Math.sin(t*0.1)*30;cam.position.z=Math.cos(t*0.1)*30-20;cam.position.y=12+Math.sin(t*0.2)*2;cam.lookAt(0,0,-20)}
+  }else{
+    // Cinematic idle — slow low-altitude sweep across the hazard zone
+    const tt=t*0.08;
+    cam.position.x=Math.sin(tt)*55;cam.position.z=Math.cos(tt)*55-30;cam.position.y=6+Math.sin(t*0.25)*3;
+    cam.lookAt(Math.sin(tt+0.6)*20,2,-50);
+    // One patrol boat drifts in the distance during idle so something is alive
+    if(aiB[0]){const p=aiB[0];p.position.x=Math.sin(t*0.3)*70;p.position.z=-90+Math.cos(t*0.2)*20;p.position.y=0.3+Math.sin(t*1.5)*0.2;p.rotation.y=t*0.3+Math.PI*0.5}
+  }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;spd=0;aV=0;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
@@ -317,6 +353,7 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
   $('rt').textContent=won?'Survivors Extracted':'Dragged Under';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
+  const rh=$('r-hull');if(rh){rh.textContent=Math.round(S.hull)+'%';rh.className='sv '+(S.hull<30?'r':S.hull<60?'y':'g')}
   let rl,rm,rc;const nr=S.near/Math.max(el,1);
   if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
   else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
@@ -325,7 +362,25 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
+  // Tiered discount earned from run quality
+  S.outcome=rl;S.discount=DISC[rl]||0;
+  paintDiscount();
   saveData(won);show('s5')}
+
+// Paint the dynamic discount across s5 (result) and s3 (plans)
+function paintDiscount(){
+  const d=S.discount;
+  const r5badge=$('r-disc-badge'),r5text=$('r-disc-text'),r5btn=$('r-disc-btn'),r5wrap=$('r-disc-wrap');
+  const tdbadge=$('td-badge'),tdtext=$('td-text'),tdwrap=$('td');
+  if(d>0){
+    if(r5wrap){r5wrap.style.display='block';r5badge.textContent=d+'% OFF';r5text.innerHTML='earned through your run — applied to your first month';r5btn.textContent='View Plans — '+d+'% Off Applied'}
+    if(tdbadge){tdbadge.textContent=d+'% OFF';tdtext.innerHTML='first month — earned through your '+S.outcome.toLowerCase()+' run';tdwrap.classList.remove('off')}
+  }else{
+    // OVERRUN — no discount earned, but still let them see plans
+    if(r5wrap){r5wrap.style.display='block';r5badge.textContent='NO DISCOUNT';r5text.innerHTML='The Depth took you. Run it clean to unlock <strong>up to 15% off</strong>.';r5btn.textContent='View Protection Plans'}
+    if(tdwrap)tdwrap.classList.add('off');
+  }
+}
 
 // === SERVICES ===
 async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
@@ -355,17 +410,20 @@ async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent
   }catch(e){alert('Error: '+e.message);show('s1')}}
 function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')}
 function playFromTier(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
-function showTiers(){if(S.played){$('td').classList.remove('off');$('pft').classList.add('off')}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
+function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
 function replay(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>el.classList.toggle('on',el.dataset.b===c));mkBoat(c)}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
-  const price=S.played?Math.round(t.p*0.85):t.p;
+  const d=S.discount||0;const price=Math.round(t.p*(1-d/100));
   if(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY){try{setStep(3);
-    const r=await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:S.lid,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.ti,monthly_price:price})});
-    if(r.ok){const d=await r.json();if(d.checkout_url)S.curl=d.checkout_url}
+    const r=await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:S.lid,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.ti,monthly_price:price,discount_pct:d,run_outcome:S.outcome||''})});
+    if(r.ok){const j=await r.json();if(j.checkout_url)S.curl=j.checkout_url}
     setStep(5)}catch(e){console.warn('Quote pipeline:',e)}}
-  $('ok-t').textContent=t.n;$('ok-p').textContent=S.played?`$${price}/mo (first month)`:`$${t.p}/mo`;show('s4')}
+  $('ok-t').textContent=t.n;$('ok-p').textContent=d>0?`$${price}/mo (first month, ${d}% off)`:`$${t.p}/mo`;
+  // Waterway risk signal — wind + visibility + outcome
+  const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on your waterway: '+parts.join(' · '):'Your waterway is running clean today.'}
+  show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
 
