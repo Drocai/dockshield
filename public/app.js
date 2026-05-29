@@ -59,7 +59,8 @@ function initEngine(){
   scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;
 
   // Water — deeper blue-green, more reflective
-  waterGeo=new THREE.PlaneGeometry(800,800,80,80);
+  // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
+  waterGeo=new THREE.PlaneGeometry(1200,1200,96,96);
   const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
@@ -466,7 +467,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    tickPh();if(dd<8){S.pc=3;endGame(true)}
+    // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
+    // runs end on hull=0 (sink) or player-triggered "End Run".
+    if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
@@ -486,13 +489,16 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
-  $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
+  // Phase HUD is business-mode only — the free-roam world has no APPROACH/SHALLOWS/EXTRACTION arc.
+  $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';if(GAME_MODE==='business')$('phud').style.display='block';
+  // Game-mode "End Run" button so the player can choose to end and see the recap.
+  const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
   $('nfo').textContent='WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
   // show(null) now handles touch display for mobile
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
@@ -550,7 +556,7 @@ async function launch(){if(!val())return;show('s2');setStep(1);$('lt').textConte
     setStep(3);$('lt').textContent='Reading Conditions';$('lm').textContent='Fetching live weather...';await fetchWx();
     setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';if(GAME_MODE==='business')await saveLead();
     setStep(5);$('lt').textContent='Deploying';$('lm').textContent='Building the op...';await new Promise(r=>setTimeout(r,400));
-    startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)
+    startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)
   }catch(e){alert('Error: '+e.message);show('s1')}}
 async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent='Processing';$('lm').textContent='Analyzing...';$('skip-btn').style.display='none';
   try{
@@ -561,9 +567,9 @@ async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent
     $('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')
   }catch(e){alert('Error: '+e.message);show('s1')}}
 function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')}
-function playFromTier(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function playFromTier(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
-function replay(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
+function replay(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});mkBoat(c);const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
@@ -606,6 +612,7 @@ function launchGame(){
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,mode:GAME_MODE};
+function endRun(){if(S.on)endGame(S.hull>0)}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,mode:GAME_MODE};
 })();
 
