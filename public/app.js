@@ -1,6 +1,6 @@
 const DS=(()=>{
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
-const BT={regular:{n:'Regular',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xe0e0e0,wx:1},pontoon:{n:'Pontoon',ac:.012,dr:.988,tu:.03,mx:.8,col:0xd4a853,wx:.7},speedboat:{n:'Speedboat',ac:.025,dr:.978,tu:.055,mx:1.8,col:0xef4444,wx:1.4}};
+const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
 let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 const $=id=>document.getElementById(id);
@@ -32,7 +32,7 @@ function initEngine(){
 
   // Water — deeper blue-green, more reflective
   waterGeo=new THREE.PlaneGeometry(800,800,80,80);
-  const wM=new THREE.MeshStandardMaterial({color:0x0c3a4d,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
+  const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
@@ -150,10 +150,10 @@ function mkAI(){
 
 function mkWaypoints(){
   [[0,0,0],[-15,0,-18],[10,0,-38],[-5,0,-55],[0,0,-75]].forEach(([x,y,z])=>{
-    const r=new THREE.Mesh(new THREE.RingGeometry(3,4,24),new THREE.MeshBasicMaterial({color:0x0ea5e9,transparent:true,opacity:0.35,side:THREE.DoubleSide}));
+    const r=new THREE.Mesh(new THREE.RingGeometry(3,4,24),new THREE.MeshBasicMaterial({color:0xe8590c,transparent:true,opacity:0.35,side:THREE.DoubleSide}));
     r.rotation.x=-Math.PI/2;r.position.set(x,0.15,z);r.visible=false;scene.add(r);wps.push(r);
     // Inner glow ring
-    const inner=new THREE.Mesh(new THREE.RingGeometry(1.5,2,24),new THREE.MeshBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.2,side:THREE.DoubleSide}));
+    const inner=new THREE.Mesh(new THREE.RingGeometry(1.5,2,24),new THREE.MeshBasicMaterial({color:0xfb923c,transparent:true,opacity:0.2,side:THREE.DoubleSide}));
     inner.rotation.x=-Math.PI/2;inner.position.set(x,0.18,z);inner.visible=false;scene.add(inner);
     r.userData.inner=inner;
   });
@@ -168,7 +168,7 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   // Stern
   const stern=new THREE.Mesh(new THREE.BoxGeometry(2,0.7,0.6),new THREE.MeshStandardMaterial({color:t.col,roughness:0.4}));stern.position.set(0,0.4,-2.5);bMesh.add(stern);
   // Deck stripe
-  const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.04,4.8),new THREE.MeshStandardMaterial({color:0x0ea5e9,emissive:0x0ea5e9,emissiveIntensity:0.15}));stripe.position.y=0.92;bMesh.add(stripe);
+  const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.04,4.8),new THREE.MeshStandardMaterial({color:0xe8590c,emissive:0xe8590c,emissiveIntensity:0.15}));stripe.position.y=0.92;bMesh.add(stripe);
   // Cabin
   const cab=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.9,2.2),new THREE.MeshStandardMaterial({color:0xf5f5f0,roughness:0.6}));cab.position.set(0,1.4,-0.3);cab.castShadow=true;bMesh.add(cab);
   // Windshield
@@ -263,11 +263,11 @@ function tickRain(){
 }
 
 // === 3-PHASE MISSION ===
-const PH=[{n:'APPROACH',d:'Follow the rings',check:()=>wpI>=4},{n:'HAZARD ZONE',d:'Avoid obstacles — watch for crossings',check:()=>bMesh.position.distanceTo(dockPos)<55},{n:'PRECISION DOCKING',d:'Slow down — dock carefully',check:()=>bMesh.position.distanceTo(dockPos)<8}];
+const PH=[{n:'APPROACH',d:'Follow the rescue markers',check:()=>wpI>=4},{n:'THE SHALLOWS',d:'Avoid the debris — watch the water',check:()=>bMesh.position.distanceTo(dockPos)<55},{n:'EXTRACTION',d:'Slow down — bring them in',check:()=>bMesh.position.distanceTo(dockPos)<8}];
 function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').textContent=PH[p].d;$('pfill').style.width=((p+1)/3*100)+'%';
   if(p===0){wpI=0;wps.forEach((w,i)=>{w.visible=i===0;if(w.userData.inner)w.userData.inner.visible=i===0})}
   if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>{w.visible=false;if(w.userData.inner)w.userData.inner.visible=false});S.pc=1}
-  if(p===2){$('nfo').textContent='SLOW DOWN — Precision approach';$('nfo').style.color='#f59e0b';S.pc=2}}
+  if(p===2){$('nfo').textContent='SLOW DOWN — Extraction';$('nfo').style.color='#f59e0b';S.pc=2}}
 
 function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
   if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
@@ -307,7 +307,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
   $('hud').style.display='flex';$('wxb').style.display='block';$('nfo').style.display='block';$('phud').style.display='block';
-  $('nfo').textContent='WASD / Arrows · Follow the rings';$('nfo').style.color='#475569';setPh(0);show(null);
+  $('nfo').textContent='WASD / Arrows · Follow the rescue markers';$('nfo').style.color='#475569';setPh(0);show(null);
   // show(null) now handles touch display for mobile
 }
 
@@ -316,15 +316,15 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
-  $('rt').textContent=won?'Docked Successfully':'Hull Breach';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
+  $('rt').textContent=won?'Survivors Extracted':'Dragged Under';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
   let rl,rm,rc;const nr=S.near/Math.max(el,1);
-  if(!won){rl='HIGH EXPOSURE';rm='Lake Lanier\'s hidden obstacles got you. Your dock faces the same invisible threats — algae, biological growth, and structural decay below the waterline.';rc='rgba(239,68,68,0.08)'}
-  else if(S.near>15||nr>0.5){rl='ELEVATED RISK';rm='Multiple close calls during approach. Storm debris, wake damage, and navigation clutter increase your dock\'s exposure to structural stress. Regular maintenance prevents compounding damage.';rc='rgba(245,158,11,0.08)'}
-  else if(S.maxSpd>25){rl='SPEED STRESS';rm='High-speed approaches put extra stress on dock structures. Wake energy and impact loading accelerate wear. Precision maintenance extends your dock\'s rated lifespan.';rc='rgba(245,158,11,0.08)'}
-  else{rl='CLEAN APPROACH';rm='Excellent navigation — you protected your approach. Now protect the dock itself. Even clean approaches can\'t prevent biological growth, the #1 cause of dock replacement.';rc='rgba(16,185,129,0.08)'}
-  $('rm').textContent=won?'Your dock faces threats you can\'t see from the surface.':'The lake\'s hazards are real. So is what\'s growing under your dock.';
+  if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
+  else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
+  else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
+  else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
-  $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN APPROACH'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN APPROACH'?'#a7f3d0':'#fecaca';
+  $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
   saveData(won);show('s5')}
 
 // === SERVICES ===
@@ -338,11 +338,11 @@ function setStep(n){for(let i=1;i<=5;i++){const d=$('st'+i);d.classList.remove('
 function val(){S.addr=$('f-addr').value.trim();S.email=$('f-email').value.trim();if(!S.addr||!S.email){alert('Enter address and email.');return false}if(!S.email.includes('@')){alert('Valid email required.');return false}return true}
 async function launch(){if(!val())return;show('s2');setStep(1);$('lt').textContent='Validating Address';$('lm').textContent=S.addr;$('skip-btn').style.display='none';
   try{
-    await new Promise(r=>setTimeout(r,300));setStep(2);$('lt').textContent='Locating Dock';$('lm').textContent='Geocoding coordinates...';
+    await new Promise(r=>setTimeout(r,300));setStep(2);$('lt').textContent='Locating Waterway';$('lm').textContent='Geocoding your coordinates...';
     const c=await geocode(S.addr);if(c){S.lat=c.lat;S.lng=c.lng}
-    setStep(3);$('lt').textContent='Live Weather';$('lm').textContent='Fetching conditions...';await fetchWx();
-    setStep(4);$('lt').textContent='Registering';$('lm').textContent='Saving telemetry...';$('skip-btn').style.display='block';await saveLead();
-    setStep(5);$('lt').textContent='Launching';$('lm').textContent='Building scenario...';await new Promise(r=>setTimeout(r,400));
+    setStep(3);$('lt').textContent='Reading Conditions';$('lm').textContent='Fetching live weather...';await fetchWx();
+    setStep(4);$('lt').textContent='Enlisting';$('lm').textContent='Logging your run...';$('skip-btn').style.display='block';await saveLead();
+    setStep(5);$('lt').textContent='Deploying';$('lm').textContent='Building the op...';await new Promise(r=>setTimeout(r,400));
     startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)
   }catch(e){alert('Error: '+e.message);show('s1')}}
 async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent='Processing';$('lm').textContent='Analyzing...';$('skip-btn').style.display='none';
