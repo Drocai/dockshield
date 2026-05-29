@@ -473,8 +473,7 @@ function initEngine(){
 
   document.addEventListener('keydown',e=>{
     keys[e.code]=true;
-    if(e.code==='Space'&&S.on)e.preventDefault();
-    if(e.code==='Space'&&S.on)fireSonar();
+    if(e.code==='Space'&&S.on&&!miniActive){e.preventDefault();fireSonar()}
     if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
@@ -704,21 +703,29 @@ function drawMinimap(){
   // ring background
   ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
   ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // Clip everything below to the dial so nothing (boat, drop points, POIs) bleeds past the rim
+  // once the player drives out near the world edge.
+  ctx.save();ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.clip();
+  // Project world coords to minimap px, clamping anything beyond the dial radius to the rim so it
+  // still reads as a direction marker instead of disappearing.
+  const R=W/2-4;
+  const proj=(wx,wz)=>{let px=wx*scl,pz=wz*scl;const d=Math.hypot(px,pz);if(d>R){px=px/d*R;pz=pz/d*R}return[W/2+px,H/2+pz]};
   // POIs first (drawn under everything else)
-  POIS.forEach(p=>{const px=W/2+p.x*scl,pz=H/2+p.z*scl;ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
+  POIS.forEach(p=>{const[px,pz]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
   // origin (dock)
   ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
   // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
   const now=Date.now()*0.001;
-  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx,bz,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
+  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,[bx2,bz2]=proj(bMesh.position.x,bMesh.position.z);ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx2,bz2,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
   // boat dot
-  const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
+  const[bx,bz]=proj(bMesh.position.x,bMesh.position.z);
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
   // heading line
   const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
-  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  ctx.restore();
 }
 
 function mkCryptid(){
@@ -1045,7 +1052,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
-    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030}
+    if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
+      // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
+      if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}
   }
   // Atmospheric mist drift — Points cloud spawned in mkMist(), shifts on the wind.
   if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
@@ -1066,11 +1075,14 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     // Hull damage cripples handling when below 30%
     const hullP=S.hull<30?0.55:(S.hull<60?0.85:1);
-    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
+    // While a cast is in flight the helm is locked — you can't drive off your own line. The boat
+    // coasts to a stop via drag. (castLine already requires near-zero speed to start.)
+    const frozen=_castInFlight;
+    if(!frozen&&(keys.ArrowUp||keys.KeyW||tch.lY>0.1))spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
     // Reverse capped at -bt.mx*0.5 — the boat can back up but can't outrun itself in reverse.
-    if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
+    if(!frozen&&(keys.ArrowDown||keys.KeyS||tch.lY<-0.1))spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
     spd*=bt.dr;
-    if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
+    if(!frozen&&Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
@@ -1083,7 +1095,11 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // total distance traveled (S.dist already accumulates each frame's movement).
     if(GAME_MODE==='business'){if(dd<150)S.score+=Math.max(0,Math.round(as*0.3))}
     else{S.score+=Math.max(0,Math.round(as*0.15))}
-    $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
+    $('h-spd').textContent=as.toFixed(1)+' kn';
+    // Distance HUD: business mode shows distance to the dock objective; free-roam shows distance
+    // to the nearest active beacon (or "—" if none) since the dock isn't the goal.
+    if(GAME_MODE==='game'){let nd=Infinity;for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<nd)nd=dist}$('h-dst').textContent=nd===Infinity?'—':nd.toFixed(0)+'m';const dl=$('h-dst').previousElementSibling;if(dl&&dl.textContent!=='Beacon')dl.textContent='Beacon'}
+    else $('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
