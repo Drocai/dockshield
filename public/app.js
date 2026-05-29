@@ -9,15 +9,15 @@ const HERO={
   speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 // Discount tiers earned by run outcome
-const DISC={'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
+const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id));
   // Hide touch controls when any card is showing
   const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
 
-let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[];
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
@@ -52,7 +52,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();
 
   document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -160,6 +160,21 @@ function mkAI(){
     const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
     const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
     g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+function mkCivs(){
+  // Three civilians between start and dock, spread along the route, away from the dense hazard cluster.
+  const spots=[[-8,-25],[12,-50],[-3,-85]];
+  spots.forEach(([x,z])=>{
+    const g=new THREE.Group();
+    // Inner-tube ring + a small head/torso so it reads as a person clinging to a float
+    const tube=new THREE.Mesh(new THREE.TorusGeometry(0.55,0.18,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0xff6b35,emissiveIntensity:0.35,roughness:0.5}));tube.rotation.x=Math.PI/2;tube.position.y=0.2;g.add(tube);
+    const head=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,6),new THREE.MeshStandardMaterial({color:0xd4a373,roughness:0.7}));head.position.y=0.55;g.add(head);
+    const torso=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.25),new THREE.MeshStandardMaterial({color:0x2a4d6e,roughness:0.6}));torso.position.y=0.3;g.add(torso);
+    // Pulsing call-for-help ring on the water
+    const ring=new THREE.Mesh(new THREE.RingGeometry(0.9,1.1,18),new THREE.MeshBasicMaterial({color:0xff6b35,transparent:true,opacity:0.4,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.05;g.add(ring);
+    g.position.set(x,0,z);g.userData={saved:false,ring};scene.add(g);civs.push(g);
+  });
 }
 
 function mkWaypoints(){
@@ -332,6 +347,21 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++}else if(d<6){S.near++}}
     if(S.hull<=0){endGame(false);return}
+    // Civilian pickups — must approach slowly. Too-fast pass-by flashes a warning and the civilian remains in danger.
+    for(const c of civs){if(c.userData.saved)continue;
+      c.position.y=Math.sin(t*1.8+c.position.x)*0.12;
+      if(c.userData.ring)c.userData.ring.material.opacity=0.3+Math.sin(t*3+c.position.x)*0.2;
+      const dc=bMesh.position.distanceTo(c.position);
+      if(dc<3){
+        if(Math.abs(spd)<0.4){
+          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);
+          $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
+          $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
+        }else if(dc<2.2&&$('ww').textContent!=='TOO FAST FOR PICKUP'){
+          $('ww').textContent='TOO FAST FOR PICKUP';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='TOO FAST FOR PICKUP')$('ww').style.display='none'},1200);
+        }
+      }
+    }
     spawnWake();tickWakes();tickRain();
     tickPh();if(dd<8){S.pc=3;endGame(true)}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
@@ -345,7 +375,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;spd=0;aV=0;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;civs.forEach(c=>{c.userData.saved=false;c.visible=true});$('h-civ').textContent='0/'+civs.length;spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
@@ -366,6 +396,9 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
   else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
   else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  // Outcome upgrade: full civilian extraction
+  if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
+  const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
