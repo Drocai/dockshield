@@ -131,6 +131,7 @@ const mini={
     sfx(score>0?'win':'click');
     miniActive=false;S.on=true;
     S.missionsCleared=(S.missionsCleared||0)+1;
+    if(S.missionsCleared>=5)onUnlock('five_missions');
     const el=$('mini');if(el){el.style.display='none';const card=$('mini-card');if(card)card.innerHTML=''}
     if(dp)clearDropPoint(dp);
   },
@@ -326,6 +327,7 @@ const mini={
     const bail=()=>{if(won===null){won=false;done(true)}};
     const done=(bailed)=>{
       const score=won?(isHome?350:200)+clicks*3:bailed?0:0;
+      if(won&&isHome)onUnlock('home_repaired');
       const line=won?(isHome?'Your dock holds. The water moves on.':'Pier locked down. Neighbor owes you.'):
                 bailed?'Walked off. The water took the rest.':'Couldn’t hold it. The boards went under.';
       if(won)S.hull=Math.min(100,S.hull+10);  // reward the player's hull for a clean repair
@@ -1109,7 +1111,7 @@ function resolveCast(spot){
   runCatches.push(fish);
   // Every species caught enters the catalog (drives the Fish Codex completion). The Trophy Board
   // showcase filters this to rare/legendary at render time.
-  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist()}
+  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
   sfx(fish.r==='legendary'?'legendary':'catch');
   showCatchDialog(fish,spot);
 }
@@ -1129,7 +1131,7 @@ function showCatchDialog(fish,spot){
   const baitFor={common:0.6,uncommon:0.9,rare:1.6,legendary:3.2};
   const keepBait=Math.max(1,Math.round(fish.s*(baitFor[fish.r]||1)*0.35));
   const releaseBait=Math.max(1,Math.round(keepBait*0.25));
-  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;bait+=keepBait;persist();onUnlock('first_catch');if(fish.r==='legendary')onUnlock('legendary_landed');closeCatch(`${fish.n}. ${fish.s} on the line. +${keepBait} bait.`)};
+  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;bait+=keepBait;persist();onUnlock('first_catch');if(fish.r==='legendary')onUnlock('legendary_landed');if(bait>=500)onUnlock('bait_baron');closeCatch(`${fish.n}. ${fish.s} on the line. +${keepBait} bait.`)};
   $('m-r').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);bait+=releaseBait;persist();onUnlock('first_release');closeCatch(`Released. ${fish.n} goes back. +${releaseBait} bait, +1 hull.`)};
   el.style.display='flex';
 }
@@ -1411,6 +1413,7 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   }
   // Outcome upgrade: full civilian extraction
   if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
+  if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal)onUnlock('full_extraction');
   const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
   // Evidence reveal — show flavor line only if collected; otherwise hide the block
   const evWrap=$('r-ev-wrap'),evName=$('r-ev-name'),evLine=$('r-ev-line');
