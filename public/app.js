@@ -56,6 +56,58 @@ const mini={
     miniActive=false;S.on=true;
     const el=$('mini');if(el)el.style.display='none';
     if(dp)clearDropPoint(dp);
+  },
+  // === BATTLE: surfaced cryptid combat using sonar pings ===
+  // The player has been ambushed by something that surfaced at this drop point. Each PING button
+  // press deals damage. Cryptid bites back on a timer reducing player hull. Win at 5 hits.
+  openBattle(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let hits=0,need=5,creatureHp=100,playerHull=Math.round(S.hull),lastBite=Date.now();
+    const render=()=>{
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#ef4444">Ambush · ${dp.userData.type.n}</div>
+        <div class="m-title">Something came up.</div>
+        <div class="m-sub">It surfaced under the boat. Light it up with the sonar before it tears through the hull.</div>
+        <div class="sb"><div class="sr"><span class="sl">Creature</span><span class="sv r">${creatureHp}%</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv ${playerHull<30?'r':playerHull<60?'y':'g'}">${playerHull}%</span></div><div class="sr"><span class="sl">Hits</span><span class="sv b">${hits}/${need}</span></div></div>
+        <button class="btn bp" id="m-ping" style="background:linear-gradient(135deg,#60d0ff,#3b82f6);box-shadow:0 4px 16px rgba(96,208,255,0.4)">Fire Sonar (Space)</button>
+        <button class="btn bx" id="m-flee">Fall Back</button>`;
+      $('m-ping').onclick=fire;$('m-flee').onclick=flee;
+    };
+    const fire=()=>{
+      if(creatureHp<=0)return;
+      creatureHp=Math.max(0,creatureHp-22);hits++;
+      if(creatureHp<=0){win();return}
+      render();
+    };
+    const flee=()=>{
+      // Falling back costs hull (the creature got a parting shot) but ends the mission alive.
+      S.hull=Math.max(1,S.hull-15);
+      mini.finish(dp,25,'Pulled back. It’s still down there.',S.bc==='speedboat'?'fly':'self');
+    };
+    const win=()=>{
+      S.hull=Math.min(100,Math.max(1,playerHull));  // apply remaining hull from battle state
+      mini.finish(dp,250,'Hit clean. It went back under — for now.','reel');
+    };
+    const lose=()=>{
+      mini.finish(dp,0,'It dragged us under. Hull breach.','reel');
+      S.hull=0;
+    };
+    // Bite tick: every 3s the creature damages the player's battle-state hull. Player hull persists.
+    const biteTimer=setInterval(()=>{
+      if(!miniActive||creatureHp<=0){clearInterval(biteTimer);return}
+      playerHull=Math.max(0,playerHull-8);S.hull=playerHull;
+      if(playerHull<=0){clearInterval(biteTimer);lose();return}
+      render();
+    },3000);
+    // Spacebar also fires while the overlay is up
+    const keyHandler=e=>{if(e.code==='Space'&&miniActive&&dp.userData.type.k==='battle'){e.preventDefault();fire()}};
+    document.addEventListener('keydown',keyHandler);
+    // Clean up the keyhandler when this mini ends.
+    const origFinish=mini.finish;
+    mini.finish=function(...args){document.removeEventListener('keydown',keyHandler);clearInterval(biteTimer);mini.finish=origFinish;return origFinish.apply(this,args)};
+    el.style.display='flex';render();
+    radio('Surfaced contact. Fire on it.','fly');
   }
 };
 
