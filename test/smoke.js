@@ -29,6 +29,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const p=await (await b.newContext({viewport:{width:1280,height:800},ignoreHTTPSErrors:true})).newPage();
     p.on('pageerror',e=>errs.push('pageerror: '+e));
     p.on('console',m=>{if(m.type()==='error')errs.push('CE: '+m.text())});
+    // Backward-compat: seed a save_v1 blob WITHOUT the polish-v2 fields (audioVol/shakeMul).
+    // After load, those fields should default in cleanly without throwing.
+    await p.addInitScript(()=>{try{localStorage.setItem('dockshield_save_v1',JSON.stringify({bait:100,best:200,muted:false}))}catch(e){}});
     await p.goto(`http://127.0.0.1:${PORT}/?qa=1`,{waitUntil:'load',timeout:20000});
     await p.waitForFunction(()=>typeof DS!=='undefined',{timeout:10000});
     await sleep(1200);
@@ -68,8 +71,44 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await sleep(300);await p.keyboard.press('Escape');await sleep(300);
     console.log('· boatworks opens');
 
+    // === Polish v2 assertions ===
+    // 1. Duct V2: drive each new archetype synchronously via the QA probe — confirms
+    //    runDuctEscapeAnim handles 'tape' and 'decoy' branches without throwing.
+    for(const k of ['tape','decoy']){
+      const ok=await p.evaluate(kk=>DS.qaDuctEscape(kk),k);
+      if(!ok)fail('qaDuctEscape('+k+') failed');
+    }
+    console.log('· duct V2 archetypes run');
+
+    // 2. Settings sliders present in the panel after open.
+    await p.evaluate(()=>DS.openSettings());await sleep(300);
+    const slidersExist=await p.evaluate(()=>!!document.getElementById('audio-vol')&&!!document.getElementById('shake-mul'));
+    if(!slidersExist)fail('settings sliders missing');
+    // Setters work + persist into save blob.
+    await p.evaluate(()=>{DS.setAudVol(0.3);DS.setShakeMul(1.2)});
+    const saved=await p.evaluate(()=>DS.getSave());
+    if(saved.audioVol!==0.3||saved.shakeMul!==1.2)fail('slider values did not persist: '+JSON.stringify({audioVol:saved.audioVol,shakeMul:saved.shakeMul}));
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· settings sliders persist');
+
+    // 3. Backward-compat: the seed save lacked audioVol/shakeMul. The current save (after we
+    // touched the sliders above) should now contain them, but the originals (bait, best) survive.
+    if(saved.bait!==100||saved.best!==200)fail('legacy save fields not preserved: '+JSON.stringify(saved));
+    console.log('· save backward-compat OK');
+
+    // 4. Toast queue: fire two unlocks, verify the toast becomes visible.
+    await p.evaluate(()=>DS.qaUnlock(['boss_clean','duct_three_near']));await sleep(150);
+    const toastVisible=await p.evaluate(()=>{const t=document.getElementById('ach-toast');return t&&getComputedStyle(t).display!=='none'});
+    if(!toastVisible)fail('achievement toast not visible after qaUnlock');
+    console.log('· toast queue visible');
+
+    // 5. Bait pulse: applies the CSS class to #h-bait.
+    const baitPulse=await p.evaluate(()=>{DS.qaPulseBait(5);const e=document.getElementById('h-bait');return e&&e.className.includes('bait-pop')});
+    if(!baitPulse)fail('bait pulse class not applied');
+    console.log('· bait pulse class applied');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
-    await sleep(2000);
+    await sleep(1500);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
   }finally{
     await b.close();srv.kill();

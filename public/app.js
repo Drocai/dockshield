@@ -104,6 +104,9 @@ let gfxQuality='medium';
 try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
 // Photo mode — free orbit camera with HUD hidden. Pauses the run while active.
 let photoMode=false,photoCam={yaw:0,pitch:0.35,dist:22},_photoResume=false;
+// Polish-pass user prefs: audio master volume + shake intensity multiplier. Plain numbers in the
+// save blob so JSON.stringify round-trips losslessly. Defaults applied via || in loadSave.
+let _audVol=0.6,_shakeMul=1.0;
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
@@ -115,13 +118,17 @@ function loadSave(){
     if(d.baitInv)Object.assign(baitInv,d.baitInv);
     if(typeof d.equippedBait==='string')equippedBait=d.equippedBait;
     if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
+    if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
+    if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
   }catch(e){}
 }
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul}))}catch(e){}
 }
+// QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
+function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
@@ -226,6 +233,16 @@ function disposeTree(obj){if(!obj)return;obj.traverse(o=>{if(o.geometry)o.geomet
 const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.Vector3(),_vDuct=new THREE.Vector3(),_vFwd=new THREE.Vector3();
 // Frame counter — lets the loop stagger expensive work (e.g. water normals) across frames.
 let _frame=0;
+// Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
+let _isNight=false;
+// Track the last-displayed bait value so the HUD can pulse on any change (up or down).
+let _lastBait=0;
+function pulseBait(delta){
+  const el=document.getElementById('h-bait');if(!el)return false;
+  el.classList.remove('bait-pop-up','bait-pop-down');void el.offsetWidth;  // restart animation
+  el.classList.add(delta>=0?'bait-pop-up':'bait-pop-down');
+  return true;
+}
 const keys={};
 let tch={lY:0,rX:0};
 let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
@@ -362,6 +379,9 @@ const mini={
     miniActive=true;S.on=false;
     const card=$('mini-card'),el=$('mini');
     let phase=1,hits=0,need=6,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
+    // For the boss_clean achievement — track the lowest hull seen across the fight.
+    let _bossHullMin=playerHull,_bossStartHull=playerHull;
+    const _bossPhaseFlash=()=>{const gr=$('grade');if(!gr)return;const prev=gr.style.transition||'';gr.style.transition='opacity 0.2s ease-out';gr.style.opacity='0.4';setTimeout(()=>{gr.style.opacity='';gr.style.transition=prev},220)};
     const render=()=>{
       const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
       const phName={1:'PHASE 1 · SHELL',2:'PHASE 2 · LURE',3:'PHASE 3 · LINE'}[phase];
@@ -379,7 +399,7 @@ const mini={
           <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE</button>`;
       }
       card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
-      if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;startLure()}render()};
+      if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;_bossPhaseFlash();startLure()}render()};
       if(phase===2)$('m-b-strike').onclick=strike;
       if(phase===3)$('m-b-release').onclick=release;
       $('m-b-flee').onclick=flee;
@@ -392,8 +412,8 @@ const mini={
       const bar=$('m-b-bar'),pct=bar?parseFloat(bar.style.width):0;
       clearInterval(lureWindow);
       // Gold band ~40-60%.
-      if(pct>=38&&pct<=62){phase=3;tension=0;startReel();render();return}
-      playerHull=Math.max(0,playerHull-25);S.hull=playerHull;sfx('hit');flashDamage(0.8);
+      if(pct>=38&&pct<=62){phase=3;tension=0;_bossPhaseFlash();startReel();render();return}
+      playerHull=Math.max(0,playerHull-25);S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.8);
       if(playerHull<=0){lose();return}
       // Missed → back to phase 1, need one more hit
       phase=1;need=Math.min(8,need+1);render();
@@ -406,13 +426,24 @@ const mini={
       clearInterval(lureWindow);
       // Peak band 78-92%.
       if(tension>=0.78&&tension<=0.92){win();return}
-      playerHull=Math.max(0,playerHull-20);S.hull=playerHull;sfx('hit');flashDamage(0.6);
+      playerHull=Math.max(0,playerHull-20);S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.6);
       if(playerHull<=0){lose();return}
       tension=0;phase=3;startReel();render();
     };
     const flee=()=>{S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
-    const win=()=>{S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly')};
-    const lose=()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0};
+    // Final-hit beat: a brief grade fade + splash cue, then resolve. No global time-scale —
+    // the world keeps ticking normally so water/AI/fish-jumps don't desync.
+    const _bossFinalBeat=fn=>{
+      sfx('splash_big');const gr=$('grade');if(gr){const prev=gr.style.transition||'';gr.style.transition='opacity 0.6s ease-out';gr.style.opacity='0.5';setTimeout(()=>{gr.style.opacity='';gr.style.transition=prev},620)}
+      setTimeout(fn,600);
+    };
+    const win=()=>{
+      S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');
+      // Clean run = boss never knocked the player below 50% of starting hull.
+      if(_bossHullMin>=Math.max(50,_bossStartHull*0.5))onUnlock('boss_clean');
+      _bossFinalBeat(()=>mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly'));
+    };
+    const lose=()=>{_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
     // Spacebar fires the phase-1 ping
     const keyHandler=e=>{if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}};
     document.addEventListener('keydown',keyHandler);
@@ -798,6 +829,10 @@ function initEngine(){
   // Outer additive glow sprite — fakes a bloom flare around the sun without a postprocessing pass.
   const sunGlow=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffd9a0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.6,depthWrite:false}));sunGlow.scale.set(80,80,80);sunGlow.position.copy(sunDisc.position);scene.add(sunGlow);
   scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;scene._sunGlow=sunGlow;
+  // Water sun-glint — an additive sprite on the water plane along the sun's bearing. Cheap.
+  // Updated in loop() with the sun arc; hidden at night via the _isNight flag.
+  const glintMat=new THREE.SpriteMaterial({color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.55,depthWrite:false});
+  const sunGlint=new THREE.Sprite(glintMat);sunGlint.scale.set(60,18,1);sunGlint.position.set(0,0.12,-60);scene.add(sunGlint);scene._sunGlint=sunGlint;
 
   // Water — deeper blue-green, more reflective
   // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
@@ -889,7 +924,12 @@ let _nearShop=null;
 function tickShops(){
   if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('shop-prompt');if(p)p.style.display='none';return}
   let near=null;
-  for(const m of shopMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
+  for(const m of shopMeshes){
+    if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;
+    // Night-bloom on the shop neon: bigger + brighter sprite, brighter base sign.
+    if(m.userData.signGlow){const sg=m.userData.signGlow;const sc=_isNight?11:8;sg.scale.set(sc,sc,sc);sg.material.opacity=_isNight?0.78:0.5}
+    const d=bMesh.position.distanceTo(m.position);if(d<9)near=m;
+  }
   _nearShop=near;
   const p=$('shop-prompt');if(!p)return;
   if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.shop.col.toString(16).padStart(6,'0')}">${near.userData.shop.n}</b> — press <b>E</b> to dock & shop`}
@@ -1250,7 +1290,7 @@ function tickDuct(t){
   if(Math.random()<0.01){DUCT.vx=(Math.random()-0.5)*0.06;DUCT.vz=(Math.random()-0.5)*0.06}
   DUCT.x+=DUCT.vx;DUCT.z+=DUCT.vz;
   const m=DUCT.mesh;m.position.set(DUCT.x,Math.sin(t*2.5)*0.12,DUCT.z);m.rotation.y=Math.atan2(DUCT.vx,DUCT.vz)+Math.sin(t)*0.2;
-  if(DUCT.glow)DUCT.glow.material.opacity=0.4+Math.sin(t*3)*0.15;
+  if(DUCT.glow){const base=_isNight?0.85:0.4;const sc=_isNight?7:5;DUCT.glow.material.opacity=base+Math.sin(t*3)*0.15;DUCT.glow.scale.set(sc,sc,sc)}
   // Periodic quack if on-screen-ish (in front of the camera).
   if(t-DUCT.lastQuack>5.5){const toD=_vDuct.set(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=_vFwd;cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
   // Proximity prompt.
@@ -1689,12 +1729,17 @@ const DUCT_ESCAPES=[
   {k:'dive', at:0.65, line:'Dove straight down. Surfaced way over there. Unreal.'},
   {k:'fly',  at:0.82, line:'…it grew WINGS. It flew off. We are not okay.'},
   {k:'flop', at:0.75, line:'Rubber-banded sideways and spat the bobber back at you.'},
-  {k:'bounce',at:0.70,line:'The bobber bounced YOU. Tape duck wins again.'}
+  {k:'bounce',at:0.70,line:'The bobber bounced YOU. Tape duck wins again.'},
+  // Polish v2 additions — extending the variety so each Duct encounter feels fresh.
+  {k:'tape', at:0.93, line:'He duct-taped your HOOK shut. Hook is a sticky brick now.'},
+  {k:'decoy',at:0.78, line:'A SECOND duck. They split off. We don\'t know which one was real.'}
 ];
 function openDuctChase(){
   if(!DUCT.active)return;
   DUCT.engaged=true;const esc=DUCT_ESCAPES[Math.floor(Math.random()*DUCT_ESCAPES.length)];
-  ductStats.attempts++;persist();if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
+  ductStats.attempts++;persist();
+  if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
+  if(ductStats.attempts>=25)onUnlock('duct_25_attempts');
   const p=$('duct-prompt');if(p)p.style.display='none';
   miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
   const card=$('mini-card'),el=$('mini');if(!card||!el){endDuct(esc,0);return}
@@ -1735,6 +1780,10 @@ function openDuctChase(){
   function endDuct(e,peakPct){
     stop();
     if(peakPct>=60){ductStats.nearCatches++;onUnlock('duct_near_miss')}
+    if(ductStats.nearCatches>=3)onUnlock('duct_three_near');
+    // Non-persistent toast variant when the chase ended very close — uses the same queue as
+    // achievements so it doesn't clobber a real unlock toast fired in the same frame.
+    if(peakPct>=80)pushAchToast({n:'ALMOST',d:(peakPct|0)+'%. Closer than anyone.'});
     bait+=15;persist();
     miniActive=false;_catchOpen=false;const e2=$('mini');if(e2)e2.style.display='none';const c2=$('mini-card');if(c2)c2.innerHTML='';
     if(!(S.played&&!$('s5').classList.contains('off')))S.on=true;
@@ -1747,15 +1796,31 @@ function openDuctChase(){
   radio('Duck on the line. This is it. THIS is the one.','self');
 }
 // Brief world animation on the duck mesh matching the escape archetype, then he's gone.
+// Self-terminating; the decoy clone (when used) disposes its own geometry+material at the end.
 function runDuctEscapeAnim(kind){
   const m=DUCT.mesh;if(!m)return;
   const wp=new THREE.Vector3(DUCT.x,0,DUCT.z);splash(wp,18,0xffe27a,1.3);if(typeof wet!=='undefined'&&wet)wet.add(20);
   if(kind==='fly'){DUCT.wing.visible=true}
-  let s=0;const a=setInterval(()=>{s+=0.05;if(s>=1||!m){clearInterval(a);return}
+  // decoy: a visual-only clone of the duck mesh that splits off in the opposite direction. No AI,
+  // no userData — just two THREE primitives we dispose ourselves at the end of the anim.
+  let decoyMesh=null;
+  if(kind==='decoy'){
+    const body=new THREE.Mesh(new THREE.SphereGeometry(0.65,12,8),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0x6a4a02,emissiveIntensity:0.4,roughness:0.5}));
+    decoyMesh=body;decoyMesh.position.set(DUCT.x+0.8,0,DUCT.z+0.4);scene.add(decoyMesh);
+  }
+  let s=0;const a=setInterval(()=>{
+    s+=0.05;
+    if(s>=1||!m){
+      clearInterval(a);
+      if(decoyMesh){scene.remove(decoyMesh);if(decoyMesh.geometry)decoyMesh.geometry.dispose();if(decoyMesh.material)decoyMesh.material.dispose();decoyMesh=null}
+      return;
+    }
     if(kind==='dive'){m.position.y=-s*3;DUCT.x+=1.2;DUCT.z+=0.6}
     else if(kind==='fly'){m.position.y=s*9;m.rotation.y+=0.3}
     else if(kind==='slip'){m.position.y=-s*2;m.rotation.y+=0.4}
     else if(kind==='flop'){m.position.x=DUCT.x+Math.sin(s*20)*2}
+    else if(kind==='tape'){m.rotation.z=s*0.6;m.position.y=Math.sin(s*Math.PI)*0.3;m.material&&(m.material.emissiveIntensity=0.4*(1-s))}
+    else if(kind==='decoy'){m.position.x=DUCT.x-s*4;m.position.y=Math.sin(s*Math.PI)*1.5;if(decoyMesh){decoyMesh.position.x=DUCT.x+0.8+s*4;decoyMesh.position.y=Math.sin(s*Math.PI)*1.5;decoyMesh.rotation.y=s*2}}
     else{m.position.y=Math.sin(s*Math.PI)*2;DUCT.x-=1.0}
   },30);
 }
@@ -1808,7 +1873,8 @@ function sfx(type){
   const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth'],quack:[620,300,.16,'square'],dig:[160,90,.07,'square'],croak:[110,70,.16,'sawtooth'],swat:[400,120,.06,'square'],net:[300,500,.1,'sine'],splash_big:[200,60,.22,'sine']}[type]||[300,360,.08,'sine'];
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
   o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
-  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(0.06,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
+  const peak=Math.max(0.0001,0.06*_audVol);
+  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
 function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted)engineAudio.stop();else sfx('click')}
@@ -1833,7 +1899,7 @@ const engineAudio={on:false,osc:null,sub:null,gain:null,lapGain:null,
     for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*0.5;
     const lap=ctx.createBufferSource();lap.buffer=buf;lap.loop=true;
     const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=620;bp.Q.value=0.6;
-    this.lapGain=ctx.createGain();this.lapGain.gain.value=0.012;
+    this.lapGain=ctx.createGain();this.lapGain.gain.value=0.012*_audVol;
     lap.connect(bp);bp.connect(this.lapGain);this.lapGain.connect(ctx.destination);lap.start();
     this.on=true;
   },
@@ -1842,8 +1908,8 @@ const engineAudio={on:false,osc:null,sub:null,gain:null,lapGain:null,
     const now=_audioCtx.currentTime,a=Math.abs(spd);
     this.osc.frequency.setTargetAtTime(56+a*150,now,0.08);
     this.sub.frequency.setTargetAtTime(36+a*70,now,0.08);
-    this.gain.gain.setTargetAtTime(a>0.02?0.05+a*0.06:0.012,now,0.1);
-    this.lapGain.gain.setTargetAtTime(0.012+a*0.02,now,0.2);
+    this.gain.gain.setTargetAtTime((a>0.02?0.05+a*0.06:0.012)*_audVol,now,0.1);
+    this.lapGain.gain.setTargetAtTime((0.012+a*0.02)*_audVol,now,0.2);
   },
   stop(){if(this.on&&_audioCtx){const now=_audioCtx.currentTime;this.gain.gain.setTargetAtTime(0,now,0.15);this.lapGain.gain.setTargetAtTime(0,now,0.2)}}
 };
@@ -1894,11 +1960,29 @@ const ACH={
   boat_maxed:{n:'Tuned Up',d:'Maxed every upgrade slot on a hero boat.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
-  gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
+  gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'},
+  // Polish v2 — Duct + boss tightening.
+  duct_25_attempts:{n:'Tape Faithful',d:'25 attempts on Duct. Still not him.'},
+  duct_three_near:{n:'Almost A Story',d:'Three near-catches on Duct.'},
+  boss_clean:{n:'Surgical',d:'Beat the Deep Dock without dropping below 50% hull.'}
 };
+// Tiny queue around the existing toast so rapid back-to-back unlocks don't clobber each other.
+// We DON'T touch showAchToast — it keeps its own clearTimeout pattern. The queue just gates calls
+// to it on a separate one-shot timer so the next one fires AFTER the current toast's full life.
+const TOAST_LIFE=4200;  // matches showAchToast (3800ms visible + 400ms fade)
+let _achQ=[],_achBusy=false,_achDrainT=null;
+function _drainAch(){
+  _achBusy=false;_achDrainT=null;
+  const next=_achQ.shift();
+  if(next){_achBusy=true;showAchToast(next);_achDrainT=setTimeout(_drainAch,TOAST_LIFE)}
+}
+function pushAchToast(a){
+  if(_achBusy){_achQ.push(a);return}
+  _achBusy=true;showAchToast(a);_achDrainT=setTimeout(_drainAch,TOAST_LIFE);
+}
 function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
-  achievements.add(id);persist();showAchToast(ACH[id]);sfx('win');
+  achievements.add(id);persist();pushAchToast(ACH[id]);sfx('win');
 }
 function showAchToast(a){
   const t=$('ach-toast');if(!t)return;
@@ -1944,7 +2028,11 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
   if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
   // Foam ring grows with speed and pulses to read as turbulence
-  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);
+    // Speed-rim: bloom the foam ring opacity slightly above 0.6 throttle for that "burst out of the
+    // hull" rim feel. Cheap — modulates an existing mesh, no new geometry.
+    const rim=sp>0.6?(sp-0.6)*0.7:0;
+    f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05)}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
   if(scene._sunDisc&&scene._sun){
     const cyc=(t%360)/360,ang=cyc*Math.PI*2;
@@ -1953,6 +2041,13 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
+    // Water sun-glint: project sun direction onto the water plane in front of the camera.
+    // Opacity scales with dayness so it disappears at night, falls off at low sun angles.
+    if(scene._sunGlint){const gl=scene._sunGlint;const dx=Math.cos(ang);const ahead=cam?cam.position:bMesh.position;
+      gl.position.set(ahead.x+dx*40,0.12,ahead.z-60+sunY*0.4);
+      gl.material.opacity=Math.max(0,dayness*0.6);gl.visible=dayness>0.05}
+    // Night hysteresis: flip on at sunY<25 (low sun), off at sunY>35 — prevents flicker at dusk.
+    if(!_isNight&&sunY<25)_isNight=true;else if(_isNight&&sunY>35)_isNight=false;
     if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
       // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
       if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}
@@ -2013,7 +2108,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(GAME_MODE==='game'){let nd=Infinity;for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<nd)nd=dist}$('h-dst').textContent=nd===Infinity?'—':nd.toFixed(0)+'m';const dl=$('h-dst').previousElementSibling;if(dl&&dl.textContent!=='Beacon')dl.textContent='Beacon'}
     else $('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
-    const hb=$('h-bait');if(hb)hb.textContent=bait;
+    const hb=$('h-bait');if(hb){hb.textContent=bait;if(bait!==_lastBait){pulseBait(bait-_lastBait);_lastBait=bait}}
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
     const dmgMul=1-hullResist();
@@ -2059,7 +2154,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
     const bh=_vCam.set(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(_yAxis,bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);
     // Screen-shake (surge/impact) — random jitter that decays fast for a punchy, recoverable hit.
-    if(_shake>0.002){cam.position.x+=(Math.random()-0.5)*_shake;cam.position.y+=(Math.random()-0.5)*_shake*0.6;_shake*=0.86}
+    if(_shake>0.002){const sk=_shake*_shakeMul;cam.position.x+=(Math.random()-0.5)*sk;cam.position.y+=(Math.random()-0.5)*sk*0.6;_shake*=0.86}
     cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
@@ -2088,7 +2183,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
 // stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
 // Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
 function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
-function startGame(){S.on=true;document.body.classList.add('playing');S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -2479,6 +2574,8 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
     <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:12px 14px;margin:10px 0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Audio Volume</span><input id="audio-vol" type="range" min="0" max="1" step="0.05" value="${_audVol}" oninput="DS.setAudVol(parseFloat(this.value))" style="width:160px;accent-color:#fb923c"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Screen Shake</span><input id="shake-mul" type="range" min="0" max="1.5" step="0.1" value="${_shakeMul}" oninput="DS.setShakeMul(parseFloat(this.value))" style="width:160px;accent-color:#fb923c"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Reset Save</span><button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button></div>
     </div>
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.7;background:rgba(3,7,18,0.4);border-radius:8px;padding:10px">
@@ -2495,6 +2592,8 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
   el.style.display='flex';
 }
 function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
+function setAudVol(v){_audVol=Math.max(0,Math.min(1,v));persist()}
+function setShakeMul(v){_shakeMul=Math.max(0,Math.min(1.5,v));persist()}
 function applyGfx(){
   if(!scene)return;
   const lowMode=gfxQuality==='low',highMode=gfxQuality==='high';
@@ -2580,6 +2679,20 @@ function qaOpen(kind){
 // QA hook for Duct — spawns him near the boat for smoke tests. Must override DUCT.x/z AFTER
 // spawnDuct() (which randomizes them) so tickDuct keeps him in range.
 function qaSpawnDuct(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(DUCT.active)despawnDuct();spawnDuct();DUCT.x=bMesh.position.x+8;DUCT.z=bMesh.position.z;DUCT.vx=0;DUCT.vz=0;DUCT.mesh.position.set(DUCT.x,0,DUCT.z);return true}
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},mode:GAME_MODE};
+// QA-only hook: drives a single Duct escape archetype synchronously so the smoke can verify each
+// branch in runDuctEscapeAnim doesn't throw. Gated on ?qa=1 like the other QA hooks.
+function qaDuctEscape(kind){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(!DUCT.active){spawnDuct()}
+  try{runDuctEscapeAnim(kind);return true}catch(e){return false}
+}
+// QA-only: fire a list of unlock IDs through the toast queue without grinding the prereqs.
+function qaUnlock(ids){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(!Array.isArray(ids))return false;
+  ids.forEach(id=>{if(ACH[id])pushAchToast(ACH[id])});return true;
+}
+function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,getSave,mode:GAME_MODE};
 })();
 

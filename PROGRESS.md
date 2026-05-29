@@ -33,7 +33,7 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Driving**: 3 hero hulls w/ distinct profiles, hull integrity + damage resistance, reverse cap, foam ring, wake/spray. Hero abilities (Reel rescue-bait bonus, Lilly resist, Fly sonar/speed).
 - **Missions**: random drop-point beacons → 6 mini-games (battle, puzzle, runner, tetris, dock rescue, baitwell). Deep Dock boss when triggers fire.
 - **Fishing**: cast (F when stopped), tension-band fight gated by line strength + rod control, splashes, ambient fish-jumps, 13 species across 4 rarities incl. gators, Keep/Release → bait + trophy. Equipped bait biases the roll.
-- **Duct**: rare random spawn, F to engage, 5 rigged escape archetypes, +15 bait consolation, persisted sightings/attempts/near-catches, locked `🦆 Duct · ???` codex entry. Never lands.
+- **Duct**: rare random spawn, F to engage, **7** rigged escape archetypes (slip / dive / fly / flop / bounce / **tape** / **decoy**), +15 bait consolation, persisted sightings/attempts/near-catches, locked `🦆 Duct · ???` codex entry. Never lands. "Almost!" toast at peak ≥80%.
 - **Foraging**: 4 shore camps, beach + G → 4 forage mini-games → typed bait inventory (worm/cricket/frog/minnow/crayfish).
 - **Economy**: bait currency, 4 bait shops (gear tiers + consumables) + Castor Boatworks (per-hero upgrades).
 - **Boat upgrades**: engine/lights/armor/electronics × 3 tiers per hero, visible parts on the hull.
@@ -55,6 +55,15 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Audio**: continuous speed-pitched motor loop + ambient water-lap bed (WebAudio, mute-gated).
 - **Camera feel**: speed-punch FOV (widens with throttle), screen-shake on surge/impact.
 - **Visual grade**: cinematic vignette + letterbox haze overlay (`#grade`, pure CSS, shown during a run).
+
+### Polish v2 (2026-05-29)
+- **Duct V2**: 2 new escape archetypes (`tape` slaps a duct-tape patch on the hook; `decoy` visually splits into 2 Ducts). `DUCT_ESCAPES.length === 7`.
+- **Visuals**: water sun-glint additive sprite tracking sun-direction; sign-bloom at night with hysteresis (Boatworks + Duct glow); boat speed-rim bloom on the foam ring above 0.6 throttle.
+- **Boss arena**: phase-transition `#grade` flashes; 600ms "final beat" before win/lose `mini.finish` (overlay fade + `splash_big` cue, world keeps ticking — no time-scale desync). New `boss_clean` achievement (win without dropping below 50% starting hull).
+- **Achievements**: tiny queue around the existing `showAchToast` so rapid unlocks don't clobber; new entries `duct_25_attempts`, `duct_three_near`, `boss_clean`; non-persistent "Almost!" toast variant on Duct chase peaks ≥80%.
+- **Settings**: Audio Volume + Screen Shake sliders. Single-read-site multipliers: `_audVol` in `sfx()` peak + `engineAudio.gain`/`lapGain`; `_shakeMul` at the camera-shake consumption site. Persist as plain numbers in `save_v1`.
+- **Economy**: bait-counter pulse (`#h-bait` CSS animation, green on gain, red on spend).
+- **QA hooks**: `DS.qaDuctEscape(kind)`, `DS.qaUnlock(ids)`, `DS.qaPulseBait(d)`, `DS.getSave()` — all gated on `?qa=1`.
 
 ---
 

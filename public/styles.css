@@ -103,6 +103,13 @@ input::placeholder{color:#334155}
   background:radial-gradient(ellipse 75% 70% at 50% 45%,rgba(120,160,180,0.10) 0%,transparent 55%,rgba(2,6,18,0.55) 100%),
             linear-gradient(180deg,rgba(2,6,18,0.35) 0%,transparent 14%,transparent 86%,rgba(2,6,18,0.4) 100%)}
 body.mode-game.playing #grade{display:block}
+/* Bait counter pulse — fires whenever bait changes (gain or spend). Class is added in JS, the
+   CSS animation auto-restarts via void-offsetWidth so back-to-back changes still pulse. */
+@keyframes baitPopUp{0%{transform:scale(1.0);color:#fbcf3b}30%{transform:scale(1.4);color:#10b981}100%{transform:scale(1.0);color:#fbcf3b}}
+@keyframes baitPopDown{0%{transform:scale(1.0);color:#fbcf3b}30%{transform:scale(1.2);color:#ef4444}100%{transform:scale(1.0);color:#fbcf3b}}
+#h-bait{display:inline-block;transition:none}
+#h-bait.bait-pop-up{animation:baitPopUp 0.4s ease-out}
+#h-bait.bait-pop-down{animation:baitPopDown 0.4s ease-out}
 /* END RUN button — desktop top-right, mobile bottom-left so it doesn't collide with the weather
    pill / minimap up top or the touch joysticks across the bottom. */
 #end-run{position:fixed;top:55px;right:140px;z-index:16;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:6px 12px;border-radius:6px;cursor:pointer}
