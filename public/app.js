@@ -17,7 +17,7 @@ const HERO={
   speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,missionsCleared:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 // Discount tiers earned by run outcome
 const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
@@ -54,7 +54,8 @@ const mini={
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     miniActive=false;S.on=true;
-    const el=$('mini');if(el)el.style.display='none';
+    S.missionsCleared=(S.missionsCleared||0)+1;
+    const el=$('mini');if(el){el.style.display='none';const card=$('mini-card');if(card)card.innerHTML=''}
     if(dp)clearDropPoint(dp);
   },
   // === TETRIS: "stack the catch" — falling fish-shaped pieces on a 10x16 grid ===
@@ -559,8 +560,11 @@ function mkEvidence(){
 }
 
 function mkCivs(){
-  // Three civilians between start and dock, spread along the route, away from the dense hazard cluster.
-  const spots=[[-8,-25],[12,-50],[-3,-85]];
+  // Civilian positions: in business mode they line up along the dock-approach corridor.
+  // In game mode they spread across the larger world so they're findable anywhere.
+  const spots=GAME_MODE==='game'
+    ? [[-65,-40],[40,-25],[-30,-95],[80,-70],[-90,15],[55,-130],[-15,40]]
+    : [[-8,-25],[12,-50],[-3,-85]];
   spots.forEach(([x,z])=>{
     const g=new THREE.Group();
     // Inner-tube ring + a small head/torso so it reads as a person clinging to a float
@@ -807,7 +811,11 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
     if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel')}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
-    const dd=bMesh.position.distanceTo(dockPos);if(dd<150)S.score+=Math.max(0,Math.round(as*0.3));
+    const dd=bMesh.position.distanceTo(dockPos);
+    // Score formula: business mode rewards staying near the dock corridor; game mode rewards
+    // total distance traveled (S.dist already accumulates each frame's movement).
+    if(GAME_MODE==='business'){if(dd<150)S.score+=Math.max(0,Math.round(as*0.3))}
+    else{S.score+=Math.max(0,Math.round(as*0.15))}
     $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     // Hull HUD + color states
@@ -859,7 +867,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;
   civs.forEach(c=>{c.userData.saved=false;c.visible=true});
   if(evidence){evidence.userData.collected=false;evidence.visible=true}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
@@ -889,13 +897,29 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
-  $('rt').textContent=won?'Survivors Extracted':'Dragged Under';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
+  // Result title differs by mode: free-roam celebrates the missions/exploration, business celebrates dock-reach.
+  if(GAME_MODE==='game'){$('rt').textContent=won?'Pulled Off The Run':'Hull Went Under'}
+  else $('rt').textContent=won?'Survivors Extracted':'Dragged Under';
+  $('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('f-scr').textContent=S.score;
+  // Phases row repurposes as "Missions" in game mode.
+  const phEl=$('r-ph'),phLbl=phEl?phEl.previousElementSibling:null;
+  if(phEl){if(GAME_MODE==='game'){phEl.textContent=(S.missionsCleared||0)+' cleared';if(phLbl)phLbl.textContent='Missions'}else{phEl.textContent=S.pc+'/3';if(phLbl)phLbl.textContent='Phases'}}
   const rh=$('r-hull');if(rh){rh.textContent=Math.round(S.hull)+'%';rh.className='sv '+(S.hull<30?'r':S.hull<60?'y':'g')}
   let rl,rm,rc;const nr=S.near/Math.max(el,1);
-  if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
-  else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
-  else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
-  else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  if(GAME_MODE==='game'){
+    // Free-roam outcome bands tuned to missions cleared + hull preserved + civilians saved.
+    const cleared=S.missionsCleared||0;
+    if(!won){rl='WRECKED';rm='The hull went under and Castor Bayou closed up over it. The Depth keeps its score.';rc='rgba(239,68,68,0.08)'}
+    else if(cleared>=4){rl='LEGEND OF THE DEPTH';rm='Four missions clean. The town will start telling stories about this run.';rc='rgba(16,185,129,0.08)'}
+    else if(cleared>=2){rl='OPERATOR';rm='You worked the map. The Depth holds the line a little tighter because you rode out.';rc='rgba(16,185,129,0.08)'}
+    else if(S.civsSaved>=3){rl='LIFEGUARD';rm='You pulled people out. Castor Bayou owes you one — and remembers.';rc='rgba(16,185,129,0.08)'}
+    else{rl='EXPLORER';rm='You read the water and came home. Plenty of Castor Bayou left to chart.';rc='rgba(96,208,255,0.08)'}
+  }else{
+    if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
+    else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
+    else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
+    else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  }
   // Outcome upgrade: full civilian extraction
   if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
   const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
