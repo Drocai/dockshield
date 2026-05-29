@@ -9,11 +9,24 @@ const DS=(()=>{
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
-// Persistent evidence catalog (kept across runs in-memory; survives reset() so the player builds
-// up a Castor Bayou case file over multiple sessions in one browser tab).
+// === PERSISTENCE ===
+// Trophy catalog, evidence case file, best score, and the mute pref persist to localStorage so the
+// Pokemon-style collection survives reloads, not just same-tab sessions. Guarded for private-mode
+// browsers where localStorage throws.
+const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
-// Persistent fish trophy catalog — both clicker rares and free-roam fishing land here.
 const fishCatalog=new Set();
+let bestScore=0,muted=false;
+function loadSave(){
+  try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
+    (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
+    bestScore=d.best||0;muted=!!d.muted;
+  }catch(e){}
+}
+function persist(){
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],best:bestScore,muted}))}catch(e){}
+}
+loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
 const FISH=[
@@ -46,7 +59,10 @@ const FISH_SPOTS=[
 function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
 // Weighted roll, optionally with a 3x bonus on bias species.
 function rollFish(spot){
-  let pool=FISH.map(f=>({...f,w:spot&&spot.bias.includes(f.n)?f.w*3:f.w}));
+  // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2), so storms are
+  // the best time to fish for the Castor Bayou specials.
+  const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;return {...f,w}});
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
   for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
 }
@@ -104,6 +120,7 @@ const mini={
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
+    sfx(score>0?'win':'click');
     miniActive=false;S.on=true;
     S.missionsCleared=(S.missionsCleared||0)+1;
     const el=$('mini');if(el){el.style.display='none';const card=$('mini-card');if(card)card.innerHTML=''}
@@ -263,7 +280,7 @@ const mini={
     };
     const hit=()=>{if(done)return;catches++;
       // 1 in 12 chance per click for a rare drop; each rare = +60 bonus + collection note.
-      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r)}
+      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r);persist()}
       render();
     };
     const tick=setInterval(()=>{if(done)return;t--;if(t<=0){done=true;clearInterval(tick);const score=catches*8+bonus;
@@ -725,6 +742,12 @@ function drawMinimap(){
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
   dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  // Sonar reveal: for ~4s after a ping, surviving civilians (orange) + uncollected evidence (gold)
+  // blip on the minimap so the ping is a real recon tool, not just a debris highlighter.
+  if(S.pingReveal&&Date.now()*0.001<S.pingReveal){
+    civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
+    if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
+  }
   ctx.restore();
 }
 
@@ -849,7 +872,7 @@ function fireSonar(){
   if(!S.on)return false;
   const now=Date.now()*0.001;
   if(S.sonarReady&&now<S.sonarReady)return false;
-  S.sonarReady=now+3;S.lastPing=now;
+  S.sonarReady=now+3;S.lastPing=now;sfx('ping');S.pingReveal=now+4;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -962,7 +985,7 @@ function castLine(){
   if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
   _castInFlight=true;
   const spot=fishingSpot(bMesh.position);
-  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');
+  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');sfx('cast');
   // Visual: shrinking ring on the water at the boat's bow. Disposes when cast resolves.
   const ringMesh=new THREE.Mesh(new THREE.RingGeometry(1,1.2,24),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
   ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
@@ -982,7 +1005,10 @@ function resolveCast(spot){
   if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
   const fish=rollFish(spot);
   runCatches.push(fish);
-  if(fish.r==='legendary'||fish.r==='rare')fishCatalog.add(fish.n);
+  // Every species caught enters the catalog (drives the Fish Codex completion). The Trophy Board
+  // showcase filters this to rare/legendary at render time.
+  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist()}
+  sfx(fish.r==='legendary'?'legendary':'catch');
   showCatchDialog(fish,spot);
 }
 function showCatchDialog(fish,spot){
@@ -1011,6 +1037,24 @@ function closeCatch(msg){
   else S.on=true;
   radio(msg,'lilly');
 }
+
+// === AUDIO (WebAudio SFX) ===
+// Tiny oscillator-based blips, lazily created on first sound (browsers require a user gesture to
+// start an AudioContext). Muted state persists. Each cue is a short freq sweep — no asset loading.
+let _audioCtx=null,_sndGate={};
+function sfx(type){
+  if(muted)return;
+  try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+  const ctx=_audioCtx,now=ctx.currentTime;
+  // rate-limit per type so rapid triggers (e.g. clicker) don't machine-gun
+  if(_sndGate[type]&&now<_sndGate[type])return;_sndGate[type]=now+0.04;
+  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth']}[type]||[300,360,.08,'sine'];
+  const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
+  o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
+  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(0.06,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
+  o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
+}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(!muted)sfx('click')}
 
 // === HULL-DAMAGE VISUAL FEEDBACK ===
 // Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
@@ -1118,7 +1162,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
         // Prefer evidence the player hasn't seen yet so the catalog actually grows.
         const fresh=EV.filter(e=>!evidenceCatalog.has(e.n));
         S.evCollected=(fresh.length?fresh:EV)[Math.floor(Math.random()*((fresh.length?fresh:EV).length))];
-        evidenceCatalog.add(S.evCollected.n);S.score+=75;
+        evidenceCatalog.add(S.evCollected.n);persist();S.score+=75;
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
         radio(HERO[S.bc].voice.evidence);
@@ -1131,7 +1175,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       const dc=bMesh.position.distanceTo(c.position);
       if(dc<3){
         if(Math.abs(spd)<0.4){
-          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);
+          c.userData.saved=true;c.visible=false;S.civsSaved++;S.score+=100;S.hull=Math.min(100,S.hull+0.5);sfx('rescue');
           $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
           $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
           if(S.civsSaved===1)radio(HERO[S.bc].voice.rescue);
@@ -1243,11 +1287,12 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
     haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
     haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
   }else if(haulWrap)haulWrap.style.display='none';
-  // Persistent trophy board (rare + legendary uniques across all runs in this tab).
+  // Persistent trophy board (rare + legendary uniques across all runs).
   const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
-  if(trWrap&&GAME_MODE==='game'&&fishCatalog.size>0){
-    trWrap.style.display='block';trCount.textContent=fishCatalog.size;
-    trList.innerHTML=[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:3px 7px;color:${col}">${e} ${n}</span>`}).join('');
+  const trophies=trophyFish();
+  if(trWrap&&GAME_MODE==='game'&&trophies.length>0){
+    trWrap.style.display='block';trCount.textContent=trophies.length;
+    trList.innerHTML=trophies.map(f=>`<span style="background:rgba(8,18,38,0.6);border:1px solid ${RARE_COLOR[f.r]};border-radius:6px;padding:3px 7px;color:${RARE_COLOR[f.r]}">${f.e} ${f.n}</span>`).join('');
   }else if(trWrap)trWrap.style.display='none';
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
@@ -1268,6 +1313,8 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Business-mode pipeline: paint the discount banner + send the analytics_events row.
   // In game mode, s5 still shows score/civilians/evidence but no discount/plans bridge.
   if(GAME_MODE==='business'){paintDiscount();saveData(won)}
+  // New best-score tracking (game mode) — persisted + surfaced on the recap.
+  if(GAME_MODE==='game'){const nb=S.score>bestScore;if(nb)bestScore=S.score;persist();const be=$('r-best');if(be){be.textContent=(nb?'NEW BEST · ':'Best · ')+bestScore;be.style.color=nb?'#10b981':'#94a3b8'}}
   show('s5')}
 
 // Paint the dynamic discount across s5 (result) and s3 (plans)
@@ -1375,24 +1422,46 @@ function launchGame(){
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();refreshTrophyPeek();
+{const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
 // Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
 let _peekOpen=false;
+// Trophy = caught species that's rare or legendary. Commons/uncommons fill the Codex but don't
+// earn a trophy chip.
+function trophyFish(){return FISH.filter(f=>fishCatalog.has(f.n)&&(f.r==='rare'||f.r==='legendary'))}
 function peekTrophies(){
-  if(fishCatalog.size===0)return;
+  if(trophyFish().length===0)return;
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
   card.innerHTML=`
     <div class="m-kicker" style="color:#a78bfa">Trophy Board</div>
-    <div class="m-title">${fishCatalog.size} unique trophy${fishCatalog.size===1?'':'s'} pulled out of Castor Bayou.</div>
-    <div class="m-sub">Rares + legendaries you've landed across all your sessions in this browser tab.</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';const r=f?f.r:'';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:5px 9px;color:${col};font:12px 'DM Sans',sans-serif">${e} ${n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${r}</span></span>`}).join('')}</div>
+    <div class="m-title">${trophyFish().length} trophy catch${trophyFish().length===1?'':'es'} pulled out of Castor Bayou.</div>
+    <div class="m-sub">Rares + legendaries you've landed. Saved across reloads. Best score: ${bestScore}.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${trophyFish().map(f=>`<span style="background:rgba(8,18,38,0.6);border:1px solid ${RARE_COLOR[f.r]};border-radius:6px;padding:5px 9px;color:${RARE_COLOR[f.r]};font:12px 'DM Sans',sans-serif">${f.e} ${f.n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${f.r}</span></span>`).join('')}</div>
     <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
   el.style.display='flex';
 }
 function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;/* never resume the loop — peek is a menu overlay, S.on stays as-is */}
+// Fish Codex — the full collection screen. Caught species show in color with their lore line;
+// uncaught ones show as locked ??? silhouettes grouped by rarity. Reuses the peek overlay frame.
+function openCodex(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const caught=fishCatalog.size,total=FISH.length;
+  const byTier=r=>FISH.filter(f=>f.r===r);
+  const tierBlock=(label,r)=>{const list=byTier(r);if(!list.length)return '';
+    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?f.f:'Not yet caught'}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#60d0ff">Fish Codex</div>
+    <div class="m-title">${caught} / ${total} species landed.</div>
+    <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
+    ${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  el.style.display='flex';
+}
 // Show the trophy peek button on s1 only if there's something to show.
 function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
 
@@ -1410,6 +1479,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,mode:GAME_MODE};
 })();
 
