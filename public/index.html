@@ -43,7 +43,7 @@
   </div></div>
   <div id="s3" class="card off">
     <h2>Assessment Complete</h2>
-    <div id="td" class="incv off"><div class="ic-t">Simulation Discount Applied</div><div class="ic-d"><span class="dbadge">15% OFF</span> first month — earned through dock approach</div></div>
+    <div id="td" class="incv off"><div class="ic-t">Simulation Discount Applied</div><div class="ic-d"><span class="dbadge" id="td-badge">15% OFF</span> <span id="td-text">first month — earned through your run</span></div></div>
     <div class="th"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><p>Biological growth cuts dock lifespan <strong>40%</strong>. Replacement: <strong>$35K+</strong>.</p></div>
     <div class="sb"><div class="sr"><span class="sl">Growth Index</span><span class="sv r">HIGH</span></div><div class="sr"><span class="sl">Decay Rate</span><span class="sv r">-40%</span></div><div class="sr"><span class="sl">Nav Score</span><span class="sv b" id="f-scr">—</span></div><div class="sr"><span class="sl">DaaS Savings</span><span class="sv g">$14K avg</span></div></div>
     <div class="tg"><div class="to" data-t="1" onclick="DS.tier(1)"><div class="tn">Prevent</div><div class="tp">$49<span>/mo</span></div></div><div class="to on" data-t="2" onclick="DS.tier(2)"><div class="tbg">Popular</div><div class="tn">Complete</div><div class="tp">$99<span>/mo</span></div></div><div class="to" data-t="3" onclick="DS.tier(3)"><div class="tn">Premium</div><div class="tp">$199<span>/mo</span></div></div></div>
@@ -66,6 +66,7 @@
   <div id="s4" class="card off" style="text-align:center">
     <h2>Plan Ready</h2>
     <div class="sb"><div class="sr"><span class="sl">Plan</span><span class="sv b" id="ok-t">Comprehensive</span></div><div class="sr"><span class="sl">Monthly</span><span class="sv g" id="ok-p">$99/mo</span></div><div class="sr"><span class="sl">Savings</span><span class="sv g">$14K+</span></div></div>
+    <p id="ok-risk" class="note" style="margin-top:-4px;margin-bottom:10px;color:#fb923c">Your waterway is running clean today.</p>
     <button class="btn bp" onclick="DS.pay()">Activate Protection</button>
     <p class="note">Payment link also sent to email.</p><button class="btn bx" onclick="DS.reset()">New Analysis</button>
   </div>
@@ -73,8 +74,8 @@
     <h2 id="rt" style="text-align:center"></h2><p class="sub" id="rm" style="text-align:center"></p>
     <div class="sb"><div class="sr"><span class="sl">Score</span><span class="sv b" id="r-scr">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv" id="r-time">0s</span></div><div class="sr"><span class="sl">Max Speed</span><span class="sv" id="r-spd">0</span></div><div class="sr"><span class="sl">Near Misses</span><span class="sv y" id="r-near">0</span></div><div class="sr"><span class="sl">Phases</span><span class="sv b" id="r-ph">0/3</span></div></div>
     <div class="rcard" id="rc"><div class="rl" id="rlbl">Risk Assessment</div><div class="rmsg" id="rmsg"></div></div>
-    <div class="incv"><div class="ic-t">Discount Unlocked</div><div class="ic-d"><span class="dbadge">15% OFF</span> your first month of protection</div></div>
-    <button class="btn bgreen" onclick="DS.showTiers()">View Plans — 15% Off Applied</button>
+    <div class="incv" id="r-disc-wrap"><div class="ic-t">Discount Unlocked</div><div class="ic-d"><span class="dbadge" id="r-disc-badge">15% OFF</span> <span id="r-disc-text">your first month of protection</span></div></div>
+    <button class="btn bgreen" id="r-disc-btn" onclick="DS.showTiers()">View Plans — 15% Off Applied</button>
     <button class="btn bx" onclick="DS.replay()">Run It Again</button>
   </div>
 </div>

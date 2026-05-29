@@ -2,7 +2,9 @@ const DS=(()=>{
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+// Discount tiers earned by run outcome
+const DISC={'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id));
   // Hide touch controls when any card is showing
@@ -325,7 +327,25 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
+  // Tiered discount earned from run quality
+  S.outcome=rl;S.discount=DISC[rl]||0;
+  paintDiscount();
   saveData(won);show('s5')}
+
+// Paint the dynamic discount across s5 (result) and s3 (plans)
+function paintDiscount(){
+  const d=S.discount;
+  const r5badge=$('r-disc-badge'),r5text=$('r-disc-text'),r5btn=$('r-disc-btn'),r5wrap=$('r-disc-wrap');
+  const tdbadge=$('td-badge'),tdtext=$('td-text'),tdwrap=$('td');
+  if(d>0){
+    if(r5wrap){r5wrap.style.display='block';r5badge.textContent=d+'% OFF';r5text.innerHTML='earned through your run — applied to your first month';r5btn.textContent='View Plans — '+d+'% Off Applied'}
+    if(tdbadge){tdbadge.textContent=d+'% OFF';tdtext.innerHTML='first month — earned through your '+S.outcome.toLowerCase()+' run';tdwrap.classList.remove('off')}
+  }else{
+    // OVERRUN — no discount, push them to retry
+    if(r5wrap){r5wrap.style.display='block';r5badge.textContent='NO DISCOUNT';r5text.innerHTML='The Depth took you. Run it clean to unlock <strong>up to 15% off</strong>.';r5btn.textContent='Run It Again — Earn The Discount'}
+    if(tdwrap)tdwrap.classList.add('off');
+  }
+}
 
 // === SERVICES ===
 async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
@@ -355,17 +375,20 @@ async function skip(){if(!val())return;show('s2');setStep(1);$('lt').textContent
   }catch(e){alert('Error: '+e.message);show('s1')}}
 function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('off');$('f-scr').textContent='—';show('s3')}
 function playFromTier(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
-function showTiers(){if(S.played){$('td').classList.remove('off');$('pft').classList.add('off')}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
+function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
 function replay(){startGame();setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>el.classList.toggle('on',el.dataset.b===c));mkBoat(c)}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
-  const price=S.played?Math.round(t.p*0.85):t.p;
+  const d=S.discount||0;const price=Math.round(t.p*(1-d/100));
   if(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY){try{setStep(3);
-    const r=await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:S.lid,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.ti,monthly_price:price})});
-    if(r.ok){const d=await r.json();if(d.checkout_url)S.curl=d.checkout_url}
+    const r=await fetch(`${C.SUPABASE_URL}/functions/v1/process-lead`,{method:'POST',headers:{Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lead_id:S.lid,email:S.email,address:S.addr,dock_type:'fixed',daas_tier:S.ti,monthly_price:price,discount_pct:d,run_outcome:S.outcome||''})});
+    if(r.ok){const j=await r.json();if(j.checkout_url)S.curl=j.checkout_url}
     setStep(5)}catch(e){console.warn('Quote pipeline:',e)}}
-  $('ok-t').textContent=t.n;$('ok-p').textContent=S.played?`$${price}/mo (first month)`:`$${t.p}/mo`;show('s4')}
+  $('ok-t').textContent=t.n;$('ok-p').textContent=d>0?`$${price}/mo (first month, ${d}% off)`:`$${t.p}/mo`;
+  // Waterway risk signal — wind + visibility + outcome
+  const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on your waterway: '+parts.join(' · '):'Your waterway is running clean today.'}
+  show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';$('f-addr').value='';$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1')}
 
