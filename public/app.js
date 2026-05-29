@@ -356,7 +356,8 @@ function initEngine(){
 
   mkBoat('pontoon');
   mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();
-  if(GAME_MODE==='game')mkDropPoints();
+  // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
+  // set instead of inheriting whatever the previous run left mid-respawn.
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -511,10 +512,19 @@ function tickDropPoints(t){
     }
   }
 }
+// Tracks the pending respawn timer so a mid-run reset() can cancel it cleanly.
+let _dpRespawnT=null;
 function clearDropPoint(dp){
   // Remove the resolved drop point and spawn a replacement at a new random spot.
   scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
-  setTimeout(()=>{if(S.on&&dropPoints.length<3)spawnDropPoint()},2000);
+  _dpRespawnT=setTimeout(()=>{_dpRespawnT=null;if(S.on&&GAME_MODE==='game'&&dropPoints.length<3)spawnDropPoint()},2000);
+}
+// Hard reset for the drop-point system — called by startGame() so a new run doesn't inherit
+// markers from the previous run.
+function resetDropPoints(){
+  if(_dpRespawnT){clearTimeout(_dpRespawnT);_dpRespawnT=null}
+  dropPoints.slice().forEach(dp=>{scene.remove(dp)});dropPoints.length=0;
+  if(GAME_MODE==='game'){for(let i=0;i<3;i++)spawnDropPoint()}
 }
 
 function mkMist(){
@@ -887,6 +897,12 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   ren.render(scene,cam)}
 
 function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;
+  // HUD pills + dmg flash reset to clean slate each run.
+  const hs=$('h-sonar');if(hs){hs.textContent='READY';hs.style.color='#60d0ff'}
+  const hh=$('h-hull');if(hh){hh.textContent='100%';hh.style.color='#fb923c'}
+  const df=$('dmg-flash');if(df)df.style.opacity='0';
+  // Drop points wipe + respawn so a new run doesn't inherit prior markers / pending timers.
+  resetDropPoints();
   civs.forEach(c=>{c.userData.saved=false;c.visible=true});
   if(evidence){evidence.userData.collected=false;evidence.visible=true}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
@@ -1042,7 +1058,15 @@ function launchGame(){
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();
-function endRun(){if(S.on)endGame(S.hull>0)}
+// Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
+// second press inside 2.5s actually ends. Stops accidental kills on mobile.
+let _endArmed=false,_endArmedT=null;
+function endRun(){
+  const btn=$('end-run');
+  if(_endArmed){_endArmed=false;clearTimeout(_endArmedT);if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}if(S.on)endGame(S.hull>0);return}
+  _endArmed=true;if(btn){btn.classList.add('arm');btn.textContent='TAP TO CONFIRM'}
+  _endArmedT=setTimeout(()=>{_endArmed=false;if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}},2500);
+}
 // QA hook (only active with ?qa=1) — force-opens a mini-game with a synthetic drop point so the
 // headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
 function qaOpen(kind){
