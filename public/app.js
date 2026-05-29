@@ -9,7 +9,7 @@ const HERO={
   speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 // Discount tiers earned by run outcome
 const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
@@ -17,7 +17,13 @@ function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('o
   // Hide touch controls when any card is showing
   const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
 
-let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[];
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null;
+// Evidence pool — one is rolled per run. Voice belongs to Lilly (country direct, swamp-sensitive).
+const EV=[
+  {n:'Drift bottle',line:'Paper inside reads "they listen." First piece for the Castor Bayou case file.'},
+  {n:'Broken rod',line:'Snapped clean above the reel. Nothing on a Castor Bayou rod snaps that clean unless something pulled it under.'},
+  {n:'Oil drum',line:'Faded corporate stencil under the rust. Quarantine Line traffic — exactly what Garbone warned about.'}
+];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
 const keys={};
@@ -52,7 +58,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();
 
   document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
@@ -160,6 +166,16 @@ function mkAI(){
     const aiLight=new THREE.PointLight(c,0.3,8);aiLight.position.set(0,1.5,0);g.add(aiLight);
     const x=(i%2===0?-1:1)*(60+Math.random()*40);const z=-50-Math.random()*40;
     g.position.set(x,0.3,z);g.userData={ox:x,oz:z,spd:0.4+Math.random()*0.4,w:Math.random()*Math.PI*2,on:false};scene.add(g);aiB.push(g)});
+}
+
+function mkEvidence(){
+  // One evidence prop somewhere in the shallows zone — a small glowing crate with a marker beam.
+  const g=new THREE.Group();
+  const crate=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.4,0.5),new THREE.MeshStandardMaterial({color:0xfbcf3b,emissive:0xfbcf3b,emissiveIntensity:0.4,roughness:0.5}));crate.position.y=0.25;g.add(crate);
+  const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,4,6),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.5}));beam.position.y=2.4;g.add(beam);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(0.8,1.0,18),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.45,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.05;g.add(ring);
+  const x=(Math.random()-0.5)*30,z=-60-Math.random()*30;
+  g.position.set(x,0,z);g.userData={collected:false,ring,beam};scene.add(g);evidence=g;
 }
 
 function mkCivs(){
@@ -374,6 +390,18 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++}else if(d<6){S.near++}}
     if(S.hull<=0){endGame(false);return}
+    // Evidence pickup — drive over to collect, any speed.
+    if(evidence&&!evidence.userData.collected){
+      evidence.position.y=Math.sin(t*1.4)*0.15;
+      evidence.rotation.y=t*0.6;
+      if(evidence.userData.ring)evidence.userData.ring.material.opacity=0.35+Math.sin(t*3)*0.2;
+      if(bMesh.position.distanceTo(evidence.position)<2){
+        evidence.userData.collected=true;evidence.visible=false;
+        S.evCollected=EV[Math.floor(Math.random()*EV.length)];S.score+=75;
+        $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
+        $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
+      }
+    }
     // Civilian pickups — must approach slowly. Too-fast pass-by flashes a warning and the civilian remains in danger.
     for(const c of civs){if(c.userData.saved)continue;
       c.position.y=Math.sin(t*1.8+c.position.x)*0.12;
@@ -402,7 +430,11 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;civs.forEach(c=>{c.userData.saved=false;c.visible=true});$('h-civ').textContent='0/'+civs.length;spd=0;aV=0;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;
+  civs.forEach(c=>{c.userData.saved=false;c.visible=true});
+  if(evidence){evidence.userData.collected=false;evidence.visible=true}
+  $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
+  spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
   cam.lookAt(0, 0, 15);
@@ -426,6 +458,9 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   // Outcome upgrade: full civilian extraction
   if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
   const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
+  // Evidence reveal — show flavor line only if collected; otherwise hide the block
+  const evWrap=$('r-ev-wrap'),evName=$('r-ev-name'),evLine=$('r-ev-line');
+  if(evWrap){if(S.evCollected){evWrap.style.display='block';evName.textContent=S.evCollected.n;evLine.textContent=S.evCollected.line}else{evWrap.style.display='none'}}
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
