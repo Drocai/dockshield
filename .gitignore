@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Build / deploy
+.vercel/
+dist/
+build/
+.supabase/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+
+# Test / QA scratch artifacts
+/tmp/*.png
+*.smoke.js
+test.html
