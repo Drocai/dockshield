@@ -359,7 +359,13 @@ function initEngine(){
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
-  document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
+  document.addEventListener('keydown',e=>{
+    keys[e.code]=true;
+    if(e.code==='Space'&&S.on)e.preventDefault();
+    if(e.code==='Space'&&S.on)fireSonar();
+    // Escape bails out of any open mini-game with zero score and no radio line.
+    if(e.code==='Escape'&&miniActive){e.preventDefault();const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+  });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
   const isMob=/Mobi|Android/i.test(navigator.userAgent);
@@ -552,7 +558,7 @@ function drawMinimap(){
   const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
-  dropPoints.forEach(dp=>{if(!dp.userData.active)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
 }
 
 function mkCryptid(){
@@ -831,7 +837,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     // Hull damage cripples handling when below 30%
     const hullP=S.hull<30?0.55:(S.hull<60?0.85:1);
-    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd-=bt.ac*0.5;spd*=bt.dr;
+    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
+    // Reverse capped at -bt.mx*0.5 — the boat can back up but can't outrun itself in reverse.
+    if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
+    spd*=bt.dr;
     if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
@@ -989,7 +998,13 @@ function paintDiscount(){
 // === SERVICES ===
 async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:a})});if(r.ok){const d=await r.json();if(d.lat&&d.lng)return{lat:d.lat,lng:d.lng}}return null}catch(e){return null}}
-async function saveData(w){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload:{email:S.email,bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr}})})}catch(e){}}
+async function saveData(w){
+  if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;
+  // Payload now reflects whichever mode the run was in — game mode adds missionsCleared and
+  // civsSaved; business mode keeps its original fields. Empty strings stay empty (not undefined).
+  const payload={email:S.email||'',bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr||'',mode:GAME_MODE,missionsCleared:S.missionsCleared||0,civsSaved:S.civsSaved||0,outcome:S.outcome||''};
+  try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload})})}catch(e){}
+}
 async function saveLead(){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/leads`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({email:S.email,address:S.addr,lat:S.lat,lng:S.lng,dock_type:'fixed',status:'new'})});if(r.ok){const d=await r.json();S.lid=(Array.isArray(d)?d[0]:d).id}}catch(e){}}
 
 // === ACTIONS ===
@@ -1072,7 +1087,7 @@ function endRun(){
 function qaOpen(kind){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
   const type=DP_TYPES.find(d=>d.k===kind);if(!type)return false;
-  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);scene.add(dp);dropPoints.push(dp);
+  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,mode:GAME_MODE};
