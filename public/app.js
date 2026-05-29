@@ -16,15 +16,19 @@ const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1
 const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
-let bestScore=0,muted=false;
+let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Active buffs (consumable items from the tackle shop). Persists across runs until consumed.
+let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
-    bestScore=d.best||0;muted=!!d.muted;
+    (d.ach||[]).forEach(n=>achievements.add(n));
+    bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;
+    if(d.buffs)Object.assign(buffs,d.buffs);
   }catch(e){}
 }
 function persist(){
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],best:bestScore,muted}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs}))}catch(e){}
 }
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
@@ -59,10 +63,12 @@ const FISH_SPOTS=[
 function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
 // Weighted roll, optionally with a 3x bonus on bias species.
 function rollFish(spot){
-  // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2), so storms are
-  // the best time to fish for the Castor Bayou specials.
+  // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2). Tournament
+  // Line shop buff multiplies rare+legendary weight again (×3) for the next 5 casts.
   const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
-  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;return {...f,w}});
+  const tourney=buffs.rareLine>0;
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;return {...f,w}});
+  if(tourney){buffs.rareLine--;persist()}
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
   for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
 }
@@ -744,7 +750,9 @@ function drawMinimap(){
   dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
   // Sonar reveal: for ~4s after a ping, surviving civilians (orange) + uncollected evidence (gold)
   // blip on the minimap so the ping is a real recon tool, not just a debris highlighter.
-  if(S.pingReveal&&Date.now()*0.001<S.pingReveal){
+  // Scout Flare buff: 30s sustained reveal overrides the ping window.
+  const flareLive=(buffs.scoutPing||0)>Date.now()*0.001;
+  if(flareLive||(S.pingReveal&&Date.now()*0.001<S.pingReveal)){
     civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
     if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
   }
@@ -871,8 +879,12 @@ function tickWakes(){
 function fireSonar(){
   if(!S.on)return false;
   const now=Date.now()*0.001;
-  if(S.sonarReady&&now<S.sonarReady)return false;
-  S.sonarReady=now+3;S.lastPing=now;sfx('ping');S.pingReveal=now+4;
+  // Sonar Bank buff: each press spends one banked ping with no 3s wait. Falls through to the
+  // standard cooldown gate if the bank is empty.
+  if(buffs.sonarBank>0){buffs.sonarBank--;persist()}
+  else if(S.sonarReady&&now<S.sonarReady)return false;
+  else S.sonarReady=now+3;
+  S.lastPing=now;sfx('ping');S.pingReveal=now+4;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -1023,8 +1035,12 @@ function showCatchDialog(fish,spot){
     <div class="sb"><div class="sr"><span class="sl">Score if kept</span><span class="sv g">+${fish.s}</span></div><div class="sr"><span class="sl">Score if released</span><span class="sv b">+${Math.round(fish.s*0.2)}</span></div><div class="sr"><span class="sl">Trophy</span><span class="sv ${fish.r==='legendary'||fish.r==='rare'?'g':'y'}">${fish.r==='legendary'||fish.r==='rare'?'YES':'no'}</span></div></div>
     <button class="btn bp" id="m-k">Keep</button>
     <button class="btn bx" id="m-r">Release (heals hull +1)</button>`;
-  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
-  $('m-r').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
+  // Keep adds bait currency = score * BAIT_RATE[rarity]; Release converts ~25% to bait + a hull tick.
+  const baitFor={common:0.6,uncommon:0.9,rare:1.6,legendary:3.2};
+  const keepBait=Math.max(1,Math.round(fish.s*(baitFor[fish.r]||1)*0.35));
+  const releaseBait=Math.max(1,Math.round(keepBait*0.25));
+  $('m-k').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=fish.s;bait+=keepBait;persist();onUnlock('first_catch');if(fish.r==='legendary')onUnlock('legendary_landed');closeCatch(`${fish.n}. ${fish.s} on the line. +${keepBait} bait.`)};
+  $('m-r').onclick=()=>{if(_catchBusy)return;_catchBusy=true;S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);bait+=releaseBait;persist();onUnlock('first_release');closeCatch(`Released. ${fish.n} goes back. +${releaseBait} bait, +1 hull.`)};
   el.style.display='flex';
 }
 function closeCatch(msg){
@@ -1055,6 +1071,31 @@ function sfx(type){
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
 function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(!muted)sfx('click')}
+// === ACHIEVEMENT TRIGGER ===
+// Centralized unlock hook. Real definitions + toast UI land in the achievements commit; this stub
+// keeps callsites stable. ACH map declared near here so every check route through this fn.
+const ACH={
+  first_catch:{n:'First Cast',d:'Landed your first fish.'},
+  first_release:{n:'Steward',d:'Released a fish back into Castor Bayou.'},
+  legendary_landed:{n:'Castor Legend',d:'Landed a legendary species.'},
+  five_missions:{n:'Operator',d:'Cleared 5 missions in a single run.'},
+  full_extraction:{n:'Lifeguard',d:'Got every civilian out alive.'},
+  home_repaired:{n:'It Holds',d:'Saved your own home dock.'},
+  deep_dock:{n:'Into The Depth',d:'Faced the thing under the Deep Dock.'},
+  codex_half:{n:'Field Naturalist',d:'Logged 6 species in the Fish Codex.'},
+  codex_full:{n:'Castor Compendium',d:'Logged all 12 species.'},
+  bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'}
+};
+function onUnlock(id){
+  if(!ACH[id]||achievements.has(id))return;
+  achievements.add(id);persist();showAchToast(ACH[id]);sfx('win');
+}
+function showAchToast(a){
+  const t=$('ach-toast');if(!t)return;
+  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div>`;
+  t.style.display='block';t.style.opacity='1';
+  clearTimeout(showAchToast._t);showAchToast._t=setTimeout(()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0')t.style.display='none'},400)},3800);
+}
 
 // === HULL-DAMAGE VISUAL FEEDBACK ===
 // Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
@@ -1148,6 +1189,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     if(GAME_MODE==='game'){let nd=Infinity;for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<nd)nd=dist}$('h-dst').textContent=nd===Infinity?'—':nd.toFixed(0)+'m';const dl=$('h-dst').previousElementSibling;if(dl&&dl.textContent!=='Beacon')dl.textContent='Beacon'}
     else $('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
+    const hb=$('h-bait');if(hb)hb.textContent=bait;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
     for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){flashDamage(1);endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++;if(S.hull%5<0.4)flashDamage(0.35)}else if(d<6){S.near++}}
@@ -1218,6 +1260,8 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
     if(GAME_MODE==='game'){const a=Math.random()*Math.PI*2,r=45+Math.random()*65;evidence.position.set(Math.cos(a)*r,0,Math.sin(a)*r)}
     else evidence.position.set((Math.random()-0.5)*30,0,-60-Math.random()*30)}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
+  // Bait pill mirrors the persistent balance and updates each frame in the loop.
+  const hb=$('h-bait');if(hb)hb.textContent=bait;
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
@@ -1446,6 +1490,68 @@ function peekTrophies(){
 function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;/* never resume the loop — peek is a menu overlay, S.on stays as-is */}
 // Fish Codex — the full collection screen. Caught species show in color with their lore line;
 // uncaught ones show as locked ??? silhouettes grouped by rarity. Reuses the peek overlay frame.
+// === TACKLE SHOP ===
+// Spend bait currency on consumable buffs. Reuses the #mini overlay frame; doesn't pause the world
+// loop differently from peek/codex (miniActive=true, _peekOpen=true).
+const SHOP_ITEMS=[
+  {id:'hull',n:'Patch Kit',c:'#10b981',cost:25,desc:'+25 hull integrity on the spot.',fn:()=>{S.hull=Math.min(100,(S.hull||100)+25)}},
+  {id:'sonar',n:'Sonar Bank',c:'#60d0ff',cost:18,desc:'Stores 3 ready pings. Each press of Space spends one — no 3s wait.',fn:()=>{buffs.sonarBank+=3}},
+  {id:'line',n:'Tournament Line',c:'#a78bfa',cost:40,desc:'Next 5 casts triple-weight rare + legendary fish.',fn:()=>{buffs.rareLine+=5}},
+  {id:'scout',n:'Scout Flare',c:'#fbcf3b',cost:30,desc:'Reveals all active beacons + civilians for 30s on the minimap.',fn:()=>{buffs.scoutPing=Date.now()*0.001+30}}
+];
+function openShop(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const rows=SHOP_ITEMS.map(it=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:rgba(3,7,18,0.5);border:1px solid ${it.c}33;border-left:3px solid ${it.c};border-radius:8px;margin:6px 0">
+      <div style="flex:1;min-width:0;padding-right:12px"><div style="font-weight:600;color:${it.c};font-size:12.5px">${it.n} · <span style="color:#fbcf3b;font-family:'JetBrains Mono',monospace">${it.cost} bait</span></div><div style="font-size:11px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.desc}</div></div>
+      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:8px 14px;margin:0;background:${bait>=it.cost?it.c:'#374151'};font-size:11px">${bait>=it.cost?'BUY':'—'}</button>
+    </div>`).join('');
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#fbcf3b">Tackle Shop</div>
+    <div class="m-title">Bait on hand: <span style="color:#fbcf3b">${bait}</span></div>
+    <div class="m-sub">Spend fish currency on consumable gear. Active buffs travel with you across runs.</div>
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">Active Buffs</div>
+    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;font-size:11.5px;color:#cbd5e1;margin-bottom:8px">
+      Sonar bank: <span style="color:#60d0ff">${buffs.sonarBank||0}</span> &nbsp;·&nbsp; Rare line: <span style="color:#a78bfa">${buffs.rareLine||0}</span> &nbsp;·&nbsp; Scout flare: <span style="color:#fbcf3b">${(buffs.scoutPing||0)>Date.now()*0.001?'live':'—'}</span>
+    </div>
+    ${rows}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');openShop()});
+  el.style.display='flex';
+}
+
+// Stubs — real bodies land in dedicated commits below. They render a placeholder card so the
+// buttons don't no-op in this commit while the bait-economy ships first.
+function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
+  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
+  const all=Object.entries(ACH);
+  const rows=all.map(([id,a])=>{const u=achievements.has(id);return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(3,7,18,0.45);border-radius:8px;margin:4px 0;opacity:${u?1:0.45}"><div style="font-size:22px">${u?'🏅':'🔒'}</div><div><div style="font:700 12.5px 'DM Sans',sans-serif;color:${u?'#fbcf3b':'#94a3b8'}">${a.n}</div><div style="font-size:11px;color:#94a3b8;line-height:1.4">${a.d}</div></div></div>`}).join('');
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${rows}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  el.style.display='flex';
+}
+function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
+  card.innerHTML=`<div class="m-kicker" style="color:#60d0ff">Settings</div><div class="m-title">Operations panel.</div>
+    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:12px 14px;margin:10px 0">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Reset Save</span><button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button></div>
+    </div>
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.7;background:rgba(3,7,18,0.4);border-radius:8px;padding:10px">
+      <div style="color:#fb923c;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">Controls</div>
+      W/A/S/D · Arrows — Drive<br>
+      Space — Sonar Ping<br>
+      F — Cast (when stopped)<br>
+      Esc — Bail mini-game / close menus
+    </div>
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  el.style.display='flex';
+}
+let gfxQuality='medium';
+function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
+function applyGfx(){/* wired in the visual-quality commit */}
+try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
+
 function openCodex(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
@@ -1479,6 +1585,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,mode:GAME_MODE};
 })();
 
