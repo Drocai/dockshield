@@ -92,6 +92,8 @@ function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('o
 
 let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
+// Special boss drop type — never spawned randomly; only by spawnDeepDock() once unlock fires.
+const DP_BOSS={k:'boss',col:0x9333ea,n:'THE DEPTH RISES',open:'openBoss'};
 const DP_TYPES=[
   {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
   {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
@@ -232,6 +234,75 @@ const mini={
     radio('Tackle box overflowing. Pack it down.','self');
   },
   // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
+  // === DEEP DOCK BOSS: three-phase encounter against the thing under the Deep Dock ===
+  // Phase 1 (SHELL): sonar 6 times to crack the shell. Each ping +1 hit; window is short.
+  // Phase 2 (LURE): tap the surfacing weak point in the right window — too early misses, too late
+  //                 the creature breaches and bites for -25 hull.
+  // Phase 3 (LINE): hold the harpoon line as it drags. A bar drifts; release at peak tension.
+  // Win = +1500 score, +120 bait, unlock 'deep_dock', clears the special drop point. Lose = sink.
+  openBoss(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let phase=1,hits=0,need=6,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
+    const render=()=>{
+      const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
+      const phName={1:'PHASE 1 · SHELL',2:'PHASE 2 · LURE',3:'PHASE 3 · LINE'}[phase];
+      let body='';
+      if(phase===1){
+        body=`<div class="sb"><div class="sr"><span class="sl">Shell hits</span><span class="sv y">${hits} / ${need}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
+          <button class="btn bp" id="m-b-ping" style="background:linear-gradient(135deg,#60d0ff,#3b82f6);box-shadow:0 4px 16px rgba(96,208,255,0.4)">Fire Sonar (Space)</button>`;
+      }else if(phase===2){
+        body=`<div class="m-sub" style="color:#fbcf3b">Weak point cycles. Strike when the bar is gold — not red.</div>
+          <div style="height:22px;border-radius:6px;background:rgba(3,7,18,0.5);position:relative;overflow:hidden;margin:8px 0"><div id="m-b-bar" style="position:absolute;top:0;bottom:0;left:0;width:0%;background:linear-gradient(90deg,#ef4444,#fbcf3b,#10b981,#fbcf3b,#ef4444);transition:width 0.05s linear"></div></div>
+          <button class="btn bp" id="m-b-strike" style="background:linear-gradient(135deg,#ef4444,#9333ea);box-shadow:0 4px 16px rgba(147,51,234,0.4)">STRIKE</button>`;
+      }else{
+        body=`<div class="m-sub" style="color:#fbcf3b">Bar climbs as you reel. Release at peak — not too soon, not after the spike.</div>
+          <div style="height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin:8px 0"><div id="m-b-bar" style="height:100%;width:${tension*100}%;background:linear-gradient(90deg,#3b82f6,#10b981,#fbcf3b,#ef4444);transition:width 0.05s linear"></div></div>
+          <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE</button>`;
+      }
+      card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
+      if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;startLure()}render()};
+      if(phase===2)$('m-b-strike').onclick=strike;
+      if(phase===3)$('m-b-release').onclick=release;
+      $('m-b-flee').onclick=flee;
+    };
+    const startLure=()=>{
+      let t=0;lureWindow=setInterval(()=>{t=(t+0.07)%1;const bar=$('m-b-bar');if(bar)bar.style.width=(t*100)+'%'},60);
+      mini.addTeardown(()=>clearInterval(lureWindow));
+    };
+    const strike=()=>{
+      const bar=$('m-b-bar'),pct=bar?parseFloat(bar.style.width):0;
+      clearInterval(lureWindow);
+      // Gold band ~40-60%.
+      if(pct>=38&&pct<=62){phase=3;tension=0;startReel();render();return}
+      playerHull=Math.max(0,playerHull-25);S.hull=playerHull;sfx('hit');flashDamage(0.8);
+      if(playerHull<=0){lose();return}
+      // Missed → back to phase 1, need one more hit
+      phase=1;need=Math.min(8,need+1);render();
+    };
+    const startReel=()=>{
+      lureWindow=setInterval(()=>{tension=Math.min(1,tension+0.012);const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';if(tension>=1){clearInterval(lureWindow);phase=3;render()}},50);
+      mini.addTeardown(()=>clearInterval(lureWindow));
+    };
+    const release=()=>{
+      clearInterval(lureWindow);
+      // Peak band 78-92%.
+      if(tension>=0.78&&tension<=0.92){win();return}
+      playerHull=Math.max(0,playerHull-20);S.hull=playerHull;sfx('hit');flashDamage(0.6);
+      if(playerHull<=0){lose();return}
+      tension=0;phase=3;startReel();render();
+    };
+    const flee=()=>{S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
+    const win=()=>{S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly')};
+    const lose=()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0};
+    // Spacebar fires the phase-1 ping
+    const keyHandler=e=>{if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}};
+    document.addEventListener('keydown',keyHandler);
+    mini.addTeardown(()=>document.removeEventListener('keydown',keyHandler));
+    el.style.display='flex';render();
+    radio('Contact. Big one. Hold the line.','reel');
+    sfx('legendary');
+  },
   // Each tap adds +6 integrity; integrity also drops -1.4/tick on a 400ms timer. Win at 100,
   // lose if it hits 0. Home-dock rescues land here when the player supplied an address.
   openDockRescue(dp){
@@ -656,7 +727,24 @@ function spawnDropPoint(){
   const dp=mkDropPoint(type);dp.position.set(x,0,z);scene.add(dp);dropPoints.push(dp);
 }
 function mkDropPoints(){for(let i=0;i<3;i++)spawnDropPoint()}
+// Deep Dock boss unlock: spawns at the Deep Dock POI when the player has cleared 3+ missions in
+// the current run AND has either logged the Deep-Dock catch trophy, has 3+ rares total, or is
+// inside a stormy weather window. Spawns at most once per run.
+function maybeSpawnBoss(){
+  if(S.bossSpawned||GAME_MODE!=='game')return;
+  if((S.missionsCleared||0)<3)return;
+  const trigger=fishCatalog.has('Deep-Dock catch')||(S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle'))||trophyFish().length>=3;
+  if(!trigger)return;
+  S.bossSpawned=true;
+  const dp=mkDropPoint(DP_BOSS);
+  // Boss anchors at the Deep Dock POI (canon location).
+  const dd=POIS.find(p=>p.n==='Deep Dock')||{x:-50,z:-105};
+  dp.position.set(dd.x,0,dd.z);dp.userData.isBoss=true;scene.add(dp);dropPoints.push(dp);
+  radio('Boss flare just lit up the Deep Dock. Move when you’re ready.','fly');
+  sfx('legendary');
+}
 function tickDropPoints(t){
+  maybeSpawnBoss();
   for(let i=dropPoints.length-1;i>=0;i--){
     const dp=dropPoints[i],u=dp.userData;
     if(!u.active)continue;
@@ -1264,6 +1352,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
   // Bait pill mirrors the persistent balance and updates each frame in the loop.
   const hb=$('h-bait');if(hb)hb.textContent=bait;
+  S.bossSpawned=false;
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
