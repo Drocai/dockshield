@@ -96,6 +96,13 @@ input::placeholder{color:#334155}
 #radio{position:fixed;bottom:42px;left:50%;transform:translateX(-50%);z-index:15;display:none;background:rgba(3,7,18,0.88);border:1px solid rgba(251,146,60,0.15);border-left:3px solid #fb923c;padding:7px 14px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:#e8edf5;max-width:80%;transition:opacity 0.4s;pointer-events:none}
 #radio .r-who{font:700 9px 'JetBrains Mono',monospace;color:#fb923c;letter-spacing:1.5px;text-transform:uppercase;display:block;margin-bottom:2px}
 #radio .r-line{display:block;line-height:1.4}
+#dmg-flash{position:fixed;inset:0;z-index:14;pointer-events:none;background:radial-gradient(circle at center,transparent 30%,rgba(239,68,68,0.5) 100%);opacity:0;transition:opacity 0.45s ease-out}
+/* END RUN button — desktop top-right, mobile bottom-left so it doesn't collide with the weather
+   pill / minimap up top or the touch joysticks across the bottom. */
+#end-run{position:fixed;top:55px;right:140px;z-index:16;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:6px 12px;border-radius:6px;cursor:pointer}
+#end-run:hover{background:rgba(239,68,68,0.25)}
+#end-run.arm{background:rgba(239,68,68,0.45);color:#fff;border-color:#ef4444}
+@media (max-width:760px){#end-run{top:auto;bottom:170px;right:8px;padding:8px 14px;font-size:11px}}
 @keyframes pls{0%,100%{opacity:1}50%{opacity:0.5}}
 
 /* === GAME_MODE='game' funnel suppression ===

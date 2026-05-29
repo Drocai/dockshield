@@ -9,6 +9,49 @@ const DS=(()=>{
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
 const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
+// Persistent evidence catalog (kept across runs in-memory; survives reset() so the player builds
+// up a Castor Bayou case file over multiple sessions in one browser tab).
+const evidenceCatalog=new Set();
+// Persistent fish trophy catalog — both clicker rares and free-roam fishing land here.
+const fishCatalog=new Set();
+// Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
+// Spots on the lake bias which species roll — see FISH_SPOTS below.
+const FISH=[
+  // common
+  {n:'Bluegill',     r:'common',  w:24, s:8,  e:'🐟', f:'Easy money — fries up clean.'},
+  {n:'Crappie',      r:'common',  w:20, s:10, e:'🐟', f:'Schools where the shadows fall.'},
+  {n:'Channel cat',  r:'common',  w:16, s:14, e:'🐡', f:'Bottom feeder. Big enough.'},
+  // uncommon
+  {n:'Largemouth bass', r:'uncommon', w:12, s:25, e:'🎣', f:'The Reel would already be on camera.'},
+  {n:'Striper',      r:'uncommon', w:10, s:30, e:'🐠', f:'Fights like it owes you money.'},
+  {n:'Spotted gar',  r:'uncommon', w:8,  s:35, e:'🦈', f:'Teeth older than the marina.'},
+  // rare
+  {n:'Bowfin',       r:'rare',    w:5,  s:65, e:'🐉', f:'Living fossil. Lillyloved them as a kid.'},
+  {n:'Alligator gar',r:'rare',    w:4,  s:90, e:'🐊', f:'Folks say they used to be bigger. They’re right.'},
+  {n:'Mud carp',     r:'rare',    w:3,  s:110,e:'🪲', f:'The Quarantine Line outflow grew these.'},
+  // legendary (Castor Bayou specials)
+  {n:'Albino bream', r:'legendary', w:1.2, s:280, e:'👻', f:'White as wet paper. Found near the Flooded Chapel.'},
+  {n:'Three-eyed pike',r:'legendary', w:0.9, s:420, e:'🐲', f:'Pulled from the Sunk Road waters. Lilly looked at it too long.'},
+  {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', f:'Doesn’t look right. Something else is on the line below this one.'}
+];
+const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
+// Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
+const FISH_SPOTS=[
+  {n:'Sunk Road shallows',  x:-80, z:30,  r:25, bias:['Three-eyed pike','Bowfin','Spotted gar']},
+  {n:'Flooded Chapel pool', x:90,  z:55,  r:25, bias:['Albino bream','Bowfin']},
+  {n:'Quarantine outflow',  x:60,  z:-60, r:20, bias:['Mud carp','Alligator gar']},
+  {n:'Deep Dock fringe',    x:-50, z:-105,r:18, bias:['Deep-Dock catch','Alligator gar']}
+];
+// Pull the active fishing spot (or null if just on open water).
+function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
+// Weighted roll, optionally with a 3x bonus on bias species.
+function rollFish(spot){
+  let pool=FISH.map(f=>({...f,w:spot&&spot.bias.includes(f.n)?f.w*3:f.w}));
+  const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
+  for(const f of pool){r-=f.w;if(r<=0)return f}return pool[0];
+}
+// Run-scoped catch log so s5 can summarize the haul.
+let runCatches=[];
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
 // Voice lines lean on the Character Bible: Reel = bold/quotable, Fly = dry/short, Lilly = country direct.
 const HERO={
@@ -17,7 +60,7 @@ const HERO={
   speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
-let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
+let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,missionsCleared:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
 // Discount tiers earned by run outcome
 const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
@@ -31,7 +74,9 @@ const DP_TYPES=[
   {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
   {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
   {k:'runner',  col:0x60d0ff,n:'DOCK COLLAPSE',  open:'openRunner'},
-  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'}
+  {k:'tetris',  col:0x10b981,n:'TACKLE BOX',     open:'openTetris'},
+  {k:'rescue',  col:0xff6b35,n:'DOCK RESCUE',    open:'openDockRescue'},
+  {k:'clicker', col:0xa78bfa,n:'BAITWELL HAUL',  open:'openClicker'}
 ];
 // Evidence pool — one is rolled per run. Voice belongs to Lilly (country direct, swamp-sensitive).
 const EV=[
@@ -50,11 +95,18 @@ let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
 // are wired now so the drop-point spawner can target them.
 let miniActive=false;
 const mini={
+  // Each mini-game registers its tear-down hooks here (event listeners, intervals, RAFs).
+  // mini.finish() drains them in a single sweep, regardless of which exit path fires.
+  _teardowns:[],
+  addTeardown(fn){this._teardowns.push(fn)},
   finish(dp,score,radioLine,who){
+    // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
+    this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     miniActive=false;S.on=true;
-    const el=$('mini');if(el)el.style.display='none';
+    S.missionsCleared=(S.missionsCleared||0)+1;
+    const el=$('mini');if(el){el.style.display='none';const card=$('mini-card');if(card)card.innerHTML=''}
     if(dp)clearDropPoint(dp);
   },
   // === TETRIS: "stack the catch" — falling fish-shaped pieces on a 10x16 grid ===
@@ -135,7 +187,6 @@ const mini={
       G.timer=setTimeout(tick,Math.max(200,520-G.lines*22));
     };
     const end=()=>{
-      if(G.timer)clearTimeout(G.timer);document.removeEventListener('keydown',keyHandler);
       const line=G.lines>=4?'Tackle box packed. Clean.':G.lines>0?'Packed enough to ride out.':'Box overflowed. Bait’s lost.';
       mini.finish(dp,G.score+G.lines*25,line,G.lines>=4?'lilly':'self');
     };
@@ -147,6 +198,7 @@ const mini={
       if(e.code==='ArrowDown'){e.preventDefault();drop();render()}
     };
     document.addEventListener('keydown',keyHandler);
+    mini.addTeardown(()=>{if(G.timer)clearTimeout(G.timer);G.alive=false;document.removeEventListener('keydown',keyHandler)});
     $('m-tl').onclick=()=>{move(-1);render()};
     $('m-tr').onclick=()=>{move(1);render()};
     $('m-trot').onclick=()=>{rotate();render()};
@@ -155,6 +207,71 @@ const mini={
     newPiece();render();
     el.style.display='flex';tick();
     radio('Tackle box overflowing. Pack it down.','self');
+  },
+  // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
+  // Each tap adds +6 integrity; integrity also drops -1.4/tick on a 400ms timer. Win at 100,
+  // lose if it hits 0. Home-dock rescues land here when the player supplied an address.
+  openDockRescue(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let hp=42,won=null,clicks=0;
+    const isHome=dp&&dp.userData.isHome;
+    const render=()=>{
+      const barCol=hp<25?'#ef4444':hp<60?'#f59e0b':'#10b981';
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#ff6b35">${isHome?'YOUR HOME DOCK':'DOCK RESCUE'} · ${dp.userData.type.n}</div>
+        <div class="m-title">${isHome?'Your dock is failing.':'A neighbor’s dock is going under.'}</div>
+        <div class="m-sub">${isHome?'You pinned this spot from the address you gave us. Hold the boards together.':'Pier integrity bleeding. Pound it back up before the water claims it.'}</div>
+        <div class="sb"><div class="sr"><span class="sl">Integrity</span><span class="sv" style="color:${barCol}">${Math.round(hp)}%</span></div><div class="sr"><span class="sl">Hammer strikes</span><span class="sv b">${clicks}</span></div></div>
+        <div style="height:14px;background:rgba(3,7,18,0.5);border-radius:6px;overflow:hidden;margin:8px 0"><div id="m-dr-bar" style="height:100%;background:${barCol};width:${hp}%;transition:width 0.18s,background 0.3s"></div></div>
+        <button class="btn bp" id="m-dr-hit" style="background:linear-gradient(135deg,#ff6b35,#e8590c);box-shadow:0 4px 16px rgba(255,107,53,0.4)">SHORE IT UP</button>
+        <button class="btn bx" id="m-dr-bail">Walk Away</button>`;
+      $('m-dr-hit').onclick=hit;$('m-dr-bail').onclick=bail;
+    };
+    const hit=()=>{if(won!==null)return;clicks++;hp=Math.min(100,hp+6);if(hp>=100){won=true;done()}else render()};
+    const bail=()=>{if(won===null){won=false;done(true)}};
+    const done=(bailed)=>{
+      const score=won?(isHome?350:200)+clicks*3:bailed?0:0;
+      const line=won?(isHome?'Your dock holds. The water moves on.':'Pier locked down. Neighbor owes you.'):
+                bailed?'Walked off. The water took the rest.':'Couldn’t hold it. The boards went under.';
+      if(won)S.hull=Math.min(100,S.hull+10);  // reward the player's hull for a clean repair
+      mini.finish(dp,score,line,won?'lilly':'fly');
+    };
+    const drainT=setInterval(()=>{if(won!==null)return;hp=Math.max(0,hp-1.4);if(hp<=0){won=false;done()}else{const bar=$('m-dr-bar');if(bar)bar.style.width=hp+'%';const intEl=card.querySelector('.sv');if(intEl)intEl.textContent=Math.round(hp)+'%'}},400);
+    mini.addTeardown(()=>clearInterval(drainT));
+    el.style.display='flex';render();
+    radio(isHome?'Your dock’s on fire — we’re there.':'Dock failing on the map. Move.','reel');
+  },
+  // === CLICKER (Baitwell Haul): chill 12-second click frenzy + payout ===
+  // Tap to haul fish out of the baitwell. 12s timer. Final score = catches * 8 + rare-roll bonus.
+  // Players can also see this as the "easy fun" loop the user asked for — no fail state.
+  openClicker(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');
+    let catches=0,bonus=0,t=12,done=false;
+    const RARE=['Channel cat','Spotted gar','Bowfin','Mud carp','Albino bream','Three-eyed pike'];
+    const rares=[];
+    const render=()=>{
+      card.innerHTML=`
+        <div class="m-kicker" style="color:#a78bfa">${dp.userData.type.n}</div>
+        <div class="m-title">Baitwell haul.</div>
+        <div class="m-sub">Tap fast — the baitwell’s overflowing. ${t}s left. Some hauls turn up things you don’t recognize.</div>
+        <div class="sb"><div class="sr"><span class="sl">Catches</span><span class="sv g">${catches}</span></div><div class="sr"><span class="sl">Rare finds</span><span class="sv y">${rares.length}</span></div><div class="sr"><span class="sl">Time</span><span class="sv b">${t}s</span></div></div>
+        <button class="btn bp" id="m-c-hit" style="background:linear-gradient(135deg,#a78bfa,#7c3aed);box-shadow:0 4px 16px rgba(167,139,250,0.4);padding:18px;font-size:15px">HAUL</button>
+        ${rares.length?'<div style="font:11px \'JetBrains Mono\',monospace;color:#fde68a;margin-top:6px;line-height:1.6">'+rares.map(r=>'· '+r).join('<br>')+'</div>':''}`;
+      $('m-c-hit').onclick=hit;
+    };
+    const hit=()=>{if(done)return;catches++;
+      // 1 in 12 chance per click for a rare drop; each rare = +60 bonus + collection note.
+      if(Math.random()<0.08){const r=RARE[Math.floor(Math.random()*RARE.length)];rares.push(r);bonus+=60;fishCatalog.add(r)}
+      render();
+    };
+    const tick=setInterval(()=>{if(done)return;t--;if(t<=0){done=true;clearInterval(tick);const score=catches*8+bonus;
+      const line=rares.length>=2?'Whatever’s in this baitwell is not from this lake.':catches>40?'You ripped the baitwell. Good haul.':'Easy haul.';
+      mini.finish(dp,score,line,'lilly')}else render()},1000);
+    mini.addTeardown(()=>clearInterval(tick));
+    el.style.display='flex';render();
+    radio('Baitwell’s alive. Pull what you can.','self');
   },
   // === RUNNER: side-scrolling "dock collapse" — Lilly running across breaking planks ===
   openRunner(dp){
@@ -170,7 +287,9 @@ const mini={
       <button class="btn bx" id="m-rquit">Bail Out</button>`;
     const cv=$('m-rcv'),ctx=cv.getContext('2d');
     // Game state
-    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:3,obstacles:[],t0:Date.now()};
+    // Starting speed ramps with missions cleared this run so each subsequent runner is harder.
+    const startSpd=Math.min(5,3+0.4*(S.missionsCleared||0));
+    const G={x:60,y:H-40,vy:0,grounded:true,dist:0,alive:true,speed:startSpd,obstacles:[],t0:Date.now()};
     const jump=()=>{if(G.grounded&&G.alive){G.vy=-9;G.grounded=false}};
     // Spawn obstacles (gap between planks) at random intervals
     const spawn=()=>{
@@ -210,8 +329,6 @@ const mini={
       G.raf=requestAnimationFrame(tick);
     };
     const end=()=>{
-      if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);
-      cv.onclick=null;document.removeEventListener('keydown',keyHandler);
       const dist=Math.round(G.dist/10),score=Math.min(400,dist*2);
       const line=dist>200?'You outran it. Barely.':'The dock took it. Hull held.';
       mini.finish(dp,score,line,'lilly');
@@ -219,6 +336,8 @@ const mini={
     const keyHandler=e=>{if(e.code==='Space'){e.preventDefault();jump()}};
     document.addEventListener('keydown',keyHandler);
     cv.onclick=jump;cv.ontouchstart=e=>{e.preventDefault();jump()};
+    // Teardown — drained by mini.finish() on any exit path.
+    mini.addTeardown(()=>{if(G.spawnTimer)clearTimeout(G.spawnTimer);if(G.raf)cancelAnimationFrame(G.raf);G.alive=false;cv.onclick=null;cv.ontouchstart=null;document.removeEventListener('keydown',keyHandler)});
     $('m-rquit').onclick=()=>{G.alive=false;end()};
     el.style.display='flex';tick();
     radio('Dock’s coming apart. Move.','self');
@@ -311,9 +430,9 @@ const mini={
     // Spacebar also fires while the overlay is up
     const keyHandler=e=>{if(e.code==='Space'&&miniActive&&dp.userData.type.k==='battle'){e.preventDefault();fire()}};
     document.addEventListener('keydown',keyHandler);
-    // Clean up the keyhandler when this mini ends.
-    const origFinish=mini.finish;
-    mini.finish=function(...args){document.removeEventListener('keydown',keyHandler);clearInterval(biteTimer);mini.finish=origFinish;return origFinish.apply(this,args)};
+    // Register teardown — drained by mini.finish() regardless of exit path. No wrapper chain.
+    mini.addTeardown(()=>document.removeEventListener('keydown',keyHandler));
+    mini.addTeardown(()=>clearInterval(biteTimer));
     el.style.display='flex';render();
     radio('Surfaced contact. Fire on it.','fly');
   }
@@ -348,10 +467,18 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();
-  if(GAME_MODE==='game')mkDropPoints();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();mkPOIs();
+  // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
+  // set instead of inheriting whatever the previous run left mid-respawn.
 
-  document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&S.on){e.preventDefault();fireSonar()}});document.addEventListener('keyup',e=>keys[e.code]=false);
+  document.addEventListener('keydown',e=>{
+    keys[e.code]=true;
+    if(e.code==='Space'&&S.on)e.preventDefault();
+    if(e.code==='Space'&&S.on)fireSonar();
+    if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
+    // Escape bails out of any open mini-game with zero score and no radio line.
+    if(e.code==='Escape'&&miniActive){e.preventDefault();const dp=dropPoints.find(d=>!d.userData.active);mini.finish(dp,0,'Bailed out. Drop point still flagged.','self')}
+  });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
   const isMob=/Mobi|Android/i.test(navigator.userAgent);
@@ -400,6 +527,25 @@ function mkDock(){
   const bl=new THREE.PointLight(0x10b981,1.5,30);bl.position.set(0,2,0);pinG.add(bl);
   pinG.position.set(dockPos.x,0,dockPos.z);scene.add(pinG);
   scene._pinG=pinG;scene._beacon=beacon;
+}
+
+// === WORLD POIs ===
+// Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
+// players can navigate to them as landmarks. They are NOT drop points — that drop-point system
+// stays separate and random.
+function mkPOIs(){
+  if(GAME_MODE!=='game')return;
+  POIS.forEach(p=>{
+    if(p.n==='Castor Marina')return;  // marina is the existing main dock
+    const g=new THREE.Group();
+    // Small platform
+    const plat=new THREE.Mesh(new THREE.BoxGeometry(3,0.18,3),new THREE.MeshStandardMaterial({color:0x6a4f1a,roughness:0.85}));plat.position.y=0.3;g.add(plat);
+    // Single lamp post
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,2.6,6),new THREE.MeshStandardMaterial({color:0x444444,metalness:0.7}));post.position.y=1.6;g.add(post);
+    const head=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6),new THREE.MeshStandardMaterial({color:p.c,emissive:p.c,emissiveIntensity:0.6}));head.position.y=2.95;g.add(head);
+    const lt=new THREE.PointLight(parseInt(p.c.replace('#',''),16),0.6,18);lt.position.y=2.95;g.add(lt);
+    g.position.set(p.x,0,p.z);scene.add(g);
+  });
 }
 
 function mkWorld(){
@@ -504,10 +650,28 @@ function tickDropPoints(t){
     }
   }
 }
+// Tracks the pending respawn timer so a mid-run reset() can cancel it cleanly.
+let _dpRespawnT=null;
 function clearDropPoint(dp){
   // Remove the resolved drop point and spawn a replacement at a new random spot.
   scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
-  setTimeout(()=>{if(S.on&&dropPoints.length<3)spawnDropPoint()},2000);
+  _dpRespawnT=setTimeout(()=>{_dpRespawnT=null;if(S.on&&GAME_MODE==='game'&&dropPoints.length<3)spawnDropPoint()},2000);
+}
+// Hard reset for the drop-point system — called by startGame() so a new run doesn't inherit
+// markers from the previous run.
+function resetDropPoints(){
+  if(_dpRespawnT){clearTimeout(_dpRespawnT);_dpRespawnT=null}
+  dropPoints.slice().forEach(dp=>{scene.remove(dp)});dropPoints.length=0;
+  if(GAME_MODE!=='game')return;
+  // Home dock from the address field — always a 'rescue' drop point at the deterministic spot.
+  const home=S.homeAddr?addrToPos(S.homeAddr):null;
+  if(home){
+    const type=DP_TYPES.find(d=>d.k==='rescue');
+    const dp=mkDropPoint(type);dp.position.set(home.x,0,home.z);dp.userData.isHome=true;scene.add(dp);dropPoints.push(dp);
+    radio('Home dock pinned at '+S.homeAddr+'. Marked on the map.','self');
+  }
+  // Fill the remaining slots with random drops so total active is 3.
+  for(let i=dropPoints.length;i<3;i++)spawnDropPoint();
 }
 
 function mkMist(){
@@ -519,6 +683,15 @@ function mkMist(){
   const mist=new THREE.Points(g,m);scene.add(mist);scene._mist=mist;
 }
 
+// Named world POIs — pulled from the Castor Bayou canon (04_World_Locations). Visible on the
+// minimap as small labeled dots so players can mentally chart the lake.
+const POIS=[
+  {n:'Castor Marina',x:0,z:-120,c:'#fb923c'},
+  {n:'Sunk Road',x:-80,z:30,c:'#94a3b8'},
+  {n:'Flooded Chapel',x:90,z:55,c:'#a78bfa'},
+  {n:'Quarantine Line',x:60,z:-60,c:'#f59e0b'},
+  {n:'Deep Dock',x:-50,z:-105,c:'#ef4444'}
+];
 function drawMinimap(){
   const c=$('mm-canvas');if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42;  // scale: world u -> px
@@ -526,8 +699,13 @@ function drawMinimap(){
   // ring background
   ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
   ctx.strokeStyle='rgba(251,146,60,0.3)';ctx.lineWidth=1;ctx.stroke();
+  // POIs first (drawn under everything else)
+  POIS.forEach(p=>{const px=W/2+p.x*scl,pz=H/2+p.z*scl;ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
   // origin (dock)
   ctx.fillStyle='#fb923c';ctx.fillRect(W/2-2,H/2-2,4,4);
+  // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
+  const now=Date.now()*0.001;
+  if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx,bz,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
   // boat dot
   const bx=W/2+bMesh.position.x*scl,bz=H/2+bMesh.position.z*scl;
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bx,bz,3,0,Math.PI*2);ctx.fill();
@@ -535,7 +713,7 @@ function drawMinimap(){
   const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
-  dropPoints.forEach(dp=>{if(!dp.userData.active)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const dx=W/2+dp.position.x*scl,dz=H/2+dp.position.z*scl;ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
 }
 
 function mkCryptid(){
@@ -559,8 +737,11 @@ function mkEvidence(){
 }
 
 function mkCivs(){
-  // Three civilians between start and dock, spread along the route, away from the dense hazard cluster.
-  const spots=[[-8,-25],[12,-50],[-3,-85]];
+  // Civilian positions: in business mode they line up along the dock-approach corridor.
+  // In game mode they spread across the larger world so they're findable anywhere.
+  const spots=GAME_MODE==='game'
+    ? [[-65,-40],[40,-25],[-30,-95],[80,-70],[-90,15],[55,-130],[-15,40]]
+    : [[-8,-25],[12,-50],[-3,-85]];
   spots.forEach(([x,z])=>{
     const g=new THREE.Group();
     // Inner-tube ring + a small head/torso so it reads as a person clinging to a float
@@ -656,7 +837,7 @@ function fireSonar(){
   if(!S.on)return false;
   const now=Date.now()*0.001;
   if(S.sonarReady&&now<S.sonarReady)return false;
-  S.sonarReady=now+3;
+  S.sonarReady=now+3;S.lastPing=now;
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -728,22 +909,90 @@ function tickRain(){
 }
 
 // === RADIO CHATTER ===
-// Single-line overlay, fades after ~4s. Voice picks the right hero based on `who`:
-// 'self' = the player's selected hero; otherwise a fixed role for that beat.
-function radio(text,who='self'){
-  const el=$('radio');if(!el)return;
-  let hero;
-  if(who==='self')hero=HERO[S.bc];
-  else if(who==='reel')hero=HERO.regular;
-  else if(who==='lilly')hero=HERO.pontoon;
-  else if(who==='fly')hero=HERO.speedboat;
-  else hero=HERO[S.bc];
+// Queued single-line overlay. Rapid radio() calls no longer overwrite mid-sentence — they line up
+// and play in order, each holding the overlay ~3.2s with a 200ms hand-off between lines.
+const _radioQ=[];let _radioBusy=false;
+function _drainRadio(){
+  if(_radioBusy||!_radioQ.length)return;
+  const {text,who}=_radioQ.shift();
+  const el=$('radio');if(!el){_drainRadio();return}
+  let hero;if(who==='reel')hero=HERO.regular;else if(who==='lilly')hero=HERO.pontoon;else if(who==='fly')hero=HERO.speedboat;else hero=HERO[S.bc];
   el.style.borderLeftColor=hero.badge;
   el.querySelector('.r-who').textContent=hero.n;
   el.querySelector('.r-who').style.color=hero.badge;
   el.querySelector('.r-line').textContent=text;
   el.style.display='block';el.style.opacity='1';
-  clearTimeout(radio._t);radio._t=setTimeout(()=>{el.style.opacity='0';setTimeout(()=>{if(el.style.opacity==='0')el.style.display='none'},400)},4000);
+  _radioBusy=true;
+  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>{
+    if(el.style.opacity==='0')el.style.display='none';
+    _radioBusy=false;_drainRadio();
+  },400)},3200);
+}
+function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_radioQ.length>4)_radioQ.splice(0,_radioQ.length-4);_drainRadio()}
+
+// === FREE-ROAM FISHING ===
+// When the boat is stopped (or near-stopped) in game mode, F (or the FISH touch button) casts.
+// 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
+// Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
+let _castInFlight=false;
+function castLine(){
+  if(!S.on||GAME_MODE!=='game'||miniActive)return false;
+  if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
+  if(_castInFlight)return false;
+  _castInFlight=true;
+  const spot=fishingSpot(bMesh.position);
+  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');
+  // Visual: shrinking ring on the water at the boat's bow. Disposes when cast resolves.
+  const ringMesh=new THREE.Mesh(new THREE.RingGeometry(1,1.2,24),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
+  ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
+  // Offset ahead of the bow
+  const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);ringMesh.position.add(fwd);
+  scene.add(ringMesh);
+  const t0=Date.now();
+  const anim=setInterval(()=>{
+    const age=(Date.now()-t0)/2500;
+    if(age>=1){clearInterval(anim);scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castInFlight=false;resolveCast(spot);return}
+    const sc=1+age*4;ringMesh.scale.set(sc,sc,sc);ringMesh.material.opacity=0.7*(1-age);
+  },50);
+}
+function resolveCast(spot){
+  const fish=rollFish(spot);
+  runCatches.push(fish);
+  if(fish.r==='legendary'||fish.r==='rare')fishCatalog.add(fish.n);
+  showCatchDialog(fish,spot);
+}
+function showCatchDialog(fish,spot){
+  // Reuse the #mini overlay frame so the catch dialog lives in the same layer as mini-games but
+  // doesn't set miniActive — the world keeps ticking; only S.on briefly freezes via miniActive=true
+  // via a dedicated flag would cause issues; instead block input by pausing S.on.
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;S.on=false;
+  card.innerHTML=`
+    <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${spot?spot.n:'Open water'} · ${fish.r.toUpperCase()}</div>
+    <div class="m-title" style="font-size:30px;display:flex;gap:10px;align-items:center;justify-content:center">${fish.e}<span>${fish.n}</span></div>
+    <div class="m-sub" style="text-align:center;font-style:italic;color:${RARE_COLOR[fish.r]}">${fish.f}</div>
+    <div class="sb"><div class="sr"><span class="sl">Score if kept</span><span class="sv g">+${fish.s}</span></div><div class="sr"><span class="sl">Score if released</span><span class="sv b">+${Math.round(fish.s*0.2)}</span></div><div class="sr"><span class="sl">Trophy</span><span class="sv ${fish.r==='legendary'||fish.r==='rare'?'g':'y'}">${fish.r==='legendary'||fish.r==='rare'?'YES':'no'}</span></div></div>
+    <button class="btn bp" id="m-k">Keep</button>
+    <button class="btn bx" id="m-r">Release (heals hull +1)</button>`;
+  $('m-k').onclick=()=>{S.score+=fish.s;closeCatch(`${fish.n}. ${fish.s} on the line.`)};
+  $('m-r').onclick=()=>{S.score+=Math.round(fish.s*0.2);S.hull=Math.min(100,S.hull+1);closeCatch(`Released. ${fish.n} goes back to Castor Bayou.`)};
+  el.style.display='flex';
+}
+function closeCatch(msg){
+  const el=$('mini'),card=$('mini-card');
+  if(card)card.innerHTML='';if(el)el.style.display='none';
+  miniActive=false;S.on=true;
+  radio(msg,'lilly');
+}
+
+// === HULL-DAMAGE VISUAL FEEDBACK ===
+// Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
+// instead of a strobe. Intensity 0..1.
+let _dmgFade=null;
+function flashDamage(intensity){
+  const el=$('dmg-flash');if(!el)return;
+  el.style.opacity=Math.min(0.85,intensity).toFixed(2);
+  clearTimeout(_dmgFade);_dmgFade=setTimeout(()=>{el.style.opacity='0'},220);
 }
 
 // === 3-PHASE MISSION ===
@@ -785,6 +1034,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
   // Minimap update
   if(S.on&&$('mm-canvas')){drawMinimap()}
+  // Named fishing-spot indicator — fades in when the boat enters a spot's radius.
+  if(S.on&&GAME_MODE==='game'){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
     const c=scene._cryptid;c.visible=true;
@@ -798,7 +1049,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   if(S.on){const bt=BT[S.bc],wxP=1-Math.min(S.wx.ws*S.wx.ws*0.003*bt.wx,0.4);
     // Hull damage cripples handling when below 30%
     const hullP=S.hull<30?0.55:(S.hull<60?0.85:1);
-    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd-=bt.ac*0.5;spd*=bt.dr;
+    if(keys.ArrowUp||keys.KeyW||tch.lY>0.1)spd=Math.min(spd+bt.ac*wxP*hullP*(keys.ArrowUp||keys.KeyW?1:tch.lY),bt.mx*hullP);
+    // Reverse capped at -bt.mx*0.5 — the boat can back up but can't outrun itself in reverse.
+    if(keys.ArrowDown||keys.KeyS||tch.lY<-0.1)spd=Math.max(spd-bt.ac*0.5,-bt.mx*0.5*hullP);
+    spd*=bt.dr;
     if(Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
@@ -807,12 +1061,16 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
     if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel')}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
-    const dd=bMesh.position.distanceTo(dockPos);if(dd<150)S.score+=Math.max(0,Math.round(as*0.3));
+    const dd=bMesh.position.distanceTo(dockPos);
+    // Score formula: business mode rewards staying near the dock corridor; game mode rewards
+    // total distance traveled (S.dist already accumulates each frame's movement).
+    if(GAME_MODE==='business'){if(dd<150)S.score+=Math.max(0,Math.round(as*0.3))}
+    else{S.score+=Math.max(0,Math.round(as*0.15))}
     $('h-spd').textContent=as.toFixed(1)+' kn';$('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
-    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++}else if(d<6){S.near++}}
+    for(const s of stumps){const d=bMesh.position.distanceTo(s.position);if(d<2.5){flashDamage(1);endGame(false);return}if(d<4){S.hull=Math.max(0,S.hull-0.35);S.near++;if(S.hull%5<0.4)flashDamage(0.35)}else if(d<6){S.near++}}
     if(S.hull<=0){endGame(false);return}
     // Evidence pickup — drive over to collect, any speed.
     if(evidence&&!evidence.userData.collected){
@@ -821,7 +1079,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       if(evidence.userData.ring)evidence.userData.ring.material.opacity=0.35+Math.sin(t*3)*0.2;
       if(bMesh.position.distanceTo(evidence.position)<2){
         evidence.userData.collected=true;evidence.visible=false;
-        S.evCollected=EV[Math.floor(Math.random()*EV.length)];S.score+=75;
+        // Prefer evidence the player hasn't seen yet so the catalog actually grows.
+        const fresh=EV.filter(e=>!evidenceCatalog.has(e.n));
+        S.evCollected=(fresh.length?fresh:EV)[Math.floor(Math.random()*((fresh.length?fresh:EV).length))];
+        evidenceCatalog.add(S.evCollected.n);S.score+=75;
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
         radio(HERO[S.bc].voice.evidence);
@@ -859,7 +1120,13 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   }
   ren.render(scene,cam)}
 
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;
+function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+  // HUD pills + dmg flash reset to clean slate each run.
+  const hs=$('h-sonar');if(hs){hs.textContent='READY';hs.style.color='#60d0ff'}
+  const hh=$('h-hull');if(hh){hh.textContent='100%';hh.style.color='#fb923c'}
+  const df=$('dmg-flash');if(df)df.style.opacity='0';
+  // Drop points wipe + respawn so a new run doesn't inherit prior markers / pending timers.
+  resetDropPoints();
   civs.forEach(c=>{c.userData.saved=false;c.visible=true});
   if(evidence){evidence.userData.collected=false;evidence.visible=true}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
@@ -873,7 +1140,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   const mm=$('minimap');if(mm)mm.style.display=GAME_MODE==='game'?'block':'none';
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
-  $('nfo').textContent=GAME_MODE==='game'?'WASD / Arrows · Space = Sonar Ping · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  $('nfo').textContent=GAME_MODE==='game'?'WASD/Arrows · Space=Sonar · F=Cast (when stopped) · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
   if(GAME_MODE==='business')setPh(0);
   else{
     // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
@@ -885,26 +1152,66 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
-  $('rt').textContent=won?'Survivors Extracted':'Dragged Under';$('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('r-ph').textContent=S.pc+'/3';$('f-scr').textContent=S.score;
+  // Result title differs by mode: free-roam celebrates the missions/exploration, business celebrates dock-reach.
+  if(GAME_MODE==='game'){$('rt').textContent=won?'Pulled Off The Run':'Hull Went Under'}
+  else $('rt').textContent=won?'Survivors Extracted':'Dragged Under';
+  $('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('f-scr').textContent=S.score;
+  // Phases row repurposes as "Missions" in game mode.
+  const phEl=$('r-ph'),phLbl=phEl?phEl.previousElementSibling:null;
+  if(phEl){if(GAME_MODE==='game'){phEl.textContent=(S.missionsCleared||0)+' cleared';if(phLbl)phLbl.textContent='Missions'}else{phEl.textContent=S.pc+'/3';if(phLbl)phLbl.textContent='Phases'}}
   const rh=$('r-hull');if(rh){rh.textContent=Math.round(S.hull)+'%';rh.className='sv '+(S.hull<30?'r':S.hull<60?'y':'g')}
   let rl,rm,rc;const nr=S.near/Math.max(el,1);
-  if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
-  else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
-  else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
-  else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  if(GAME_MODE==='game'){
+    // Free-roam outcome bands tuned to missions cleared + hull preserved + civilians saved.
+    const cleared=S.missionsCleared||0;
+    if(!won){rl='WRECKED';rm='The hull went under and Castor Bayou closed up over it. The Depth keeps its score.';rc='rgba(239,68,68,0.08)'}
+    else if(cleared>=4){rl='LEGEND OF THE DEPTH';rm='Four missions clean. The town will start telling stories about this run.';rc='rgba(16,185,129,0.08)'}
+    else if(cleared>=2){rl='OPERATOR';rm='You worked the map. The Depth holds the line a little tighter because you rode out.';rc='rgba(16,185,129,0.08)'}
+    else if(S.civsSaved>=3){rl='LIFEGUARD';rm='You pulled people out. Castor Bayou owes you one — and remembers.';rc='rgba(16,185,129,0.08)'}
+    else{rl='EXPLORER';rm='You read the water and came home. Plenty of Castor Bayou left to chart.';rc='rgba(96,208,255,0.08)'}
+  }else{
+    if(!won){rl='OVERRUN';rm='The water took you. Whatever is rising below the surface does not stop — and it is spreading to every waterway it can reach.';rc='rgba(239,68,68,0.08)'}
+    else if(S.near>15||nr>0.5){rl='CLOSE CALLS';rm='Too many near-misses out there. Debris, blackwater, and things moving under the hull — every run into The Depth gets more dangerous than the last.';rc='rgba(245,158,11,0.08)'}
+    else if(S.maxSpd>25){rl='RECKLESS';rm='You ran it hot. Speed gets you to the survivors faster, but the water is unforgiving — one wrong read and The Depth takes the whole crew.';rc='rgba(245,158,11,0.08)'}
+    else{rl='CLEAN EXTRACTION';rm='Flawless run. You brought them home before the water closed in. The Depth holds the line — so others can survive.';rc='rgba(16,185,129,0.08)'}
+  }
   // Outcome upgrade: full civilian extraction
   if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
   const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
   // Evidence reveal — show flavor line only if collected; otherwise hide the block
   const evWrap=$('r-ev-wrap'),evName=$('r-ev-name'),evLine=$('r-ev-line');
   if(evWrap){if(S.evCollected){evWrap.style.display='block';evName.textContent=S.evCollected.n;evLine.textContent=S.evCollected.line}else{evWrap.style.display='none'}}
+  // Run-haul summary by rarity, only painted in game mode and only if anything was caught.
+  const haulWrap=$('r-haul-wrap'),haulTotal=$('r-haul-total'),haulDetail=$('r-haul-detail');
+  if(haulWrap&&GAME_MODE==='game'&&runCatches.length>0){
+    const byR={common:0,uncommon:0,rare:0,legendary:0};runCatches.forEach(f=>byR[f.r]++);
+    haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
+    haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
+  }else if(haulWrap)haulWrap.style.display='none';
+  // Persistent trophy board (rare + legendary uniques across all runs in this tab).
+  const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
+  if(trWrap&&GAME_MODE==='game'&&fishCatalog.size>0){
+    trWrap.style.display='block';trCount.textContent=fishCatalog.size;
+    trList.innerHTML=[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:3px 7px;color:${col}">${e} ${n}</span>`}).join('');
+  }else if(trWrap)trWrap.style.display='none';
   $('rm').textContent=won?'You held the line this time. The water remembers.':'The lake hazards are real — and something below the waterline is awake.';
   const rcd=$('rc');rcd.style.background=rc;rcd.style.borderColor=rc.replace('0.08','0.15');rcd.style.border='1px solid '+rc.replace('0.08','0.2');
   $('rlbl').textContent=rl;$('rmsg').textContent=rm;$('rlbl').style.color=rl==='CLEAN EXTRACTION'?'#10b981':'#f87171';$('rmsg').style.color=rl==='CLEAN EXTRACTION'?'#a7f3d0':'#fecaca';
+  // Score-tier medal — game mode only. Thresholds tuned to a mix of mission play + free-roam exploration.
+  const medalEl=$('r-medal'),medalIcon=$('r-medal-icon'),medalTier=$('r-medal-tier');
+  if(medalEl&&GAME_MODE==='game'){
+    const s=S.score;
+    let icon,tier,col;
+    if(s>=4000){icon='🏆';tier='GOLD · LEGEND';col='#fbcf3b'}
+    else if(s>=2000){icon='🥈';tier='SILVER · OPERATOR';col='#cbd5e1'}
+    else if(s>=800){icon='🥉';tier='BRONZE · RIDER';col='#d97706'}
+    else{icon='🐟';tier='ROOKIE';col='#94a3b8'}
+    medalEl.style.display='block';medalIcon.textContent=icon;medalTier.textContent=tier;medalTier.style.color=col;
+  }else if(medalEl)medalEl.style.display='none';
   // Tiered discount earned from run quality
   S.outcome=rl;S.discount=DISC[rl]||0;
   // Business-mode pipeline: paint the discount banner + send the analytics_events row.
@@ -930,7 +1237,13 @@ function paintDiscount(){
 // === SERVICES ===
 async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:a})});if(r.ok){const d=await r.json();if(d.lat&&d.lng)return{lat:d.lat,lng:d.lng}}return null}catch(e){return null}}
-async function saveData(w){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload:{email:S.email,bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr}})})}catch(e){}}
+async function saveData(w){
+  if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;
+  // Payload now reflects whichever mode the run was in — game mode adds missionsCleared and
+  // civsSaved; business mode keeps its original fields. Empty strings stay empty (not undefined).
+  const payload={email:S.email||'',bc:S.bc,score:S.score,won:w,phases:S.pc,near:S.near,maxSpd:S.maxSpd,wx:S.wx,addr:S.addr||'',mode:GAME_MODE,missionsCleared:S.missionsCleared||0,civsSaved:S.civsSaved||0,outcome:S.outcome||''};
+  try{await fetch(`${C.SUPABASE_URL}/rest/v1/analytics_events`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({event_type:'sim_complete',payload})})}catch(e){}
+}
 async function saveLead(){if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/leads`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${C.SUPABASE_ANON_KEY}`,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({email:S.email,address:S.addr,lat:S.lat,lng:S.lng,dock_type:'fixed',status:'new'})});if(r.ok){const d=await r.json();S.lid=(Array.isArray(d)?d[0]:d).id}}catch(e){}}
 
 // === ACTIONS ===
@@ -972,16 +1285,28 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
 function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
-  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';S.lore={}}}
+  if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
 // === GAME-MODE ENTRY: hero pick → Q1 → Q2 → free-roam ===
 // No email, no address. The two questions tag S.lore so radio chatter can reference them later;
 // they don't override the hero pick (player keeps the operative they selected).
 function beginRun(){
   if(!S.lore)S.lore={};
+  // Capture optional home dock address — used in launchGame() to spawn a personal rescue
+  // mission at a deterministic spot derived from the address text.
+  const hd=$('f-home-addr');S.homeAddr=hd?hd.value.trim():'';
   $('op-grid').style.display='none';$('op-label').style.display='none';$('begin-btn').style.display='none';
+  const wrap=$('home-dock-wrap');if(wrap)wrap.style.display='none';
   $('s1-sub').textContent='Two reads before we shove off. Answer fast — the water doesn’t wait.';
   $('q-1').style.display='block';
+}
+// Deterministic position from address text — same address always lands at the same spot, but
+// different addresses spread across the playable ring. No real geocode call needed.
+function addrToPos(addr){
+  if(!addr)return null;
+  let h=0;for(let i=0;i<addr.length;i++){h=((h<<5)-h+addr.charCodeAt(i))|0}
+  const ang=(Math.abs(h)%360)*Math.PI/180,r=70+(Math.abs(h>>3)%50);
+  return {x:Math.cos(ang)*r,z:Math.sin(ang)*r};
 }
 function qAns(n,h,tag){
   if(!S.lore)S.lore={};
@@ -998,16 +1323,41 @@ function launchGame(){
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
-initEngine();
-function endRun(){if(S.on)endGame(S.hull>0)}
+initEngine();refreshTrophyPeek();
+// Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
+// second press inside 2.5s actually ends. Stops accidental kills on mobile.
+let _endArmed=false,_endArmedT=null;
+// Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
+function peekTrophies(){
+  if(fishCatalog.size===0)return;
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#a78bfa">Trophy Board</div>
+    <div class="m-title">${fishCatalog.size} unique trophy${fishCatalog.size===1?'':'s'} pulled out of Castor Bayou.</div>
+    <div class="m-sub">Rares + legendaries you've landed across all your sessions in this browser tab.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">${[...fishCatalog].map(n=>{const f=FISH.find(x=>x.n===n);const col=f?RARE_COLOR[f.r]:'#94a3b8';const e=f?f.e:'🐟';const r=f?f.r:'';return `<span style="background:rgba(8,18,38,0.6);border:1px solid ${col};border-radius:6px;padding:5px 9px;color:${col};font:12px 'DM Sans',sans-serif">${e} ${n}<span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-left:6px">${r}</span></span>`}).join('')}</div>
+    <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
+  el.style.display='flex';
+}
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false}
+// Show the trophy peek button on s1 only if there's something to show.
+function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
+
+function endRun(){
+  const btn=$('end-run');
+  if(_endArmed){_endArmed=false;clearTimeout(_endArmedT);if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}if(S.on)endGame(S.hull>0);return}
+  _endArmed=true;if(btn){btn.classList.add('arm');btn.textContent='TAP TO CONFIRM'}
+  _endArmedT=setTimeout(()=>{_endArmed=false;if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}},2500);
+}
 // QA hook (only active with ?qa=1) — force-opens a mini-game with a synthetic drop point so the
 // headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
 function qaOpen(kind){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
   const type=DP_TYPES.find(d=>d.k===kind);if(!type)return false;
-  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);scene.add(dp);dropPoints.push(dp);
+  const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,mode:GAME_MODE};
 })();
 
