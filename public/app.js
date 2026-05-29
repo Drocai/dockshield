@@ -17,6 +17,9 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Duct the Rubber Ducky — the uncatchable legendary. Persisted lifetime stats only; he never
+// enters fishCatalog or the trophy case (canon: nobody has ever landed him).
+let ductStats={sightings:0,attempts:0,nearCatches:0};
 // Active buffs (consumable items from the tackle shop). Persists across runs until consumed.
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // === GEAR PROGRESSION ===
@@ -64,12 +67,13 @@ function loadSave(){
     bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
+    if(d.duct)Object.assign(ductStats,d.duct);
   }catch(e){}
 }
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats}))}catch(e){}
 }
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
@@ -623,14 +627,18 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkMist();mkPOIs();mkShops();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
   document.addEventListener('keydown',e=>{
     keys[e.code]=true;
     if(e.code==='Space'&&S.on&&!miniActive){e.preventDefault();fireSonar()}
-    if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
+    if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();
+      // F engages Duct if he's in range + you're stopped; otherwise it casts a normal line.
+      if(DUCT.active&&!DUCT.engaged&&bMesh.position.distanceTo(DUCT.mesh.position)<14&&Math.abs(spd)<0.3)openDuctChase();
+      else castLine();
+    }
     if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
@@ -975,6 +983,57 @@ function mkCryptid(){
   g.visible=false;scene.add(g);scene._cryptid=g;
 }
 
+// === DUCT THE RUBBER DUCKY ===
+// Module state. Built once (mkDuct), shown/hidden by the spawn cycle. Never collides; the only
+// interaction is the F-engage chase, which always ends in escape.
+let DUCT={mesh:null,active:false,x:0,z:0,vx:0,vz:0,t0:0,life:0,lastQuack:0,wing:null,engaged:false};
+function mkDuct(){
+  const g=new THREE.Group();
+  // Body — fat yellow sphere, slightly squashed.
+  const body=new THREE.Mesh(new THREE.SphereGeometry(0.9,16,12),new THREE.MeshStandardMaterial({color:0xffd23f,roughness:0.45,metalness:0.05,emissive:0x3a2c00,emissiveIntensity:0.25}));body.scale.set(1,0.85,1.1);body.position.y=0.55;g.add(body);
+  // Head
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.55,14,10),new THREE.MeshStandardMaterial({color:0xffd23f,roughness:0.45,emissive:0x3a2c00,emissiveIntensity:0.25}));head.position.set(0,1.35,0.45);g.add(head);
+  // Beak
+  const beak=new THREE.Mesh(new THREE.ConeGeometry(0.22,0.5,8),new THREE.MeshStandardMaterial({color:0xff7a18,roughness:0.5}));beak.rotation.x=Math.PI/2;beak.position.set(0,1.3,1.05);g.add(beak);
+  // Eyes
+  [[-0.22,1.5,0.85],[0.22,1.5,0.85]].forEach(p=>{const e=new THREE.Mesh(new THREE.SphereGeometry(0.07,8,8),new THREE.MeshBasicMaterial({color:0x111111}));e.position.set(...p);g.add(e)});
+  // Duct-tape stripe across the body (his namesake).
+  const tape=new THREE.Mesh(new THREE.CylinderGeometry(0.92,0.92,0.32,16,1,true),new THREE.MeshStandardMaterial({color:0x8d9499,roughness:0.85,metalness:0.2,side:THREE.DoubleSide}));tape.position.y=0.55;tape.scale.set(1,1,1.1);g.add(tape);
+  // Wings (hidden until the 'fly' escape) — flat triangles.
+  const wing=new THREE.Group();
+  [[-1,1],[1,1]].forEach(([s])=>{const w=new THREE.Mesh(new THREE.ConeGeometry(0.4,0.9,4),new THREE.MeshStandardMaterial({color:0xffe27a,roughness:0.5}));w.rotation.z=s*Math.PI/2.2;w.position.set(s*0.95,0.7,0);wing.add(w)});
+  wing.visible=false;g.add(wing);DUCT.wing=wing;
+  // Soft golden glow so a sighting reads from a distance.
+  const glow=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffe27a,blending:THREE.AdditiveBlending,transparent:true,opacity:0.5,depthWrite:false}));glow.scale.set(5,5,5);glow.position.y=0.8;g.add(glow);DUCT.glow=glow;
+  g.visible=false;scene.add(g);DUCT.mesh=g;
+}
+function spawnDuct(){
+  if(!DUCT.mesh||DUCT.active||GAME_MODE!=='game')return;
+  const a=Math.random()*Math.PI*2,r=45+Math.random()*75;
+  DUCT.x=Math.cos(a)*r;DUCT.z=Math.sin(a)*r;DUCT.vx=(Math.random()-0.5)*0.05;DUCT.vz=(Math.random()-0.5)*0.05;
+  DUCT.t0=Date.now()*0.001;DUCT.life=35+Math.random()*20;DUCT.active=true;DUCT.engaged=false;DUCT.wing.visible=false;
+  DUCT.mesh.position.set(DUCT.x,0,DUCT.z);DUCT.mesh.visible=true;
+  ductStats.sightings++;persist();onUnlock('duct_sighting');
+  radio('…is that a rubber duck? Tape on its back and everything. Get over there.','fly');
+  sfx('quack');
+}
+function despawnDuct(){if(DUCT.mesh)DUCT.mesh.visible=false;DUCT.active=false;DUCT.engaged=false;const p=$('duct-prompt');if(p)p.style.display='none'}
+function maybeSpawnDuct(){if(S.on&&GAME_MODE==='game'&&!DUCT.active&&!miniActive&&Math.random()<0.00018)spawnDuct()}
+function tickDuct(t){
+  if(!DUCT.active||DUCT.engaged)return;
+  // Lifetime expiry — he slips away on his own if you never engage.
+  if(t-DUCT.t0>DUCT.life){despawnDuct();return}
+  // Lazy wander + bob; turn occasionally.
+  if(Math.random()<0.01){DUCT.vx=(Math.random()-0.5)*0.06;DUCT.vz=(Math.random()-0.5)*0.06}
+  DUCT.x+=DUCT.vx;DUCT.z+=DUCT.vz;
+  const m=DUCT.mesh;m.position.set(DUCT.x,Math.sin(t*2.5)*0.12,DUCT.z);m.rotation.y=Math.atan2(DUCT.vx,DUCT.vz)+Math.sin(t)*0.2;
+  if(DUCT.glow)DUCT.glow.material.opacity=0.4+Math.sin(t*3)*0.15;
+  // Periodic quack if on-screen-ish (in front of the camera).
+  if(t-DUCT.lastQuack>5.5){const toD=new THREE.Vector3(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=new THREE.Vector3();cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
+  // Proximity prompt.
+  const p=$('duct-prompt');if(p){const d=bMesh.position.distanceTo(m.position);if(d<14&&Math.abs(spd)<0.3&&!miniActive){p.style.display='block';p.innerHTML='🦆 <b>DUCT IN SIGHT</b> — press <b>F</b> to make your attempt'}else p.style.display='none'}
+}
+
 function mkEvidence(){
   // One evidence prop somewhere in the shallows zone — a small glowing crate with a marker beam.
   const g=new THREE.Group();
@@ -1287,7 +1346,7 @@ function resolveCast(spot){
   const fish=rollFish(spot);
   // Bite splash at the bow where the line went out.
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);const bp=bMesh.position.clone().add(fwd);bp.y=0.2;
-  splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);
+  splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);wet.add(fish.fight>=2?10:6);
   sfx('cast');
   // No-fight species land immediately; anything with a fight goes through the tension minigame.
   if(!fish.fight){landFish(fish,spot)}
@@ -1361,6 +1420,87 @@ function openFight(fish,spot){
   radio(fish.gator?'Gator! Hold the line — easy, easy.':'Fish on. Work it in.','self');
 }
 let _fightCleanup=null;
+
+// === DUCT CHASE (uncatchable) ===
+// Mirrors the fishing fight UI but is rigged to escape. One of five archetypes is rolled per
+// attempt; each triggers at a different Landed threshold with its own animation + taunt. He can
+// never be landed — the bar visibly approaches 100% then he's gone.
+const DUCT_ESCAPES=[
+  {k:'slip', at:0.90, line:'He SLIPPED the hook at the last second. Quaaack.'},
+  {k:'dive', at:0.65, line:'Dove straight down. Surfaced way over there. Unreal.'},
+  {k:'fly',  at:0.82, line:'…it grew WINGS. It flew off. We are not okay.'},
+  {k:'flop', at:0.75, line:'Rubber-banded sideways and spat the bobber back at you.'},
+  {k:'bounce',at:0.70,line:'The bobber bounced YOU. Tape duck wins again.'}
+];
+function openDuctChase(){
+  if(!DUCT.active)return;
+  DUCT.engaged=true;const esc=DUCT_ESCAPES[Math.floor(Math.random()*DUCT_ESCAPES.length)];
+  ductStats.attempts++;persist();if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
+  const p=$('duct-prompt');if(p)p.style.display='none';
+  miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
+  const card=$('mini-card'),el=$('mini');if(!card||!el){endDuct(esc,0);return}
+  const bandHalf=0.13,bandCenter=0.55,climb=0.015,fall=0.014;
+  let tension=0.3,progress=0,reeling=false,over=false,peaked=0;
+  card.innerHTML=`
+    <div class="m-kicker" style="color:#ffd23f">??? · IMPOSSIBLE CATCH</div>
+    <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">🦆<span>Duct</span></div>
+    <div class="m-sub">Tape on his back, smug look on his face. Reel him in — if you even can. <b style="color:#fbcf3b">Nobody ever has.</b></div>
+    <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
+      <div id="d-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
+      <div id="d-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
+    </div>
+    <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
+    <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="d-prog" style="height:100%;width:0%;background:#ffd23f;transition:width 0.05s"></div></div>
+    <button class="btn bp" id="d-reel" style="background:linear-gradient(135deg,#ffd23f,#b8860b);color:#1a1a2e;user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bx" id="d-cut">Give Up</button>`;
+  const bandEl=$('d-band'),tenEl=$('d-ten'),progEl=$('d-prog');
+  bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%';
+  const reelBtn=$('d-reel');const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.2)':'none'};
+  reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
+  reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
+  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
+  $('d-cut').onclick=()=>endDuct({k:'giveup',line:'Let him go. He was never gonna let YOU win.'},progress);
+  const tick=setInterval(()=>{
+    if(over)return;
+    tension+=reeling?climb:-fall;tension=Math.max(0,Math.min(1,tension));
+    const inBand=Math.abs(tension-bandCenter)<=bandHalf;
+    progress+=inBand?1.2:-0.7;progress=Math.max(0,Math.min(99.5,progress));  // capped below 100 — never landed
+    peaked=Math.max(peaked,progress);
+    if(inBand&&Math.random()<0.25)sfx('click');
+    tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    // Rig the escape: once the bar reaches this archetype's threshold, he bolts.
+    if(progress>=esc.at*100){over=true;sfx('quack');runDuctEscapeAnim(esc.k);endDuct(esc,peaked)}
+  },50);
+  const stop=()=>{over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
+  function endDuct(e,peakPct){
+    stop();
+    if(peakPct>=60){ductStats.nearCatches++;onUnlock('duct_near_miss')}
+    bait+=15;persist();
+    miniActive=false;_catchOpen=false;const e2=$('mini');if(e2)e2.style.display='none';const c2=$('mini-card');if(c2)c2.innerHTML='';
+    if(!(S.played&&!$('s5').classList.contains('off')))S.on=true;
+    radio(e.line,'reel');
+    // Duct dives/flies off and despawns shortly after the world resumes.
+    setTimeout(despawnDuct,900);
+  }
+  _fightCleanup=()=>{stop()};
+  el.style.display='flex';
+  radio('Duck on the line. This is it. THIS is the one.','self');
+}
+// Brief world animation on the duck mesh matching the escape archetype, then he's gone.
+function runDuctEscapeAnim(kind){
+  const m=DUCT.mesh;if(!m)return;
+  const wp=new THREE.Vector3(DUCT.x,0,DUCT.z);splash(wp,18,0xffe27a,1.3);if(typeof wet!=='undefined'&&wet)wet.add(20);
+  if(kind==='fly'){DUCT.wing.visible=true}
+  let s=0;const a=setInterval(()=>{s+=0.05;if(s>=1||!m){clearInterval(a);return}
+    if(kind==='dive'){m.position.y=-s*3;DUCT.x+=1.2;DUCT.z+=0.6}
+    else if(kind==='fly'){m.position.y=s*9;m.rotation.y+=0.3}
+    else if(kind==='slip'){m.position.y=-s*2;m.rotation.y+=0.4}
+    else if(kind==='flop'){m.position.x=DUCT.x+Math.sin(s*20)*2}
+    else{m.position.y=Math.sin(s*Math.PI)*2;DUCT.x-=1.0}
+  },30);
+}
+
 function showCatchDialog(fish,spot){
   // Catch dialog reuses the #mini overlay. _catchOpen distinguishes it from a real mini-game so the
   // global Escape handler routes to closeCatch (not mini.finish, which would corrupt drop points).
@@ -1403,13 +1543,34 @@ function sfx(type){
   const ctx=_audioCtx,now=ctx.currentTime;
   // rate-limit per type so rapid triggers (e.g. clicker) don't machine-gun
   if(_sndGate[type]&&now<_sndGate[type])return;_sndGate[type]=now+0.04;
-  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth']}[type]||[300,360,.08,'sine'];
+  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth'],quack:[620,300,.16,'square'],dig:[160,90,.07,'square'],croak:[110,70,.16,'sawtooth'],swat:[400,120,.06,'square'],net:[300,500,.1,'sine'],splash_big:[200,60,.22,'sine']}[type]||[300,360,.08,'sine'];
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
   o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
   g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(0.06,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
 function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(!muted)sfx('click')}
+
+// === WET-SCREEN DROPLET OVERLAY ===
+// Full-screen canvas2D layer above the WebGL scene, below the HUD. Droplets bead, drag down with a
+// streak, and fade. Disabled on Low graphics. Triggered from splash/surge/turn/rain/Duct events.
+const wet={cv:null,ctx:null,drops:[],enabled:true,
+  init(){this.cv=$('wet-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
+  resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
+  add(n){if(!this.enabled||!this.cv)return;for(let i=0;i<n&&this.drops.length<90;i++){const r=2+Math.random()*6;this.drops.push({x:Math.random()*this.cv.width,y:Math.random()*this.cv.height*0.8,r,life:1,vy:0.2+Math.random()*0.6,streak:Math.random()<0.4?r*(4+Math.random()*8):0})}},
+  tick(){if(!this.ctx||!this.cv)return;const c=this.ctx;c.clearRect(0,0,this.cv.width,this.cv.height);
+    for(let i=this.drops.length-1;i>=0;i--){const d=this.drops[i];d.life-=0.006;d.y+=d.vy;d.vy+=0.03;if(d.streak)d.streak*=0.99;
+      if(d.life<=0){this.drops.splice(i,1);continue}
+      const a=d.life*0.5;
+      // streak
+      if(d.streak){c.fillStyle='rgba(180,210,230,'+(a*0.25)+')';c.fillRect(d.x-d.r*0.25,d.y-d.streak,d.r*0.5,d.streak)}
+      // dome
+      c.beginPath();c.arc(d.x,d.y,d.r,0,Math.PI*2);c.fillStyle='rgba(150,190,215,'+(a*0.3)+')';c.fill();
+      // highlight
+      c.beginPath();c.arc(d.x-d.r*0.3,d.y-d.r*0.3,d.r*0.35,0,Math.PI*2);c.fillStyle='rgba(255,255,255,'+(a*0.6)+')';c.fill();
+    }
+  }
+};
 // === ACHIEVEMENT TRIGGER ===
 // Centralized unlock hook. Real definitions + toast UI land in the achievements commit; this stub
 // keeps callsites stable. ACH map declared near here so every check route through this fn.
@@ -1424,6 +1585,9 @@ const ACH={
   codex_half:{n:'Field Naturalist',d:'Logged 6 species in the Fish Codex.'},
   codex_full:{n:'Castor Compendium',d:'Logged all 12 species.'},
   bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'},
+  duct_sighting:{n:'Tape on the Water',d:'Spotted Duct the rubber ducky.'},
+  duct_near_miss:{n:'So Close',d:'Got Duct past 60% before he escaped.'},
+  duct_ten_attempts:{n:'Obsessed',d:'Tried to land Duct 10 times. You will not.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
   gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
@@ -1527,7 +1691,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
-    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel')}
+    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel');wet.add(14);sfx('splash_big')}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
     const dd=bMesh.position.distanceTo(dockPos);
     // Score formula: business mode rewards staying near the dock corridor; game mode rewards
@@ -1579,7 +1743,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickFishJumps(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickFishJumps(t);maybeSpawnDuct();tickDuct(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -1599,6 +1763,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // One patrol boat drifts in the distance during idle so something is alive
     if(aiB[0]){const p=aiB[0];p.position.x=Math.sin(t*0.3)*70;p.position.z=-90+Math.cos(t*0.2)*20;p.position.y=0.3+Math.sin(t*1.5)*0.2;p.rotation.y=t*0.3+Math.PI*0.5}
   }
+  // Rain drizzle on the lens + per-frame wet overlay redraw.
+  if(wet.enabled){if(S.on&&(S.wx.c==='Rain'||S.wx.c==='Drizzle')&&Math.random()<0.4)wet.add(1);wet.tick()}
   ren.render(scene,cam)}
 
 // Tackle box → stump-damage resistance (0..~0.41) so a better box means a tougher run, while hull
@@ -1635,7 +1801,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   const mm=$('minimap');if(mm)mm.style.display=GAME_MODE==='game'?'block':'none';
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
-  photoMode=false;_photoResume=false;
+  photoMode=false;_photoResume=false;despawnDuct();
   $('nfo').textContent=GAME_MODE==='game'?'WASD=Drive · Space=Sonar · F=Cast · E=Shop · P=Photo · drive to a beacon for a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
   // Free-roam weather drifts: refetch + re-apply visuals every 45s so a long session sees the
   // sky/wind/rain actually change instead of being frozen at the launch reading.
@@ -1652,7 +1818,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -1847,7 +2013,7 @@ async function launchGame(){
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
-initEngine();refreshTrophyPeek();applyGfx();
+initEngine();wet.init();refreshTrophyPeek();applyGfx();
 {const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
@@ -1961,6 +2127,8 @@ function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}cat
 function applyGfx(){
   if(!scene)return;
   const lowMode=gfxQuality==='low',highMode=gfxQuality==='high';
+  // Wet-screen overlay is disabled on Low.
+  wet.enabled=!lowMode;if(lowMode&&wet.ctx&&wet.cv){wet.drops.length=0;wet.ctx.clearRect(0,0,wet.cv.width,wet.cv.height)}
   // Glow sprites are the biggest cost on weak GPUs — hide on Low, dim on Medium, full on High.
   const setGlow=(s,baseOpacity,scaleHi)=>{if(!s)return;s.visible=!lowMode;s.material.opacity=baseOpacity*(lowMode?0:highMode?1.3:1);if(scaleHi)s.scale.setScalar(scaleHi*(highMode?1.25:1))};
   setGlow(scene._sunGlow,0.6,80);
@@ -1984,6 +2152,12 @@ function openCodex(){
     <div class="m-title">${caught} / ${total} species landed.</div>
     <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
     ${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}
+    <div style="margin:12px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#ffd23f;text-transform:uppercase">??? · The Impossible</div>
+    <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
+      <div style="font-size:26px;filter:grayscale(0.3)">🦆</div>
+      <div><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
+      <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div></div>
+    </div>
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   el.style.display='flex';
 }
@@ -2032,6 +2206,9 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,togglePhoto,mode:GAME_MODE};
+// QA hook for Duct — spawns him near the boat for smoke tests. Must override DUCT.x/z AFTER
+// spawnDuct() (which randomizes them) so tickDuct keeps him in range.
+function qaSpawnDuct(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(DUCT.active)despawnDuct();spawnDuct();DUCT.x=bMesh.position.x+8;DUCT.z=bMesh.position.z;DUCT.vx=0;DUCT.vz=0;DUCT.mesh.position.set(DUCT.x,0,DUCT.z);return true}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,togglePhoto,duct:()=>openDuctChase(),mode:GAME_MODE};
 })();
 
