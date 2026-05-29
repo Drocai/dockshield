@@ -219,6 +219,13 @@ const EV=[
 ];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
+// Frees every geometry/material under an Object3D so removing it from the scene doesn't leak GPU
+// memory. Used wherever meshes are rebuilt/removed mid-run (boats, drop points, rain).
+function disposeTree(obj){if(!obj)return;obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose())}})}
+// Hoisted scratch vectors — reused each frame so loop()/tickDuct() don't allocate per frame.
+const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.Vector3(),_vDuct=new THREE.Vector3(),_vFwd=new THREE.Vector3();
+// Frame counter — lets the loop stagger expensive work (e.g. water normals) across frames.
+let _frame=0;
 const keys={};
 let tch={lY:0,rX:0};
 let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
@@ -235,6 +242,7 @@ const mini={
   finish(dp,score,radioLine,who){
     // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
+    if(_fightCleanup){_fightCleanup();_fightCleanup=null}
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     sfx(score>0?'win':'click');
@@ -646,7 +654,7 @@ const mini={
   // 6x4 grid of dirt clods on a 320x220 canvas. Click a clod → it crumbles, ~50% chance of a worm,
   // ~15% chance of a cricket bonus, rest empty. 22s timer. Clods regrow on a 1.8s cycle.
   openForageWorm(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=320,H=220,cols=6,rows=4,cell=44,off=18;
     card.innerHTML=`<div class="m-kicker" style="color:#a47a52">Worm Dig · ${camp.userData.camp.n}</div>
@@ -670,7 +678,7 @@ const mini={
   // === FORAGE: BUG CATCH (crickets) ===
   // Bugs scuttle across the card. Tap to swat. 22s.
   openForageBug(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#8db347">Bug Catch · ${camp.userData.camp.n}</div>
@@ -695,7 +703,7 @@ const mini={
   // === FORAGE: FROG GRAB ===
   // Frogs hop, pause ~700ms, hop again. Tap during the still window.
   openForageFrog(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#5fa75f">Frog Grab · ${camp.userData.camp.n}</div>
@@ -719,7 +727,7 @@ const mini={
   // Drag the net (click + drag) across moving minnows. Anything inside the swept rectangle when
   // released counts. 22s timer; 3-second cooldown between sweeps.
   openForageMinnow(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#7ec8e3">Minnow Net · ${camp.userData.camp.n}</div>
@@ -746,6 +754,7 @@ const mini={
   // Forage finish: pantry-checked achievements, score bonus, clear overlay, resume run.
   finishForage(msg,bonus){
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
+    if(_fightCleanup){_fightCleanup();_fightCleanup=null}
     if(bonus)S.score+=bonus;
     radio(msg,'lilly');sfx('win');
     miniActive=false;S.on=true;_catchOpen=false;
@@ -1105,14 +1114,14 @@ function tickDropPoints(t){
 let _dpRespawnT=null;
 function clearDropPoint(dp){
   // Remove the resolved drop point and spawn a replacement at a new random spot.
-  scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
+  disposeTree(dp);scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
   _dpRespawnT=setTimeout(()=>{_dpRespawnT=null;if(S.on&&GAME_MODE==='game'&&dropPoints.length<3)spawnDropPoint()},2000);
 }
 // Hard reset for the drop-point system — called by startGame() so a new run doesn't inherit
 // markers from the previous run.
 function resetDropPoints(){
   if(_dpRespawnT){clearTimeout(_dpRespawnT);_dpRespawnT=null}
-  dropPoints.slice().forEach(dp=>{scene.remove(dp)});dropPoints.length=0;
+  dropPoints.slice().forEach(dp=>{disposeTree(dp);scene.remove(dp)});dropPoints.length=0;
   if(GAME_MODE!=='game')return;
   // Home dock from the address field — always a 'rescue' drop point at the deterministic spot.
   const home=S.homeAddr?addrToPos(S.homeAddr):null;
@@ -1243,7 +1252,7 @@ function tickDuct(t){
   const m=DUCT.mesh;m.position.set(DUCT.x,Math.sin(t*2.5)*0.12,DUCT.z);m.rotation.y=Math.atan2(DUCT.vx,DUCT.vz)+Math.sin(t)*0.2;
   if(DUCT.glow)DUCT.glow.material.opacity=0.4+Math.sin(t*3)*0.15;
   // Periodic quack if on-screen-ish (in front of the camera).
-  if(t-DUCT.lastQuack>5.5){const toD=new THREE.Vector3(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=new THREE.Vector3();cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
+  if(t-DUCT.lastQuack>5.5){const toD=_vDuct.set(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=_vFwd;cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
   // Proximity prompt.
   const p=$('duct-prompt');if(p){const d=bMesh.position.distanceTo(m.position);if(d<14&&Math.abs(spd)<0.3&&!miniActive){p.style.display='block';p.innerHTML='🦆 <b>DUCT IN SIGHT</b> — press <b>F</b> to make your attempt'}else p.style.display='none'}
 }
@@ -1308,7 +1317,7 @@ function makeHullShape(p){
   s.lineTo(-p.halfBeam,p.sternZ);
   return s;
 }
-function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THREE.Group();
+function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT[cls];bMesh=new THREE.Group();
   const prof=HULL_PROFILE[cls]||HULL_PROFILE.regular;
   // Extruded hull — beveled top edge reads as a gunwale. Rotated so the extrude depth becomes height.
   const hullGeo=new THREE.ExtrudeGeometry(makeHullShape(prof),{depth:prof.depth,bevelEnabled:true,bevelThickness:0.12,bevelSize:0.12,bevelSegments:2});
@@ -1326,7 +1335,7 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   // Windshield
   const ws=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.6,0.08),new THREE.MeshStandardMaterial({color:0x88ddff,transparent:true,opacity:0.45,metalness:0.9,roughness:0.1}));ws.position.set(0,1.8,0.8);ws.rotation.x=-0.25;bMesh.add(ws);
   // Console
-  const console=new THREE.Mesh(new THREE.BoxGeometry(1,0.4,0.5),new THREE.MeshStandardMaterial({color:0x1a1a2e,metalness:0.6}));console.position.set(0,1.6,0.3);bMesh.add(console);
+  const dashConsole=new THREE.Mesh(new THREE.BoxGeometry(1,0.4,0.5),new THREE.MeshStandardMaterial({color:0x1a1a2e,metalness:0.6}));dashConsole.position.set(0,1.6,0.3);bMesh.add(dashConsole);
   // Motor
   const motor=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.2,0.9),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.7,roughness:0.3}));motor.position.set(0,0.2,-2.8);bMesh.add(motor);
   const motorCowl=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.3,0.5),new THREE.MeshStandardMaterial({color:0x222230}));motorCowl.position.set(0,0.9,-2.8);bMesh.add(motorCowl);
@@ -1514,6 +1523,9 @@ function applyWeatherVisuals(){
     rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
     const rainMat=new THREE.PointsMaterial({color:0x8899bb,size:0.15,transparent:true,opacity:0.5});
     const rain=new THREE.Points(rainGeo,rainMat);scene.add(rain);rainDrops.push(rain);
+  }else if(w.c!=='Rain'&&w.c!=='Drizzle'&&rainDrops.length){
+    // Weather cleared — tear down the rain particles instead of letting them fall forever.
+    rainDrops.forEach(r=>{disposeTree(r);scene.remove(r)});rainDrops.length=0;
   }
 }
 
@@ -1770,9 +1782,12 @@ function showCatchDialog(fish,spot){
 }
 function closeCatch(msg){
   if(_fightCleanup){_fightCleanup();_fightCleanup=null}  // kill any live fight interval/listeners
+  // Forage games run through the _catchOpen path, so Escape lands here — drain their timers too.
+  mini._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
   const el=$('mini'),card=$('mini-card');
   if(card)card.innerHTML='';if(el)el.style.display='none';
-  miniActive=false;_catchOpen=false;
+  // Reset _catchBusy so a later _catchOpen overlay (e.g. forage after a fight) can be Escaped too.
+  miniActive=false;_catchOpen=false;_catchBusy=false;
   // Only resume the world if the run is actually still live (guard against a dialog that somehow
   // outlived endGame).
   if(S.played&&!$('s5').classList.contains('off')){/* run already ended — stay on result screen */}
@@ -1881,10 +1896,12 @@ function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
 function tickAI(){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
 
 // === RENDER ===
-function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
+function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
   const wA=0.25+S.wx.ws*0.04;const wp=waterGeo.attributes.position;
   for(let i=0;i<wp.count;i++){const x=wp.getX(i),y=wp.getY(i);wp.setZ(i,waterOZ[i]+Math.sin(x*0.05+t)*wA+Math.cos(y*0.07+t*0.8)*(wA*0.6))}
-  wp.needsUpdate=true;waterGeo.computeVertexNormals();
+  // computeVertexNormals on a 96x96 plane is the loop's biggest CPU cost — stagger it (and skip
+  // entirely on low gfx, where flat normals are fine) without any visible difference.
+  wp.needsUpdate=true;if(gfxQuality!=='low'&&_frame%2===0)waterGeo.computeVertexNormals();
   // Pin bob
   if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
@@ -1941,7 +1958,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     spd*=bt.dr;
     if(!frozen&&Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
-    const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
+    const dir=_vDir.set(0,0,-1).applyAxisAngle(_yAxis,bMesh.rotation.y);prev.copy(bMesh.position);
     bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
@@ -2002,7 +2019,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
-    const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+    const bh=_vCam.set(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(_yAxis,bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
   }else if(photoMode){
     // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
     photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
@@ -2164,7 +2181,7 @@ function paintDiscount(){
 }
 
 // === SERVICES ===
-async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
+async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:a})});if(r.ok){const d=await r.json();if(d.lat&&d.lng)return{lat:d.lat,lng:d.lng}}return null}catch(e){return null}}
 async function saveData(w){
   if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;
@@ -2212,7 +2229,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
