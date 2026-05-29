@@ -55,6 +55,8 @@ const eqRod=()=>GEAR.rod[gear.rod],eqReel=()=>GEAR.reel[gear.reel],eqLine=()=>GE
 // Graphics quality preference (separate small key so a settings wipe doesn't reset gfx).
 let gfxQuality='medium';
 try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
+// Photo mode — free orbit camera with HUD hidden. Pauses the run while active.
+let photoMode=false,photoCam={yaw:0,pitch:0.35,dist:22},_photoResume=false;
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
@@ -630,6 +632,7 @@ function initEngine(){
     if(e.code==='Space'&&S.on&&!miniActive){e.preventDefault();fireSonar()}
     if(e.code==='KeyF'&&S.on&&GAME_MODE==='game'){e.preventDefault();castLine()}
     if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
+    if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
     if(e.code==='Escape'&&miniActive){e.preventDefault();
@@ -1496,7 +1499,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
   // Minimap update
   if(S.on&&$('mm-canvas')){drawMinimap()}
   // Named fishing-spot indicator — fades in when the boat enters a spot's radius.
-  if(S.on&&GAME_MODE==='game'){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
+  if(S.on&&GAME_MODE==='game'&&!photoMode){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
+  updateMissionQueue();
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
     const c=scene._cryptid;c.visible=true;
@@ -1580,6 +1584,13 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
     const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+  }else if(photoMode){
+    // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
+    photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
+    photoCam.pitch=Math.max(-0.15,Math.min(1.35,photoCam.pitch+(keys.ArrowUp?0.02:0)+(keys.ArrowDown?-0.02:0)));
+    photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
+    const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
+    cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -1624,7 +1635,8 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   const mm=$('minimap');if(mm)mm.style.display=GAME_MODE==='game'?'block':'none';
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
-  $('nfo').textContent=GAME_MODE==='game'?'WASD/Arrows · Space=Sonar · F=Cast (when stopped) · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  photoMode=false;_photoResume=false;
+  $('nfo').textContent=GAME_MODE==='game'?'WASD=Drive · Space=Sonar · F=Cast · E=Shop · P=Photo · drive to a beacon for a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
   // Free-roam weather drifts: refetch + re-apply visuals every 45s so a long session sees the
   // sky/wind/rain actually change instead of being frozen at the launch reading.
   if(_wxTimer)clearInterval(_wxTimer);
@@ -1640,7 +1652,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';_nearShop=null;aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -1938,6 +1950,8 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
       W/A/S/D · Arrows — Drive<br>
       Space — Sonar Ping<br>
       F — Cast (when stopped)<br>
+      E — Dock at a bait shop<br>
+      P — Photo mode (orbit cam)<br>
       Esc — Bail mini-game / close menus
     </div>
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
@@ -1982,6 +1996,33 @@ function endRun(){
   _endArmed=true;if(btn){btn.classList.add('arm');btn.textContent='TAP TO CONFIRM'}
   _endArmedT=setTimeout(()=>{_endArmed=false;if(btn){btn.classList.remove('arm');btn.textContent='END RUN'}},2500);
 }
+// Photo mode toggle (P). Pauses a live run, hides the gameplay HUD, shows the photo hint. Exiting
+// restores the HUD + resumes the run.
+function togglePhoto(){
+  if(GAME_MODE!=='game')return;
+  if(miniActive)return;  // don't enter from a menu/dialog
+  photoMode=!photoMode;
+  const hud=$('hud'),nfo=$('nfo'),mm=$('minimap'),er=$('end-run'),mq=$('mq'),ph=$('photo-hint'),sp=$('spot-tag'),wxb=$('wxb');
+  if(photoMode){
+    if(S.on){S.on=false;_photoResume=true}
+    [hud,nfo,mm,er,mq,sp,wxb].forEach(e=>{if(e)e.style.display='none'});
+    if(ph)ph.style.display='block';
+    photoCam={yaw:bMesh.rotation.y+Math.PI,pitch:0.35,dist:22};
+  }else{
+    if(ph)ph.style.display='none';
+    if(_photoResume){_photoResume=false;S.on=true;if(hud)hud.style.display='flex';if(nfo)nfo.style.display='block';if(mm)mm.style.display='block';if(er)er.style.display='block';if(wxb)wxb.style.display='block'}
+  }
+}
+// Mission-queue ticker — names the nearest active beacon + distance so the player always has a
+// next objective without opening a menu. Updated each frame from the loop.
+function updateMissionQueue(){
+  const mq=$('mq');if(!mq||!S.on||GAME_MODE!=='game'||photoMode){if(mq&&!photoMode&&mq.style.display!=='none'&&!S.on)mq.style.display='none';return}
+  let best=null,bd=Infinity;
+  for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<bd){bd=dist;best=d}}
+  if(best){const ty=best.userData.type;mq.style.display='block';mq.innerHTML=`<span style="color:#94a3b8">▸ NEXT</span> <b style="color:#${ty.col.toString(16).padStart(6,'0')}">${ty.n}</b> <span style="color:#94a3b8">· ${bd.toFixed(0)}m</span>`}
+  else{mq.style.display='block';mq.innerHTML='<span style="color:#94a3b8">▸ No active beacons — fish, explore, or end the run</span>'}
+}
+
 // QA hook (only active with ?qa=1) — force-opens a mini-game with a synthetic drop point so the
 // headless smoke + screenshot pass can exercise each overlay without driving to a random beacon.
 function qaOpen(kind){
@@ -1991,6 +2032,6 @@ function qaOpen(kind){
   const dp=mkDropPoint(type);dp.position.set(9999,0,9999);dp.visible=false;dp.userData.qa=true;scene.add(dp);dropPoints.push(dp);
   const fn=mini[type.open];if(typeof fn==='function'){fn(dp);return true}return false;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,togglePhoto,mode:GAME_MODE};
 })();
 
