@@ -946,7 +946,7 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 // When the boat is stopped (or near-stopped) in game mode, F (or the FISH touch button) casts.
 // 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
 // Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
-let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false;
+let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
 function cancelCast(){
   // Hard-stop any in-flight cast: clear the animation interval and dispose the ring mesh.
   if(_castAnim){clearInterval(_castAnim);_castAnim=null}
@@ -957,6 +957,9 @@ function castLine(){
   if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
   if(_castInFlight)return false;
+  // Don't start a cast right on top of a beacon — the proximity trigger would open the mission and
+  // cancel the cast anyway. Tell the player to back off the marker.
+  if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
   _castInFlight=true;
   const spot=fishingSpot(bMesh.position);
   radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');
@@ -976,7 +979,7 @@ function castLine(){
   },50);
 }
 function resolveCast(spot){
-  if(!S.on)return;  // run ended during the cast — drop it silently
+  if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
   const fish=rollFish(spot);
   runCatches.push(fish);
   if(fish.r==='legendary'||fish.r==='rare')fishCatalog.add(fish.n);
@@ -1165,7 +1168,11 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   // Drop points wipe + respawn so a new run doesn't inherit prior markers / pending timers.
   resetDropPoints();
   civs.forEach(c=>{c.userData.saved=false;c.visible=true});
-  if(evidence){evidence.userData.collected=false;evidence.visible=true}
+  if(evidence){evidence.userData.collected=false;evidence.visible=true;
+    // Re-roll the evidence position each run so it isn't the same fixed crate every time. Free-roam
+    // spreads it across the world; business keeps it in the original shallows corridor.
+    if(GAME_MODE==='game'){const a=Math.random()*Math.PI*2,r=45+Math.random()*65;evidence.position.set(Math.cos(a)*r,0,Math.sin(a)*r)}
+    else evidence.position.set((Math.random()-0.5)*30,0,-60-Math.random()*30)}
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
@@ -1178,6 +1185,10 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
   // Game-mode "End Run" button so the player can choose to end and see the recap.
   const er=$('end-run');if(er)er.style.display=GAME_MODE==='game'?'block':'none';
   $('nfo').textContent=GAME_MODE==='game'?'WASD/Arrows · Space=Sonar · F=Cast (when stopped) · Drive to a beacon to start a mission':'WASD / Arrows · Space = Sonar Ping · Follow the rescue markers';$('nfo').style.color='#475569';
+  // Free-roam weather drifts: refetch + re-apply visuals every 45s so a long session sees the
+  // sky/wind/rain actually change instead of being frozen at the launch reading.
+  if(_wxTimer)clearInterval(_wxTimer);
+  if(GAME_MODE==='game')_wxTimer=setInterval(()=>{if(S.on)fetchWx();else{clearInterval(_wxTimer);_wxTimer=null}},45000);
   if(GAME_MODE==='business')setPh(0);
   else{
     // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
@@ -1192,6 +1203,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog so it can't pop over the result screen.
   cancelCast();if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
+  if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
   // Clean wakes
   wakes.forEach(p=>{scene.remove(p);p.geometry.dispose();p.material.dispose()});wakes=[];
   const el=(Date.now()-S.t0)/1000;if(won)S.score+=Math.max(0,Math.round(500-el*3));if(won&&Math.abs(spd)<0.3)S.score+=200;
