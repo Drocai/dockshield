@@ -72,6 +72,17 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 11 — Boatworks tutorial + replay tutorials + minimap zoom + shop labels + trophy export + ach progress bars + music + audio sub-sliders
+- **Boatworks first-visit tutorial**: color-coded labels for the 4 slots (Engine/Lights/Armor/Electronics), BEST VALUE tip, dismissible. Added to the `TUTORIALS` table.
+- **Replay Tutorials button** in Settings → Controls — `DS.replayTutorials()` clears every seen flag except `intro` (so a reload won't re-fire the cinematic).
+- **Minimap zoom toggle** (M key): switches `_mmZoom` between 1.0 and 2.2, projection follows the boat when zoomed in.
+- **Per-shop overhead labels**: `CanvasTexture` name sprite per shop; fades in within 40u (full) → 80u (half), always partially visible at night within 100u.
+- **Trophy export** (`DS.exportTrophy()`): paints the player's biggest catch onto a 1200×630 open-graph PNG (emoji, name in rarity color, score, date, tagline) and triggers a browser download. "💾 Save" button on the Codex trophy card.
+- **Achievement progress bars** for tiered entries — each ACH entry can carry a `p()` function returning `{cur,max}`; locked rows render a thin orange→gold gradient bar + "X / Y" readout. Wired for codex_half, codex_full, bait_baron, duct_ten_attempts, worm_farmer, pantry_stocked, duct_25_attempts, duct_three_near.
+- **Music** (`music` object): 3-voice triangle pad (A minor) through a lowpass filter modulated by a 0.07Hz LFO. Ducks under fight overlays, muffles to 550Hz in foul weather, brightens to 1100Hz on Clear. Mute + master + bus volume all gate it.
+- **Audio sub-sliders**: SFX / Engine / Ambient / Music separate from Master in the Audio tab. Each bus consumer reads `master*bus`. Persisted as plain numbers; legacy saves default to 1.0 so they sound identical to before.
+- Smoke now **31/31 PASS, 0 fatal**.
+
 ### Round 10 — pantry tabs + trophy + Duct chart + tutorials + grouped achievements + hero idle + intro
 - **Bait pantry tabs**: ALL / FORAGED / CRAFTED. Crafted-only filter even hides the Bare hook button.
 - **Persistent biggest catch** (`bestFish` in save): updated on every land, surfaced as a colored "TROPHY · BIGGEST EVER" card at the top of the Codex with the fish's rarity color + score + date.
