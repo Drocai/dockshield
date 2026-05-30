@@ -29,6 +29,9 @@ let bestFish=null;
 // Per-species log of first-landing context: {n:'Bluegill': {date, spot, score}}. Lets the Codex
 // surface a tiny "first caught" detail line per species. Append-only — only set on first land.
 let speciesLog={};
+// Daily streak — increments on first startGame() of a new calendar day if yesterday was played,
+// resets to 1 on a gap. {count,lastPlayed:'YYYY-MM-DD',max}. UTC date drift avoided via localDayKey.
+let streak={count:0,lastPlayed:'',max:0};
 // Per-day Duct sighting/attempt log (lore: "the pier keeps notes"). Keyed by YYYY-MM-DD,
 // each entry is {s,a,n} for sightings/attempts/near-catches. logDuct() bumps + trims to ~30 days.
 let ductLog={};
@@ -185,6 +188,7 @@ function loadSave(){
     if(d.bestFish&&typeof d.bestFish==='object')bestFish=d.bestFish;
     if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
     if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
+    if(d.streak&&typeof d.streak==='object')Object.assign(streak,d.streak);
     if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
@@ -203,7 +207,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,tutorialSeen}))}catch(e){}
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
@@ -283,9 +287,12 @@ let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score
 // Discount tiers earned by run outcome
 const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
+// One-shot mobile detect. Hoisted here so every consumer (show(), initEngine, audio unlock) reads
+// the same regex — iPhone/iPad were missing from the older /Mobi|Android/i checks.
+const _isMob=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id));
   // Hide touch controls when any card is showing
-  const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
+  const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&_isMob)?'block':'none'}
 
 let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
@@ -321,6 +328,9 @@ let _frame=0;
 let _mmZoom=1.0;
 // Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
 let _isNight=false;
+// Local-day key for the streak counter — UTC (via toISOString) drifts in PST/JST late hours, so use
+// the player's actual calendar day. Used only for streak math; other date-stamps stay UTC for now.
+function localDayKey(offsetDays){const d=new Date();if(offsetDays)d.setDate(d.getDate()+offsetDays);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 // Offset (seconds) added to the day/night cycle clock — QA hook uses it to force a time of day.
 let _dayOffset=0;
 // Sun-arc edge-trigger state for golden-hour flash events (sunrise + sunset amber tint).
@@ -1273,7 +1283,7 @@ function initEngine(){
   });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
-  const isMob=/Mobi|Android/i.test(navigator.userAgent);
+  const isMob=_isMob;
   if(isMob)$('touch').style.display='block';
   let lId=null,rId=null,lCy=0,rCx=0;
   const tz=$('touch');if(tz){
@@ -1476,20 +1486,31 @@ function mkWorld(){
 }
 
 function mkObstacles(){
-  // Stumps — sparse near start, dense in hazard zone, varied appearance
+  // Shared stump geometry+material across all 70 stumps — was per-stump new() per critics' GPU
+  // recommendation. Variance now via mesh.scale.set() + rotation rather than per-geometry params.
+  // (Skipped full InstancedMesh — r128's instanceColor needs shader-chunk patch + collision code
+  //  iterates stumps[] for hits/sonar. Shared geo/mat hits ~90% of the win at no risk.)
+  const stumpGeo=new THREE.CylinderGeometry(0.5,0.7,1.5,6);
+  const stumpMat=new THREE.MeshStandardMaterial({color:0x4a2e10,roughness:0.95});
+  scene._sharedStumpGeo=stumpGeo;  // exposed for the smoke assertion
+  // Stumps — sparse near start, dense in hazard zone, varied appearance.
   for(let i=0;i<70;i++){
     const sx=(Math.random()-0.5)*220;let sz=-Math.random()*160-10;
     if(Math.abs(sz-dockPos.z)<15||Math.abs(sz)<12)continue;
     if(sz>-40&&Math.random()>0.25)continue;
-    const h=0.8+Math.random()*2,r1=0.3+Math.random()*0.5,r2=r1+0.1+Math.random()*0.3;
-    const s=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,6),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.08,0.4+Math.random()*0.2,0.08+Math.random()*0.06),roughness:0.95}));
+    const s=new THREE.Mesh(stumpGeo,stumpMat);
+    const rx=0.6+Math.random()*1.0,ry=0.6+Math.random()*1.4,rz=0.6+Math.random()*1.0;
+    s.scale.set(rx,ry,rz);
     s.position.set(sx,-0.3,sz);s.rotation.x=(Math.random()-0.5)*0.3;s.rotation.z=(Math.random()-0.5)*0.3;
     s.castShadow=true;scene.add(s);stumps.push(s);
   }
-  // Floating debris
+  // Floating debris — same shared-asset pattern.
+  const dbGeo=new THREE.BoxGeometry(1,0.2,0.7);
+  const dbMat=new THREE.MeshStandardMaterial({color:0x2a1a0a,roughness:0.9});
   for(let i=0;i<12;i++){
     const dx=(Math.random()-0.5)*180,dz=-20-Math.random()*100;
-    const db=new THREE.Mesh(new THREE.BoxGeometry(0.8+Math.random()*0.6,0.2,0.6+Math.random()*0.8),new THREE.MeshStandardMaterial({color:0x2a1a0a,roughness:0.9}));
+    const db=new THREE.Mesh(dbGeo,dbMat);
+    db.scale.set(0.8+Math.random()*0.6,1,0.85+Math.random()*1.15);
     db.position.set(dx,0.15,dz);db.rotation.y=Math.random()*Math.PI;scene.add(db);stumps.push(db);
   }
 }
@@ -2155,7 +2176,9 @@ function startBobberWait(spot,fish){
   // Wait time biases toward shorter for commons / minnow bait, longer for rare/legendary.
   const rar=fish.r==='legendary'?1.5:fish.r==='rare'?1.2:fish.r==='uncommon'?0.9:0.7;
   const wait=(1500+Math.random()*3500)*rar;
-  _bobberState={phase:'wait',spot,fish,t0:Date.now(),nibbleAt:Date.now()+wait,nibbleEnd:0,bobBase:bp.y,grp};
+  // Pre-tell (400ms) telegraphs the strike before the F window opens — RF4/Dredge research said
+  // springing the window unannounced felt cheap. pretellAt fires the twitch; nibbleAt opens the tap.
+  _bobberState={phase:'wait',spot,fish,t0:Date.now(),pretellAt:Date.now()+wait-400,nibbleAt:Date.now()+wait,nibbleEnd:0,bobBase:bp.y,grp};
   // Prompt the player so they know what's happening.
   const p=$('cast-prompt');if(p){p.style.display='block';p.innerHTML='🎣 <b>Line in the water</b> — watch the bobber. <b>F</b> to set the hook when it dips.'}
   _castInFlight=false;
@@ -2164,12 +2187,21 @@ function startBobberWait(spot,fish){
 function tickBobber(t){
   if(!_bobberState||!_bobberMesh)return;
   const s=_bobberState,now=Date.now();
-  // Idle bob — tiny vertical sine while waiting.
+  // Idle bob — tiny vertical sine while waiting. Edge-trigger to pretell ~400ms before the F window
+  // opens so the player gets a visual telegraph (per Dredge/RF4 research). Pretell wobbles + mini-dips.
   if(s.phase==='wait'){
     _bobberMesh.position.y=s.bobBase+Math.sin(t*1.8)*0.04;
+    if(now>=s.pretellAt){
+      s.phase='pretell';s.dipsRemaining=2;s.twitchAmp=0.15;
+      const p=$('cast-prompt');if(p)p.innerHTML='👀 <b style="color:#fbcf3b">SOMETHING\'S NIBBLING</b> — wait for the dip…';
+    }
+  }else if(s.phase==='pretell'){
+    // Lateral wobble + small dip cycle — sells the strike instead of springing it on the player.
+    _bobberMesh.rotation.z=Math.sin(t*12)*s.twitchAmp;
+    _bobberMesh.position.y=s.bobBase-Math.abs(Math.sin(t*9))*0.05;
     if(now>=s.nibbleAt){
-      // Nibble! Strong dip + audio cue + radio whisper. Player has ~1.2s to set the hook.
       s.phase='nibble';s.nibbleEnd=now+1200;sfx('cast');sfx('ping');
+      _bobberMesh.rotation.z=0;
       radio('BITE! Tap F.','self');
       const p=$('cast-prompt');if(p)p.innerHTML='⚠️ <b style="color:#ef4444">SET THE HOOK</b> — tap <b>F</b>!';
     }
@@ -2189,8 +2221,9 @@ function tickBobber(t){
 function tryHookSet(){
   if(!_bobberState)return false;
   const s=_bobberState;const p=$('cast-prompt');if(p)p.style.display='none';
-  if(s.phase==='wait'){
-    // Early strike — fish spooks; line comes back empty.
+  if(s.phase==='wait'||s.phase==='pretell'){
+    // Early strike — fish spooks; line comes back empty. The pretell phase is a TELEGRAPH that the
+    // bite is coming, not the F window itself — bobber-twitch is a heads-up, not the prompt.
     sfx('hit');radio('Yanked too early. Spooked it.','reel');
     disposeBobber();return true;
   }
@@ -2310,16 +2343,18 @@ function openFight(fish,spot){
     if(inBand&&Math.random()<0.3)sfx('click');
     if(progress>=100){over=true;finishFight(true);return}
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    reelAudio.update(tension);
     // Bobber update — same 50ms tick.
     fBobT+=0.05;if(fBobEl)fBobEl.style.left=(fBobPos()*100)+'%';
   },50);
   const finishFight=(won,msg)=>{
     over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);
+    reelAudio.stop();
     if(won){landFish(fish,spot)}
     else{miniActive=false;_catchOpen=false;const e2=$('mini');if(e2)e2.style.display='none';const c2=$('mini-card');if(c2)c2.innerHTML='';if(!(S.played&&!$('s5').classList.contains('off')))S.on=true;radio(msg,'lilly')}
   };
   // Wire teardown so endGame/Escape can't strand the interval.
-  _fightCleanup=()=>{clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
+  _fightCleanup=()=>{clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);reelAudio.stop()};
   el.style.display='flex';
   radio(fish.gator?'Gator! Hold the line — easy, easy.':'Fish on. Work it in.','self');
 }
@@ -2521,7 +2556,7 @@ function sfx(type){
   g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
-function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop()}else sfx('click')}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop()}else sfx('click')}
 
 // === CONTINUOUS ENGINE + AMBIENT AUDIO ===
 // A throaty motor whose pitch + volume track boat speed, plus a constant low water-lap bed. Built
@@ -2581,6 +2616,71 @@ const stormAudio={on:false,gain:null,src:null,
     this.gain.gain.setTargetAtTime(target,_audioCtx.currentTime,0.5);
   },
   stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.2)}
+};
+// === REEL-WHINE ===
+// Continuous oscillator that runs only during a fishing fight. Frequency + gain track tension
+// (0=slack, 1=snap) so the player hears the line sing. Mirrors stormAudio's lazy-build pattern;
+// must be stopped in all 3 fight exits (won/lost/Escape via _fightCleanup). Routes through the
+// SFX bus (_audVol * _sfxVol) since it's a foreground fight cue, not ambient.
+let _creakLast=0;  // throttle for the line-creak warning sfx near snap
+const reelAudio={on:false,osc:null,gain:null,filt:null,
+  ensure(){
+    if(this.on||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const ctx=_audioCtx;
+    this.gain=ctx.createGain();this.gain.gain.value=0;
+    this.filt=ctx.createBiquadFilter();this.filt.type='lowpass';this.filt.frequency.value=1400;this.filt.Q.value=0.7;
+    this.filt.connect(this.gain);this.gain.connect(ctx.destination);
+    this.osc=ctx.createOscillator();this.osc.type='sawtooth';this.osc.frequency.value=220;
+    this.osc.connect(this.filt);this.osc.start();
+    this.on=true;
+  },
+  update(tension){
+    if(muted){this.stop();return}
+    if(!Number.isFinite(tension))return;  // setTargetAtTime rejects non-finite values
+    if(!this.on)this.ensure();
+    if(!this.on)return;
+    const now=_audioCtx.currentTime,clamped=Math.max(0,Math.min(1,tension));
+    this.osc.frequency.setTargetAtTime(220+clamped*660,now,0.05);
+    this.gain.gain.setTargetAtTime((0.02+clamped*0.07)*_audVol*_sfxVol,now,0.05);
+    // Sharp creak when the line is at risk of snapping — rate-limited so it pulses, doesn't whine.
+    if(clamped>=0.85){const t=Date.now()*0.001;if(t-_creakLast>0.85){_creakLast=t;sfx('hit')}}
+  },
+  stop(){if(this.on&&_audioCtx){this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.08);_creakLast=0}}
+};
+// === CATALYST EVENT TICKER ===
+// Sea-of-Thieves-style "story seed" punctuation. Every 60-120s, low-probability roll fires one of
+// three audio-only events (gator splash, distant barge horn, waterbird flush). Guards against
+// firing while the player is in any menu/fight/Duct so we never step on a foreground cue.
+const CATALYST_LINES={
+  gator:[['Big roll on the south bank.','lilly'],['Tail slap. Out there.','lilly']],
+  horn: [['Barge horn. Quarantine traffic.','fly'],['Big boat passing through.','fly']],
+  bird: [['Heron at the marsh.','self'],['Something flushed off the shore.','self']]
+};
+const catalyst={lastTick:Date.now()*0.001,nextRand:0,
+  maybe(t){
+    if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen||_peekOpen||DUCT.active||_castInFlight||_bobberState)return;
+    if(t-this.lastTick<60+this.nextRand)return;
+    if(Math.random()>0.012)return;  // rate-limited roll: ~once per 60-120s window
+    const kinds=['gator','horn','bird'];this.fire(kinds[Math.floor(Math.random()*kinds.length)]);
+  },
+  fire(kind){
+    this.lastTick=Date.now()*0.001;this.nextRand=Math.random()*60;
+    const pickPair=arr=>arr[Math.floor(Math.random()*arr.length)];
+    if(kind==='gator'){
+      sfx('splash_big');
+      // Pick a random spot 50-90u from the boat for the splash so it reads as off-screen.
+      const ang=Math.random()*Math.PI*2,d=50+Math.random()*40;
+      const sp=new THREE.Vector3(bMesh.position.x+Math.cos(ang)*d,0.2,bMesh.position.z+Math.sin(ang)*d);
+      splash(sp,14,0x9fd8b0,1.2);
+    }else if(kind==='horn'){
+      sfx('catch');setTimeout(()=>sfx('hit'),140);
+    }else{
+      sfx('quack');  // reuse — high oscillator chirp doubles as a waterbird call
+    }
+    const [line,who]=pickPair(CATALYST_LINES[kind]);radio(line,who);
+    return true;
+  }
 };
 // === MUSIC ===
 // One soft ambient drone built from three detuned triangle oscillators (root + fifth + octave).
@@ -2750,7 +2850,9 @@ const ACH={
   duct_lure_crafted:{n:'Recipe From The Pier',d:'Crafted your first Duct Tape Lure.'},
   gator_king:{n:'Crowned',d:'Took the Gator King at East Rocks.'},
   storm_survivor:{n:'Sky Falls',d:'Survived a lightning strike at speed.'},
-  first_craft:{n:'Tackle Bench',d:'Crafted a custom bait at the pier.'}
+  first_craft:{n:'Tackle Bench',d:'Crafted a custom bait at the pier.'},
+  streak_7: {n:'Week At The Bayou',  d:'7-day login streak.',  p:()=>({cur:Math.min(streak.count||0,7), max:7})},
+  streak_30:{n:'Month At The Bayou', d:'30-day login streak.', p:()=>({cur:Math.min(streak.count||0,30),max:30})}
 };
 // Tiny queue around the existing toast so rapid back-to-back unlocks don't clobber each other.
 // We DON'T touch showAchToast — it keeps its own clearTimeout pattern. The queue just gates calls
@@ -3017,7 +3119,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
-    engineAudio.update(spd);stormAudio.update();campAudio.update();music.update();
+    engineAudio.update(spd);stormAudio.update();campAudio.update();music.update();catalyst.maybe(t);
     // Bobber wait/nibble tick — only does work if a bobber is in the water.
     tickBobber(t);
     // First-cast hint pip: subtle yellow nudge when the player is stopped over castable water and
@@ -3036,7 +3138,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
     const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
-    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
+    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -3053,7 +3155,21 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
 // stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
 // Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
 function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
-function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+function startGame(){
+  // Daily streak — local-day key (UTC drifts in late-evening timezones). yesterday→++, today→noop,
+  // gap→reset. Fires non-persistent milestone toasts at 3/14/100; real ACH at 7 + 30.
+  {const today=localDayKey(),yesterday=localDayKey(-1);
+   if(streak.lastPlayed!==today){
+     if(streak.lastPlayed===yesterday)streak.count=(streak.count||0)+1;
+     else streak.count=1;
+     streak.lastPlayed=today;streak.max=Math.max(streak.max||0,streak.count);
+     persist();
+     if(streak.count===3||streak.count===14||streak.count===100)pushAchToast({n:'STREAK!',d:streak.count+' days at the Bayou.'});
+     if(streak.count>=7)onUnlock('streak_7');
+     if(streak.count>=30)onUnlock('streak_30');
+   }
+  }
+  S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -3101,7 +3217,7 @@ function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -3255,7 +3371,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
@@ -3316,6 +3432,12 @@ document.body.classList.add('mode-'+GAME_MODE);
 // boat() call later overwrites this with the actual hero once a class is chosen.
 document.body.classList.add('hero-reel');
 initEngine();wet.init();refreshTrophyPeek();applyGfx();
+// iOS Safari requires AudioContext.resume() inside a user-gesture handler. sfx() already lazy-
+// creates the ctx, but it can land in a 'suspended' state. Wire a one-shot pointerdown/touchend/
+// keydown that resumes it the first time the user actually does anything. {once:true} per type.
+['pointerdown','touchend','keydown'].forEach(ev=>{
+  window.addEventListener(ev,()=>{if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{})},{once:true,passive:true});
+});
 {const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
 // First-load cinematic intro — 6-second title fade over the existing idle-cam sweep. Shown once
 // (gated by tutorialSeen.intro) so returning players don't sit through it. The idle camera is
@@ -3536,7 +3658,8 @@ const ACH_CATEGORIES=[
   {id:'duct',name:'Duct',col:'#ffd23f',ids:['duct_sighting','duct_near_miss','duct_ten_attempts','duct_25_attempts','duct_three_near','duct_lure_crafted']},
   {id:'rescue',name:'Rescue',col:'#fb923c',ids:['five_missions','full_extraction','home_repaired','deep_dock','boss_clean','gator_king','storm_survivor']},
   {id:'gear',name:'Gear & Boat',col:'#60d0ff',ids:['first_gear','fully_decked','first_upgrade','boat_maxed']},
-  {id:'forage',name:'Foraging & Craft',col:'#a47a52',ids:['first_forage','worm_farmer','pantry_stocked','first_craft']}
+  {id:'forage',name:'Foraging & Craft',col:'#a47a52',ids:['first_forage','worm_farmer','pantry_stocked','first_craft']},
+  {id:'retention',name:'Streaks',col:'#3b82f6',ids:['streak_7','streak_30']}
 ];
 function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
   const all=Object.entries(ACH);
@@ -3775,7 +3898,14 @@ function openCodex(){
   el.style.display='flex';
 }
 // Show the trophy peek button on s1 only if there's something to show.
-function refreshTrophyPeek(){const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none'}
+function refreshTrophyPeek(){
+  const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none';
+  // Daily-streak pill — only shown once the player has at least 1 day on the count.
+  const sp=$('streak-pill');if(sp){
+    if(streak.count>0){sp.style.display='block';sp.innerHTML=`🔥 Day ${streak.count} at the Bayou${streak.max>streak.count?` · best ${streak.max}`:''}`}
+    else sp.style.display='none';
+  }
+}
 
 function endRun(){
   const btn=$('end-run');
@@ -3872,6 +4002,72 @@ function qaSeedDuctRecipe(){
   Object.entries(DUCT_LURE_RECIPE).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)+n});
   persist();return true;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,getSave,mode:GAME_MODE};
+// QA: force the bobber into the pre-nibble telegraph phase. Bypasses the cast-aim animation +
+// fishingSpot check by calling startBobberWait directly with a synthetic spot, then jumps the
+// state machine to pretell so the smoke catches the new branch deterministically.
+function qaForceNibble(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  if(!_bobberState){
+    // Synthesize: pick any fishable fish + skip the cast arc + start the bobber wait immediately.
+    const fish=FISH.find(f=>f.fight)||FISH[0];
+    cancelCast();startBobberWait(null,fish);
+  }
+  if(!_bobberState)return null;  // startBobberWait failed (no bMesh, etc.)
+  const s=_bobberState;s.phase='pretell';s.dipsRemaining=2;s.twitchAmp=0.15;
+  s.nibbleAt=Date.now()+400;
+  const p=$('cast-prompt');if(p)p.innerHTML='👀 <b style="color:#fbcf3b">SOMETHING\'S NIBBLING</b> — wait for the dip…';
+  return {phase:s.phase,dipsRemaining:s.dipsRemaining,twitchAmp:s.twitchAmp};
+}
+// QA: probe live audio bus state without an AudioContext analyser.
+function qaAudioProbe(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  return {
+    reelOn:reelAudio.on,
+    reelFreq:reelAudio.on&&reelAudio.osc?reelAudio.osc.frequency.value:null,
+    musicOn:music.on,
+    stormOn:stormAudio.on,
+    engineOn:engineAudio.on,
+    campChans:Object.keys(campAudio.chans||{})
+  };
+}
+// QA: advance the streak's lastPlayed by N days into the past so the smoke can test the
+// yesterday→++, today→noop, gap→reset branches without faking system time.
+function qaAdvanceDay(n){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  streak.lastPlayed=localDayKey(-n);persist();return true;
+}
+function qaResetStreak(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  streak={count:0,lastPlayed:'',max:streak.max||0};persist();return true;
+}
+// QA: bypass the rate-limit + state guards and fire one catalyst event synchronously.
+function qaTriggerCatalyst(kind){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  return !!catalyst.fire(kind);
+}
+// QA: open a synthetic fishing fight so the smoke can exercise reelAudio + the fight UI without
+// waiting for a real bobber-cast-resolve cycle. Clears blocking flags + tears down any in-flight
+// cast/bobber so openFight doesn't bail.
+function qaForceFight(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  // Bail if the run already ended — stacking a fight overlay on the s5 result screen would let
+  // a win → landFish → showCatchDialog land a second modal on top of the post-run summary.
+  if(S.played&&!$('s5').classList.contains('off'))return false;
+  cancelCast();disposeBobber();
+  miniActive=false;_catchOpen=false;_catchBusy=false;_peekOpen=false;
+  if(_fightCleanup){_fightCleanup();_fightCleanup=null}
+  const fish=FISH.find(f=>f.fight)||FISH[0];
+  openFight(fish,null);
+  reelAudio.update(0.3);
+  return true;
+}
+// QA: count meshes in the scene that point at the shared stump geometry. Lets the smoke verify the
+// shared-asset optimization landed without exposing the scene object globally.
+function qaStumpCount(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return -1;
+  if(!scene||!scene._sharedStumpGeo)return 0;
+  let n=0;scene.traverse(o=>{if(o.geometry===scene._sharedStumpGeo)n++});return n;
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
 })();
 
