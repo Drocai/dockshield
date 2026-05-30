@@ -287,9 +287,12 @@ let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score
 // Discount tiers earned by run outcome
 const DISC={'FULL EXTRACTION':15,'CLEAN EXTRACTION':15,'CLOSE CALLS':10,'RECKLESS':5,'OVERRUN':0};
 const $=id=>document.getElementById(id);
+// One-shot mobile detect. Hoisted here so every consumer (show(), initEngine, audio unlock) reads
+// the same regex — iPhone/iPad were missing from the older /Mobi|Android/i checks.
+const _isMob=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('off',s!==id));
   // Hide touch controls when any card is showing
-  const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&/Mobi|Android/i.test(navigator.userAgent))?'block':'none'}
+  const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&_isMob)?'block':'none'}
 
 let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
@@ -325,9 +328,6 @@ let _frame=0;
 let _mmZoom=1.0;
 // Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
 let _isNight=false;
-// One-shot mobile detect, hoisted so any consumer (renderer, hit-area assertions, audio unlock) can
-// reuse without repeating the regex.
-const _isMob=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 // Local-day key for the streak counter — UTC (via toISOString) drifts in PST/JST late hours, so use
 // the player's actual calendar day. Used only for streak math; other date-stamps stay UTC for now.
 function localDayKey(offsetDays){const d=new Date();if(offsetDays)d.setDate(d.getDate()+offsetDays);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
@@ -1283,7 +1283,7 @@ function initEngine(){
   });document.addEventListener('keyup',e=>keys[e.code]=false);
   window.addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
   // Touch controls
-  const isMob=/Mobi|Android/i.test(navigator.userAgent);
+  const isMob=_isMob;
   if(isMob)$('touch').style.display='block';
   let lId=null,rId=null,lCy=0,rCx=0;
   const tz=$('touch');if(tz){
@@ -2191,7 +2191,10 @@ function tickBobber(t){
   // opens so the player gets a visual telegraph (per Dredge/RF4 research). Pretell wobbles + mini-dips.
   if(s.phase==='wait'){
     _bobberMesh.position.y=s.bobBase+Math.sin(t*1.8)*0.04;
-    if(now>=s.pretellAt){s.phase='pretell';s.dipsRemaining=2;s.twitchAmp=0.15}
+    if(now>=s.pretellAt){
+      s.phase='pretell';s.dipsRemaining=2;s.twitchAmp=0.15;
+      const p=$('cast-prompt');if(p)p.innerHTML='👀 <b style="color:#fbcf3b">SOMETHING\'S NIBBLING</b> — wait for the dip…';
+    }
   }else if(s.phase==='pretell'){
     // Lateral wobble + small dip cycle — sells the strike instead of springing it on the player.
     _bobberMesh.rotation.z=Math.sin(t*12)*s.twitchAmp;
@@ -2218,8 +2221,9 @@ function tickBobber(t){
 function tryHookSet(){
   if(!_bobberState)return false;
   const s=_bobberState;const p=$('cast-prompt');if(p)p.style.display='none';
-  if(s.phase==='wait'){
-    // Early strike — fish spooks; line comes back empty.
+  if(s.phase==='wait'||s.phase==='pretell'){
+    // Early strike — fish spooks; line comes back empty. The pretell phase is a TELEGRAPH that the
+    // bite is coming, not the F window itself — bobber-twitch is a heads-up, not the prompt.
     sfx('hit');radio('Yanked too early. Spooked it.','reel');
     disposeBobber();return true;
   }
@@ -2633,6 +2637,7 @@ const reelAudio={on:false,osc:null,gain:null,filt:null,
   },
   update(tension){
     if(muted){this.stop();return}
+    if(!Number.isFinite(tension))return;  // setTargetAtTime rejects non-finite values
     if(!this.on)this.ensure();
     if(!this.on)return;
     const now=_audioCtx.currentTime,clamped=Math.max(0,Math.min(1,tension));
@@ -2654,7 +2659,7 @@ const CATALYST_LINES={
 };
 const catalyst={lastTick:Date.now()*0.001,nextRand:0,
   maybe(t){
-    if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen||_peekOpen||DUCT.active)return;
+    if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen||_peekOpen||DUCT.active||_castInFlight||_bobberState)return;
     if(t-this.lastTick<60+this.nextRand)return;
     if(Math.random()>0.012)return;  // rate-limited roll: ~once per 60-120s window
     const kinds=['gator','horn','bird'];this.fire(kinds[Math.floor(Math.random()*kinds.length)]);
@@ -4010,6 +4015,7 @@ function qaForceNibble(){
   if(!_bobberState)return null;  // startBobberWait failed (no bMesh, etc.)
   const s=_bobberState;s.phase='pretell';s.dipsRemaining=2;s.twitchAmp=0.15;
   s.nibbleAt=Date.now()+400;
+  const p=$('cast-prompt');if(p)p.innerHTML='👀 <b style="color:#fbcf3b">SOMETHING\'S NIBBLING</b> — wait for the dip…';
   return {phase:s.phase,dipsRemaining:s.dipsRemaining,twitchAmp:s.twitchAmp};
 }
 // QA: probe live audio bus state without an AudioContext analyser.
@@ -4044,6 +4050,9 @@ function qaTriggerCatalyst(kind){
 // cast/bobber so openFight doesn't bail.
 function qaForceFight(){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  // Bail if the run already ended — stacking a fight overlay on the s5 result screen would let
+  // a win → landFish → showCatchDialog land a second modal on top of the post-run summary.
+  if(S.played&&!$('s5').classList.contains('off'))return false;
   cancelCast();disposeBobber();
   miniActive=false;_catchOpen=false;_catchBusy=false;_peekOpen=false;
   if(_fightCleanup){_fightCleanup();_fightCleanup=null}

@@ -329,13 +329,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // confirming the cleanup path doesn't throw is enough).
     console.log('· reel-whine wires + stops on Escape');
 
-    // 29. Streak counter: reset → first startGame() of the test already ran (count=1). Force
-    // yesterday → next startGame() should hit count=2; force gap → next should reset to 1.
-    // We can't re-call startGame mid-run cleanly, so just verify the state transitions through DS hooks.
+    // 29. Streak counter: exercise reset / advance-day / persistence. We can't cleanly re-run
+    // startGame mid-test, so verify the qa hooks themselves + the persistence round-trip.
     await p.evaluate(()=>DS.qaResetStreak());
     const s0=await p.evaluate(()=>DS.getSave().streak||null);
-    if(!s0||s0.count!==0)fail('qaResetStreak did not zero the streak: '+JSON.stringify(s0));
-    console.log('· streak counter persists');
+    if(!s0||s0.count!==0||s0.lastPlayed!=='')fail('qaResetStreak did not zero the streak: '+JSON.stringify(s0));
+    // qaAdvanceDay(1) sets lastPlayed = yesterday. After it, the save must reflect.
+    await p.evaluate(()=>DS.qaAdvanceDay(1));
+    const s1=await p.evaluate(()=>DS.getSave().streak||null);
+    if(!s1||!s1.lastPlayed)fail('qaAdvanceDay did not set lastPlayed: '+JSON.stringify(s1));
+    // Confirm 'max' is preserved across reset (we seeded max:5 at the top of the smoke).
+    if((s1.max||0)<5)fail('streak.max should be preserved across qaResetStreak (got '+s1.max+')');
+    console.log('· streak hooks + persistence + max preserved');
 
     // 30. Catalysts: each event kind must fire without throwing + return true.
     for(const k of ['gator','horn','bird']){
@@ -344,9 +349,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     }
     console.log('· catalyst events fire');
 
-    // 31. Stumps share geometry — count via QA hook (scene is IIFE-scoped).
+    // 31. Stumps share geometry — must be the majority of stumps placed (70 cap, ≥30 visible
+    // after the dock + hazard-zone filter culls). Tighter threshold catches a per-mesh regression.
     const stumpShared=await p.evaluate(()=>DS.qaStumpCount());
-    if(stumpShared<10)fail('Shared stump geometry not in use: count='+stumpShared);
+    if(stumpShared<30)fail('Shared stump geometry under-used: count='+stumpShared+' (expected ≥30)');
     console.log('· stumps share geometry ('+stumpShared+' instances)');
 
     // 32. Mobile tap-target floor — every touch button must clear 48px on the WebGL viewport.
