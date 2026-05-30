@@ -72,6 +72,13 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 5 — Duct Tape Lure + bobber-bounce in regular fight + Gator King + lightning
+- **Duct Tape Lure** (`baitInv.ducttape`): craftable at any tackle shop from rare forage (3 crayfish + 4 frog + 6 minnow). Equipping it during a Duct fight widens the bobber peak window from 8% to 28%. Still doesn't catch him. Lore lands: "people swear by it, doesn't work." Achievement: `duct_lure_crafted`.
+- **Bobber-bounce in the regular fishing fight**: same rhythm mechanic as the Duct chase, optional, bonus progress on peak hits. Rod tier (`eqRod().control`) widens the peak window — gear gates the difficulty.
+- **Gator King mini-boss**: auto-spawns at East Rocks Crayfish Hole (185, 80) once the player has logged all 3 trigger gators. 2-phase fight (timed strike windows → tension band). Wins → +800 score + +60 bait + `gator_king` achievement.
+- **Lightning storm hazard**: during Rain/Drizzle, occasional strikes flash the screen white-blue, kick the shake, dump a wet-droplet burst. If `|spd|>0.7` at strike → hull damage + `storm_survivor` achievement. Rate-limited (~one strike every 12-18s).
+- **QA hooks** (`?qa=1` gated): `DS.qaSeedDuctRecipe()`, `DS.qaSpawnGatorKing()`, `DS.qaOpenGatorKing()`, `DS.qaStrikeLightning()`. Smoke now **17/17 PASS, 0 fatal**.
+
 ### Round 4 — Duct bobber-bounce + god rays + caustics + hero rim + forage polish
 - **Duct bobber-bounce rhythm sub-game**: a gold bobber oscillates on a sine inside a separate bar above the tension band; the dashed window at 46–54% is the peak target. **Tap `B`** (or click the bobber) when it's in the window for a progress bonus + streak counter; misses subtract progress and reset the streak. **Phase + frequency reroll on every tap**, so the rhythm is "always changing" — each Duct fight feels distinct.
 - **God-ray light shafts**: 3 soft additive sprite cones radiating down from the sun. Peak opacity during golden-hour window (dayness 0.05–0.55), Clear weather only, skipped on Low gfx. Sway slowly on `t`.

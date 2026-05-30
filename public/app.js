@@ -24,7 +24,7 @@ let ductStats={sightings:0,attempts:0,nearCatches:0};
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
-let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0};
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0};
 let equippedBait='';   // '' = bare hook, no bait bias
 // === BOAT UPGRADES ===
 // Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
@@ -64,8 +64,15 @@ const BAIT_TYPES={
   cricket: {n:'Cricket',  c:'#8db347', e:'🦗', desc:'+18% uncommon, slight rare lift.'},
   minnow:  {n:'Minnow',   c:'#7ec8e3', e:'🐠', desc:'+20% rare odds (pike-biased).'},
   frog:    {n:'Frog',     c:'#5fa75f', e:'🐸', desc:'+25% rare, lures bass.'},
-  crayfish:{n:'Crayfish', c:'#cf4040', e:'🦞', desc:'+30% rare + 10% legendary.'}
+  crayfish:{n:'Crayfish', c:'#cf4040', e:'🦞', desc:'+30% rare + 10% legendary.'},
+  // Lore item — crafted at the tackle shop from rare forage. People swear it draws Duct in faster
+  // and "almost" works. Actually: it widens the bobber peak window during Duct fights by ~30%.
+  // Does NOT make him catchable. Consumed only on Duct attempts, not regular casts.
+  ducttape:{n:'Duct Tape Lure', c:'#ffd23f', e:'🦆', desc:'A wad of duct tape on a hook. "Almost" works on Duct.', isLure:true}
 };
+// Duct Tape Lure recipe — crafted at any tackle shop. Designed to be just out of reach early on so
+// the player has to forage a while before they can chase the legend with it.
+const DUCT_LURE_RECIPE={crayfish:3,frog:4,minnow:6};
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
 // improve the fishing loop: rod = fight control, reel = rare odds, line = max landable rarity,
@@ -210,6 +217,9 @@ let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
 // Special boss drop type — never spawned randomly; only by spawnDeepDock() once unlock fires.
 const DP_BOSS={k:'boss',col:0x9333ea,n:'THE DEPTH RISES',open:'openBoss'};
+// Gator King — special drop that auto-spawns at East Rocks once the player has logged 3+ gators.
+const DP_GATOR_KING={k:'gator_king',col:0x4a8a32,n:'GATOR KING · EAST ROCKS',open:'openGatorKing'};
+const GATOR_NAMES=['Spotted gar','Alligator gar','Bull gator'];  // 3 trigger gators (Deep-Dock excluded — that's the boss)
 const DP_TYPES=[
   {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
   {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
@@ -372,6 +382,82 @@ const mini={
   },
   // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
   // === DEEP DOCK BOSS: three-phase encounter against the thing under the Deep Dock ===
+  // === GATOR KING: 2-phase mini-boss at East Rocks ===
+  // Phase 1 (LUNGES): a lunge bar fills; tap STRIKE when it's in the gold band. 5 clean hits win
+  //                   the phase. Misses bite for -15 hull. After 5 hits → phase 2.
+  // Phase 2 (DRAG): a tension band fight against a very stiff line. Win → +800 score + +60 bait
+  //                 + unlock 'gator_king'. Lose → escape (no score).
+  openGatorKing(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){mini.finish(dp,0,'Lost the line.','self');return}
+    let phase=1,hits=0,need=5,playerHull=Math.round(S.hull),tension=0.3,progress=0,reeling=false,over=false,lungeT=null,lungeBar=0,lungeDir=1;
+    const render=()=>{
+      const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
+      const phName=phase===1?'PHASE 1 · LUNGES':'PHASE 2 · DRAG';
+      let body='';
+      if(phase===1){
+        body=`<div class="sb"><div class="sr"><span class="sl">Hits</span><span class="sv y">${hits} / ${need}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
+          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b 38%,#10b981 50%,#f59e0b 62%,#ef4444 100%);overflow:hidden;margin:8px 0"><div id="gk-bar" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div></div>
+          <button class="btn bp" id="gk-strike" style="background:linear-gradient(135deg,#4a8a32,#2a5018)">STRIKE (Space)</button>`;
+      }else{
+        body=`<div class="m-sub" style="color:#94a3b8">Hold the line. Easy. He's tired.</div>
+          <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 65%,#f59e0b 85%,#ef4444 100%);overflow:hidden;margin:10px 0">
+            <div id="gk-band" style="position:absolute;top:0;bottom:0;left:42%;width:16%;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
+            <div id="gk-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
+          </div>
+          <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
+          <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="gk-prog" style="height:100%;width:0%;background:#4a8a32;transition:width 0.05s"></div></div>
+          <button class="btn bp" id="gk-reel" style="background:linear-gradient(135deg,#4a8a32,#2a5018);user-select:none">HOLD TO REEL (Space)</button>`;
+      }
+      card.innerHTML=`<div class="m-kicker" style="color:#4a8a32">🐊 ${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Wait for the lunge.':'Bring him in.'}</div>${body}<button class="btn bx" id="gk-flee" style="margin-top:8px">Cut Line</button>`;
+      if(phase===1)$('gk-strike').onclick=strike;
+      if(phase===2)$('gk-reel');
+      $('gk-flee').onclick=flee;
+    };
+    // Phase 1 — lunge bar oscillates; strike when inside the 45-55% gold band.
+    const startLunges=()=>{lungeT=setInterval(()=>{
+      lungeBar+=0.05*lungeDir;if(lungeBar>=1){lungeBar=1;lungeDir=-1}else if(lungeBar<=0){lungeBar=0;lungeDir=1}
+      const b=$('gk-bar');if(b)b.style.left=(lungeBar*100)+'%';
+    },40);mini.addTeardown(()=>clearInterval(lungeT))};
+    const strike=()=>{
+      const pct=lungeBar*100;
+      if(pct>=45&&pct<=55){hits++;sfx('win');if(hits>=need){clearInterval(lungeT);phase=2;startReel();render();return}}
+      else{playerHull=Math.max(0,playerHull-15);S.hull=playerHull;sfx('hit');flashDamage(0.7);if(playerHull<=0){clearInterval(lungeT);lose();return}}
+      render();
+    };
+    // Phase 2 — band fight.
+    const startReel=()=>{
+      const bandHalf=0.08,bandCenter=0.5,climb=0.012,fall=0.011;
+      const tk=setInterval(()=>{
+        if(over)return;
+        const reel=keysSpace;
+        tension+=reel?climb:-fall;tension=Math.max(0,Math.min(1,tension));
+        if(tension>=1){over=true;clearInterval(tk);sfx('hit');flashDamage(0.4);finishGK(false);return}
+        const inBand=Math.abs(tension-bandCenter)<=bandHalf;
+        progress+=inBand?1.0:-0.7;progress=Math.max(0,Math.min(100,progress));
+        const tEl=$('gk-ten'),pEl=$('gk-prog');
+        if(tEl)tEl.style.left=(tension*100)+'%';if(pEl)pEl.style.width=progress+'%';
+        if(progress>=100){over=true;clearInterval(tk);finishGK(true)}
+      },50);
+      mini.addTeardown(()=>clearInterval(tk));
+    };
+    let keysSpace=false;
+    const keyHandler=e=>{
+      if(e.code==='Space'){e.preventDefault();
+        if(phase===1&&e.type==='keydown')strike();
+        if(phase===2)keysSpace=(e.type==='keydown');
+      }
+    };
+    document.addEventListener('keydown',keyHandler);document.addEventListener('keyup',keyHandler);
+    mini.addTeardown(()=>{document.removeEventListener('keydown',keyHandler);document.removeEventListener('keyup',keyHandler)});
+    const flee=()=>{S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
+    const finishGK=won=>{
+      if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
+      else{mini.finish(dp,0,'He rolled and snapped the line. Gone again.','lilly')}
+    };
+    const lose=()=>finishGK(false);
+    startLunges();render();el.style.display='flex';radio('Gator King breached. Hold the line.','self');
+  },
   // Phase 1 (SHELL): sonar 6 times to crack the shell. Each ping +1 hit; window is short.
   // Phase 2 (LURE): tap the surfacing weak point in the right window — too early misses, too late
   //                 the creature breaches and bites for -25 hull.
@@ -1192,8 +1278,20 @@ function maybeSpawnBoss(){
   radio('Boss flare just lit up the Deep Dock. Move when you’re ready.','fly');
   sfx('legendary');
 }
+// Gator King — auto-spawns at East Rocks Crayfish Hole once the player has logged all 3 trigger
+// gators (Spotted gar, Alligator gar, Bull gator). Like the Deep Dock boss, at most once per run.
+function maybeSpawnGatorKing(){
+  if(S.gatorKingSpawned||S.gatorKingDown||GAME_MODE!=='game')return;
+  if(!GATOR_NAMES.every(n=>fishCatalog.has(n)))return;
+  S.gatorKingSpawned=true;
+  const dp=mkDropPoint(DP_GATOR_KING);
+  // Anchor at the East Rocks Crayfish Hole camp coordinates (185, 80).
+  dp.position.set(185,0,80);dp.userData.isGatorKing=true;scene.add(dp);dropPoints.push(dp);
+  radio('Something big just slid into East Rocks. Crayfish Hole won\'t be quiet today.','lilly');
+  sfx('legendary');
+}
 function tickDropPoints(t){
-  maybeSpawnBoss();
+  maybeSpawnBoss();maybeSpawnGatorKing();
   for(let i=dropPoints.length-1;i>=0;i--){
     const dp=dropPoints[i],u=dp.userData;
     if(!u.active)continue;
@@ -1745,26 +1843,54 @@ function openFight(fish,spot){
   const fall=0.013+fish.fight*0.002;                      // tension fall while not reeling
   const drift=deficit*0.004;                              // under-gunned line creeps toward snap
   let tension=0.3,progress=0,reeling=false,over=false;
+  // Bobber-bounce: optional rhythm bonus during the regular fight. Rod tier widens the peak window:
+  // base 46-54%, max +0.07 wider per side at top-tier rod control.
+  const fPeakHalf=0.04+control*0.07,fPeakLo=0.5-fPeakHalf,fPeakHi=0.5+fPeakHalf;
   card.innerHTML=`
     <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${fish.gator?'GATOR ON THE LINE':'FISH ON'} · ${spot?spot.n:'Open water'}</div>
     <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">${fish.e}<span>${fish.n}</span></div>
     <div class="m-sub">${fish.gator?'It is thrashing. Keep tension in the green — too hard and the line goes.':'Work it in. Hold REEL to build tension, ease off before it snaps.'} ${deficit>0?'<b style="color:#ef4444">Your line is under-rated for this fish — band is tight.</b>':''}</div>
+    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm <span style="color:#94a3b8;font-size:9px">(optional · rod ${eqRod().n})</span></span><span style="color:#fbcf3b">tap <b>B</b> · streak <span id="f-streak">0</span></span></div>
+    <div style="position:relative;height:18px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+      <div id="f-peak" style="position:absolute;top:0;bottom:0;left:${fPeakLo*100}%;width:${(fPeakHi-fPeakLo)*100}%;background:rgba(251,207,59,0.12);border-left:1px dashed rgba(251,207,59,0.5);border-right:1px dashed rgba(251,207,59,0.5)"></div>
+      <div id="f-bob" style="position:absolute;top:50%;left:0;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#fbcf3b 70%,#a06600);box-shadow:0 0 8px rgba(251,207,59,0.7)"></div>
+    </div>
     <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
       <div id="f-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
       <div id="f-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
     </div>
     <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
     <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="f-prog" style="height:100%;width:0%;background:${RARE_COLOR[fish.r]};transition:width 0.05s"></div></div>
-    <button class="btn bp" id="f-reel" style="background:linear-gradient(135deg,${RARE_COLOR[fish.r]},#0a4a3a);user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bp" id="f-reel" style="background:linear-gradient(135deg,${RARE_COLOR[fish.r]},#0a4a3a);user-select:none">HOLD TO REEL (Space) · TAP <b>B</b> ON BOBBER PEAK</button>
     <button class="btn bx" id="f-cut">Cut Line</button>`;
   const bandEl=$('f-band'),tenEl=$('f-ten'),progEl=$('f-prog');
   const paintBand=()=>{bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%'};
   paintBand();
-  const reelBtn=$('f-reel');
+  const reelBtn=$('f-reel'),fBobEl=$('f-bob'),fStreakEl=$('f-streak');
   const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.3)':'none'};
   reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
   reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
-  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  // Bobber state — phase + freq reroll on every tap so the rhythm keeps changing.
+  let fBobT=0,fBobFreq=1.2+Math.random()*0.7,fBobPhase=Math.random()*Math.PI*2,fStreak=0;
+  const fBobPos=()=>{const s=Math.sin(fBobT*fBobFreq+fBobPhase);return 0.5+s*0.45};
+  const fInPeak=()=>{const p=fBobPos();return p>=fPeakLo&&p<=fPeakHi};
+  const fTapBob=()=>{
+    if(over)return;
+    if(fInPeak()){
+      fStreak++;progress=Math.min(100,progress+1.4+Math.min(fStreak,5)*0.3);
+      sfx('ping');if(fBobEl){fBobEl.style.filter='brightness(2)';setTimeout(()=>{if(fBobEl)fBobEl.style.filter='none'},120)}
+      fBobFreq=1.0+Math.random()*0.9;fBobPhase=Math.random()*Math.PI*2;
+    }else{
+      fStreak=0;progress=Math.max(0,progress-0.6);sfx('hit');
+      fBobFreq=0.9+Math.random()*1.1;fBobPhase=Math.random()*Math.PI*2;
+    }
+    if(fStreakEl)fStreakEl.textContent=fStreak;
+  };
+  fBobEl&&(fBobEl.onclick=fTapBob);
+  const keyH=e=>{
+    if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
+    if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();fTapBob()}
+  };
   document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
   $('f-cut').onclick=()=>finishFight(false,'Cut the line. It wins this round.');
   const tick=setInterval(()=>{
@@ -1777,6 +1903,8 @@ function openFight(fish,spot){
     if(inBand&&Math.random()<0.3)sfx('click');
     if(progress>=100){over=true;finishFight(true);return}
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    // Bobber update — same 50ms tick.
+    fBobT+=0.05;if(fBobEl)fBobEl.style.left=(fBobPos()*100)+'%';
   },50);
   const finishFight=(won,msg)=>{
     over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);
@@ -1813,15 +1941,20 @@ function openDuctChase(){
   const p=$('duct-prompt');if(p)p.style.display='none';
   miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
   const card=$('mini-card'),el=$('mini');if(!card||!el){endDuct(esc,0);return}
+  // Duct Tape Lure: if equipped, consume one and widen the bobber peak window. Still doesn't land him.
+  const lureOn=equippedBait==='ducttape'&&(baitInv.ducttape||0)>0;
+  if(lureOn){baitInv.ducttape--;persist()}
   const bandHalf=0.13,bandCenter=0.55,climb=0.015,fall=0.014;
+  // Peak window is normally 46-54% (0.08 wide). Lure widens it to ~36-64% (0.28 wide) — "almost" works.
+  const peakLo=lureOn?0.36:0.46,peakHi=lureOn?0.64:0.54;
   let tension=0.3,progress=0,reeling=false,over=false,peaked=0;
   card.innerHTML=`
     <div class="m-kicker" style="color:#ffd23f">??? · IMPOSSIBLE CATCH</div>
     <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">🦆<span>Duct</span></div>
     <div class="m-sub">Tape on his back, smug look on his face. Reel him in — if you even can. <b style="color:#fbcf3b">Nobody ever has.</b></div>
-    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="d-streak">0</span></span></div>
+    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm${lureOn?' · <b style="color:#ffd23f">DUCT TAPE LURE</b>':''}</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="d-streak">0</span></span></div>
     <div style="position:relative;height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
-      <div id="d-peak" style="position:absolute;top:0;bottom:0;left:46%;width:8%;background:rgba(251,207,59,0.18);border-left:2px dashed rgba(251,207,59,0.6);border-right:2px dashed rgba(251,207,59,0.6)"></div>
+      <div id="d-peak" style="position:absolute;top:0;bottom:0;left:${peakLo*100}%;width:${(peakHi-peakLo)*100}%;background:rgba(251,207,59,0.18);border-left:2px dashed rgba(251,207,59,0.6);border-right:2px dashed rgba(251,207,59,0.6)"></div>
       <div id="d-bob" style="position:absolute;top:50%;left:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#ffd23f 70%,#b8860b);box-shadow:0 0 12px rgba(251,207,59,0.8)"></div>
     </div>
     <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
@@ -1844,7 +1977,7 @@ function openDuctChase(){
   // — keeps each Duct encounter feeling fresh.
   let bobT=0,bobFreq=1.2+Math.random()*0.6,bobPhase=Math.random()*Math.PI*2,streak=0;
   const bobPos=()=>{const s=Math.sin(bobT*bobFreq+bobPhase);return 0.5+s*0.45};  // 0.05..0.95
-  const inPeak=()=>{const p=bobPos();return p>=0.46&&p<=0.54};
+  const inPeak=()=>{const p=bobPos();return p>=peakLo&&p<=peakHi};
   const tapBobber=()=>{
     if(over)return;
     if(inPeak()){
@@ -2039,6 +2172,38 @@ const wet={cv:null,ctx:null,drops:[],enabled:true,
     }
   }
 };
+// === LIGHTNING ===
+// Random thunderbolts during Rain/Drizzle. Brief white screen-flash + a delayed thunder cue. If
+// the player is moving fast at the moment of strike, they take hull damage + a strong shake +
+// 'storm_survivor' achievement. Strikes are rate-limited so they punctuate, not spam.
+const storm={lastStrike:0,minGap:8,nextRand:5,
+  maybe(t){
+    if(!S.on)return;
+    if(!(S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle')))return;
+    if(t-this.lastStrike<this.minGap+this.nextRand)return;
+    // ~3% chance per frame (rate-gated above) — translates to ~one strike every 12-18s during rain.
+    if(Math.random()>0.03)return;
+    this.strike();
+  },
+  strike(){
+    this.lastStrike=Date.now()*0.001;this.nextRand=4+Math.random()*8;
+    // White flash: bump dmg-flash with a cool tint, then fade. Reuse the existing element.
+    const el=$('dmg-flash');if(el){const prev=el.style.background;el.style.background='radial-gradient(circle at center,rgba(255,255,255,0.5) 0%,rgba(160,200,255,0.55) 60%,rgba(80,120,200,0.5) 100%)';el.style.opacity='0.85';clearTimeout(this._t1);this._t1=setTimeout(()=>{el.style.opacity='0';clearTimeout(this._t2);this._t2=setTimeout(()=>{el.style.background=prev||''},500)},90)}
+    _shake=Math.max(_shake,0.5);wet.add(20);
+    // Damage if the player is moving fast — rewards staying slow during a storm.
+    if(Math.abs(spd)>0.7){
+      const dmg=Math.round((1-hullResist())*10);
+      S.hull=Math.max(0,S.hull-dmg);
+      flashDamage(0.5);onUnlock('storm_survivor');
+      radio('LIGHTNING. Slow it down out there.','fly');
+    }else{
+      radio('Lightning. Glad we eased off.','lilly');
+    }
+    // Delayed thunder cue via two sfx pops to fake a roll.
+    setTimeout(()=>sfx('splash_big'),180);
+    setTimeout(()=>sfx('hit'),420);
+  }
+};
 // === ACHIEVEMENT TRIGGER ===
 // Centralized unlock hook. Real definitions + toast UI land in the achievements commit; this stub
 // keeps callsites stable. ACH map declared near here so every check route through this fn.
@@ -2067,7 +2232,10 @@ const ACH={
   // Polish v2 — Duct + boss tightening.
   duct_25_attempts:{n:'Tape Faithful',d:'25 attempts on Duct. Still not him.'},
   duct_three_near:{n:'Almost A Story',d:'Three near-catches on Duct.'},
-  boss_clean:{n:'Surgical',d:'Beat the Deep Dock without dropping below 50% hull.'}
+  boss_clean:{n:'Surgical',d:'Beat the Deep Dock without dropping below 50% hull.'},
+  duct_lure_crafted:{n:'Recipe From The Pier',d:'Crafted your first Duct Tape Lure.'},
+  gator_king:{n:'Crowned',d:'Took the Gator King at East Rocks.'},
+  storm_survivor:{n:'Sky Falls',d:'Survived a lightning strike at speed.'}
 };
 // Tiny queue around the existing toast so rapid back-to-back unlocks don't clobber each other.
 // We DON'T touch showAchToast — it keeps its own clearTimeout pattern. The queue just gates calls
@@ -2276,7 +2444,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -2675,6 +2843,19 @@ function openShop(shop){
       <button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>
       ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
     </div>
+    ${(()=>{
+      // Duct Tape Lure crafting row — only renders when the player has the ingredients or has crafted before.
+      const canCraft=Object.entries(DUCT_LURE_RECIPE).every(([k,n])=>(baitInv[k]||0)>=n);
+      const shown=(baitInv.ducttape||0)>0||canCraft;
+      if(!shown)return '';
+      const cost=Object.entries(DUCT_LURE_RECIPE).map(([k,n])=>`${BAIT_TYPES[k].e}×${n}`).join(' + ');
+      return `<div style="background:rgba(251,207,59,0.05);border:1px dashed rgba(251,207,59,0.4);border-radius:8px;padding:8px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div><b style="color:#ffd23f">🦆 Duct Tape Lure</b><div style="font-size:10px;color:#94a3b8;margin-top:2px">"Almost" works on Duct. Widens the bobber peak window.</div></div>
+          <button class="btn duct-craft" ${canCraft?'':'disabled'} title="Cost: ${cost}" style="background:${canCraft?'linear-gradient(135deg,#ffd23f,#b8860b)':'rgba(3,7,18,0.5)'};color:${canCraft?'#1a1a2e':'#475569'};border:1px solid rgba(251,207,59,0.5);width:auto;padding:6px 12px;margin:0;font-size:11px">CRAFT (${cost})</button>
+        </div>
+      </div>`;
+    })()}
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
     ${shop&&shop.boatworks?renderBoatworksRows():''}
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
@@ -2683,6 +2864,14 @@ function openShop(shop){
   const reopen=()=>openShop(shop);
   card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
+  card.querySelectorAll('.duct-craft').forEach(b=>b.onclick=()=>{
+    if(!Object.entries(DUCT_LURE_RECIPE).every(([k,n])=>(baitInv[k]||0)>=n))return;
+    Object.entries(DUCT_LURE_RECIPE).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)-n});
+    baitInv.ducttape=(baitInv.ducttape||0)+1;persist();sfx('win');
+    onUnlock('duct_lure_crafted');
+    pushAchToast({n:'DUCT TAPE LURE',d:'Crafted. "People swear by these."'});
+    reopen();
+  });
   card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
   card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<it.cost)return;bait-=it.cost;boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
   el.style.display='flex';
@@ -2828,6 +3017,33 @@ function qaForceNight(){
   const t=Date.now()*0.001;_dayOffset=(270-((t%360)))-0;  // land the cycle at 270° (sunY≈-30)
   return !!(scene&&scene._stars&&scene._moon);
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,getSave,mode:GAME_MODE};
+// QA: spawn the Gator King drop directly (skips the gators-required gate).
+function qaSpawnGatorKing(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(S.gatorKingSpawned)return true;
+  S.gatorKingSpawned=true;
+  const dp=mkDropPoint(DP_GATOR_KING);dp.position.set(185,0,80);dp.userData.isGatorKing=true;scene.add(dp);dropPoints.push(dp);
+  return true;
+}
+// QA: open the Gator King mini-boss UI directly (parallels qaOpen for the regular drop types).
+function qaOpenGatorKing(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  let dp=dropPoints.find(d=>d.userData&&d.userData.isGatorKing);
+  if(!dp){qaSpawnGatorKing();dp=dropPoints.find(d=>d.userData&&d.userData.isGatorKing)}
+  if(!dp)return false;
+  mini.openGatorKing(dp);return true;
+}
+// QA: force a lightning strike (skips the rate-limit / rain gate).
+function qaStrikeLightning(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  storm.strike();return true;
+}
+// QA: stuff the bait pantry with ducttape recipe ingredients so the craft button appears.
+function qaSeedDuctRecipe(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  Object.entries(DUCT_LURE_RECIPE).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)+n});
+  persist();return true;
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,getSave,mode:GAME_MODE};
 })();
 
