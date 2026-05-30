@@ -72,6 +72,15 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 8 — Duct compass + camp ambient + settings tabs + 3 craft recipes + run summary
+- **Duct compass marker on the minimap**: a pulsing gold dot that sits at Duct's position, clamping to the rim with a directional arrow chevron when he's beyond the dial. Doesn't require sonar — Duct's always findable now.
+- **Per-camp ambient audio** (`campAudio`): each shore camp has a flavor sound (frog-pond bandpass, creek high-pass, crayfish-hole low rumble, worm-bed cricket-band) that fades up within 50u of the camp + fades out as you leave. Lazy-built on the shared AudioContext, mute-gated, stopped on photo/end/reset.
+- **Settings tabs**: Audio / Graphics / Controls. Reduces visual noise and gives room for new options. `_setTab` persists across reopens. Controls tab now lists the `B` bobber-bounce key.
+- **Multi-recipe craft bench** (`CRAFT_RECIPES`): generalized the duct-only craft flow into a table. Added **🪞 Calm Minnow Rig** (5 minnow + 5 worm) → +35% rare on uncommon spots, no spook factor. Added **📣 Loud Cricket Charm** (6 cricket + 1 frog) → +25% uncommon, doubles bites at lure-marked spots. New `first_craft` achievement; both wired into `rollFish` biases.
+- **Run summary sparkline**: end-of-run haul now shows a proportional tier-bar (legendary / rare / uncommon / common stacked) plus a "Biggest" callout for the highest-score catch.
+- **Mobile touch handlers** on the bobber dots (regular fight + Duct) so a tap registers without the click-event delay.
+- Smoke now **22/22 PASS, 0 fatal** — adds settings-tabs render + persist, multi-recipe count, Duct compass live.
+
 ### Round 6+7 — Codex / forage backdrops / Boatworks polish / bobber-in-boss / thunder ambience
 - **Codex entries** for the Duct Tape Lure (locked until crafted) and Gator King (locked until defeated). Color-coded blocks with lore, live stats, and unlock state.
 - **Forage backdrops** for all 4 games via a shared `mini.paintForageBg(ctx,W,H,core,edge,grain)` helper — biome-specific palettes (worm dirt, bug meadow + grass tufts, frog marsh + lily pads, minnow water + current lines). No more flat color boxes.

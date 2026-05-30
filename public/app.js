@@ -24,7 +24,7 @@ let ductStats={sightings:0,attempts:0,nearCatches:0};
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
-let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0};
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0};
 let equippedBait='';   // '' = bare hook, no bait bias
 // === BOAT UPGRADES ===
 // Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
@@ -68,11 +68,28 @@ const BAIT_TYPES={
   // Lore item — crafted at the tackle shop from rare forage. People swear it draws Duct in faster
   // and "almost" works. Actually: it widens the bobber peak window during Duct fights by ~30%.
   // Does NOT make him catchable. Consumed only on Duct attempts, not regular casts.
-  ducttape:{n:'Duct Tape Lure', c:'#ffd23f', e:'🦆', desc:'A wad of duct tape on a hook. "Almost" works on Duct.', isLure:true}
+  ducttape:{n:'Duct Tape Lure', c:'#ffd23f', e:'🦆', desc:'A wad of duct tape on a hook. "Almost" works on Duct.', isLure:true},
+  // Crafted: pacified minnow → cleaner bites on uncommon spots, no spook factor.
+  calmminnow:{n:'Calm Minnow Rig', c:'#a5d8ee', e:'🪞', desc:'+35% rare on uncommon spots, no spook.', crafted:true},
+  // Crafted: loud cricket → uncommon + double bites at lure-marked spots.
+  loudcricket:{n:'Loud Cricket Charm', c:'#d8e066', e:'📣', desc:'+25% uncommon · doubles bites at lure spots.', crafted:true}
 };
 // Duct Tape Lure recipe — crafted at any tackle shop. Designed to be just out of reach early on so
 // the player has to forage a while before they can chase the legend with it.
 const DUCT_LURE_RECIPE={crayfish:3,frog:4,minnow:6};
+// Crafting recipe table — each entry describes a craftable bait + its cost.
+// Yields BAIT_TYPES key (so they show in the pantry + are equippable like any other bait).
+const CRAFT_RECIPES=[
+  {id:'ducttape',out:'ducttape',in:DUCT_LURE_RECIPE,
+   ach:'duct_lure_crafted',
+   tag:'🦆 Duct Tape Lure',blurb:'"Almost" works on Duct. Widens the bobber peak window.'},
+  {id:'calmminnow',out:'calmminnow',in:{minnow:5,worm:5},
+   ach:'first_craft',
+   tag:'🪞 Calm Minnow Rig',blurb:'A pacified minnow. +35% rare on uncommon spots, no spook factor.'},
+  {id:'loudcricket',out:'loudcricket',in:{cricket:6,frog:1},
+   ach:'first_craft',
+   tag:'📣 Loud Cricket Charm',blurb:'A cricket that won\'t shut up. +25% uncommon AND lure-spots see double bites.'}
+];
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
 // improve the fishing loop: rod = fight control, reel = rare odds, line = max landable rarity,
@@ -187,6 +204,9 @@ function rollFish(spot){
     if(useBait==='minnow')return f.r==='rare'?1.20:f.n==='Three-eyed pike'?1.5:1;
     if(useBait==='frog')return f.r==='rare'?1.25:f.n==='Largemouth bass'?1.5:1;
     if(useBait==='crayfish')return f.r==='rare'?1.30:f.r==='legendary'?1.10:1;
+    // Crafted baits.
+    if(useBait==='calmminnow')return spot&&f.r==='uncommon'?1.35:f.r==='rare'?1.10:1;
+    if(useBait==='loudcricket')return f.r==='uncommon'?1.25:(spot&&spot.bias&&spot.bias.includes(f.n))?2.0:1;
     return 1;
   };
   let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;w*=baitBias(f);return {...f,w}});
@@ -1447,6 +1467,23 @@ function drawMinimap(){
     civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
     if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
   }
+  // Duct compass marker — a pulsing gold dot. If he's beyond the dial radius the proj() clamps to
+  // the rim and we draw a small arrow chevron pointing outward so the player can chase the bearing.
+  if(DUCT.active){
+    const[dx,dz]=proj(DUCT.x,DUCT.z);
+    const offRim=Math.hypot(DUCT.x*scl,DUCT.z*scl)>R-1;
+    const pulse=0.6+Math.sin(now*4)*0.4;
+    ctx.fillStyle='#ffd23f';ctx.globalAlpha=pulse;
+    ctx.beginPath();ctx.arc(dx,dz,offRim?2.5:3,0,Math.PI*2);ctx.fill();
+    if(offRim){
+      // Arrow chevron pointing from boat → Duct, clamped to the rim.
+      const ang=Math.atan2(DUCT.z-bMesh.position.z,DUCT.x-bMesh.position.x);
+      ctx.save();ctx.translate(dx,dz);ctx.rotate(ang);ctx.fillStyle='#ffd23f';
+      ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-2,-2.5);ctx.lineTo(-2,2.5);ctx.closePath();ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha=1;
+  }
   ctx.restore();
 }
 
@@ -1938,7 +1975,7 @@ function openFight(fish,spot){
     }
     if(fStreakEl)fStreakEl.textContent=fStreak;
   };
-  fBobEl&&(fBobEl.onclick=fTapBob);
+  if(fBobEl){fBobEl.onclick=fTapBob;fBobEl.ontouchstart=e=>{e.preventDefault();fTapBob()}}
   const keyH=e=>{
     if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
     if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();fTapBob()}
@@ -2044,7 +2081,7 @@ function openDuctChase(){
     }
     if(streakEl)streakEl.textContent=streak;
   };
-  bobEl&&(bobEl.onclick=tapBobber);
+  if(bobEl){bobEl.onclick=tapBobber;bobEl.ontouchstart=e=>{e.preventDefault();tapBobber()}}
   const keyH=e=>{
     if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
     if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();tapBobber()}
@@ -2165,7 +2202,7 @@ function sfx(type){
   g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
-function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop()}else sfx('click')}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop();campAudio.stopAll()}else sfx('click')}
 
 // === CONTINUOUS ENGINE + AMBIENT AUDIO ===
 // A throaty motor whose pitch + volume track boat speed, plus a constant low water-lap bed. Built
@@ -2225,6 +2262,48 @@ const stormAudio={on:false,gain:null,src:null,
     this.gain.gain.setTargetAtTime(target,_audioCtx.currentTime,0.5);
   },
   stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.2)}
+};
+// === PER-CAMP AMBIENT AUDIO ===
+// Each shore camp has a flavor sound that fades up as the player approaches and out as they leave.
+// Lazily built on the shared AudioContext; one channel per camp id. All channels share the master
+// _audVol and the mute flag. Stopped on photo/end/reset/mute.
+const campAudio={chans:{},
+  // Build a one-off looping noise source through a per-camp filter — cheap and matches the existing
+  // engineAudio/stormAudio pattern (no asset loading).
+  _build(id){
+    if(!_audioCtx)return null;
+    const ctx=_audioCtx;
+    const buf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
+    const src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+    const filt=ctx.createBiquadFilter(),gain=ctx.createGain();gain.gain.value=0;
+    // Per-camp filter character — picks the texture (low rumble vs high gurgle vs band-pass croak).
+    if(id==='west_marsh'){filt.type='bandpass';filt.frequency.value=420;filt.Q.value=2.5}        // frog-pond croak band
+    else if(id==='north_creek'){filt.type='highpass';filt.frequency.value=1100;filt.Q.value=0.5}  // creek trickle
+    else if(id==='east_rocks'){filt.type='bandpass';filt.frequency.value=240;filt.Q.value=0.7}    // crayfish hole bubbles
+    else{filt.type='bandpass';filt.frequency.value=900;filt.Q.value=0.8}                          // worm beds — crickets-ish
+    src.connect(filt);filt.connect(gain);gain.connect(ctx.destination);src.start();
+    return {src,gain,filt};
+  },
+  ensure(id){
+    if(this.chans[id]||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const c=this._build(id);if(c)this.chans[id]=c;
+  },
+  // Drive the gains every frame: closest camp within 50u rolls in, all others roll out.
+  update(){
+    if(muted){this.stopAll();return}
+    if(!_audioCtx)return;
+    let nearestId=null,nearestD=Infinity;
+    for(const m of campMeshes){const d=bMesh.position.distanceTo(m.position);if(d<50&&d<nearestD){nearestD=d;nearestId=m.userData.camp.id}}
+    const now=_audioCtx.currentTime;
+    for(const id in this.chans){
+      const target=(id===nearestId)?Math.max(0,(50-nearestD)/50)*0.04*_audVol:0;
+      this.chans[id].gain.gain.setTargetAtTime(target,now,0.6);
+    }
+    if(nearestId&&!this.chans[nearestId])this.ensure(nearestId);
+  },
+  stopAll(){if(!_audioCtx)return;const now=_audioCtx.currentTime;for(const id in this.chans)this.chans[id].gain.gain.setTargetAtTime(0,now,0.2)}
 };
 // Screen-shake magnitude — bumped by surge/damage, decays each frame in the camera follow.
 let _shake=0;
@@ -2312,7 +2391,8 @@ const ACH={
   boss_clean:{n:'Surgical',d:'Beat the Deep Dock without dropping below 50% hull.'},
   duct_lure_crafted:{n:'Recipe From The Pier',d:'Crafted your first Duct Tape Lure.'},
   gator_king:{n:'Crowned',d:'Took the Gator King at East Rocks.'},
-  storm_survivor:{n:'Sky Falls',d:'Survived a lightning strike at speed.'}
+  storm_survivor:{n:'Sky Falls',d:'Survived a lightning strike at speed.'},
+  first_craft:{n:'Tackle Bench',d:'Crafted a custom bait at the pier.'}
 };
 // Tiny queue around the existing toast so rapid back-to-back unlocks don't clobber each other.
 // We DON'T touch showAchToast — it keeps its own clearTimeout pattern. The queue just gates calls
@@ -2531,7 +2611,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
-    engineAudio.update(spd);stormAudio.update();
+    engineAudio.update(spd);stormAudio.update();campAudio.update();
   }else if(photoMode){
     // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
     photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
@@ -2539,7 +2619,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
     const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
-    engineAudio.stop();stormAudio.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
+    engineAudio.stop();stormAudio.stop();campAudio.stopAll();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -2604,7 +2684,7 @@ function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -2646,7 +2726,15 @@ function endGame(won){S.on=false;S.played=true;document.body.classList.remove('p
   if(haulWrap&&GAME_MODE==='game'&&runCatches.length>0){
     const byR={common:0,uncommon:0,rare:0,legendary:0};runCatches.forEach(f=>byR[f.r]++);
     haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
-    haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
+    // Sparkline-style rarity breakdown: a single proportional bar split by tier.
+    const total=runCatches.length;
+    const tierOrder=['common','uncommon','rare','legendary'];
+    const bar=`<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:rgba(3,7,18,0.5);margin:8px 0 6px">${tierOrder.map(r=>byR[r]>0?`<div title="${r} · ${byR[r]}" style="flex:${byR[r]};background:${RARE_COLOR[r]}"></div>`:'').join('')}</div>`;
+    const legend=tierOrder.filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px;font-size:10px">${r}</span> <b style="color:#fde68a;font-size:11px">${byR[r]}</b>`).join(' &nbsp; ');
+    // Find the biggest fish (highest score value) for a "biggest catch" callout.
+    const biggest=runCatches.reduce((a,b)=>(!a||b.s>a.s)?b:a,null);
+    const biggestLine=biggest?`<div style="margin-top:6px;padding:6px 10px;background:rgba(${biggest.r==='legendary'?'255,210,63':biggest.r==='rare'?'139,92,246':'16,185,129'},0.10);border-left:2px solid ${RARE_COLOR[biggest.r]};border-radius:4px;font-size:11px;color:#cbd5e1"><b>Biggest:</b> ${biggest.e} ${biggest.n} <span style="color:#fbcf3b">+${biggest.s}</span></div>`:'';
+    haulDetail.innerHTML=bar+legend+biggestLine;
   }else if(haulWrap)haulWrap.style.display='none';
   // Persistent trophy board (rare + legendary uniques across all runs).
   const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
@@ -2742,7 +2830,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
@@ -2934,17 +3022,22 @@ function openShop(shop){
       ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
     </div>
     ${(()=>{
-      // Duct Tape Lure crafting row — only renders when the player has the ingredients or has crafted before.
-      const canCraft=Object.entries(DUCT_LURE_RECIPE).every(([k,n])=>(baitInv[k]||0)>=n);
-      const shown=(baitInv.ducttape||0)>0||canCraft;
-      if(!shown)return '';
-      const cost=Object.entries(DUCT_LURE_RECIPE).map(([k,n])=>`${BAIT_TYPES[k].e}×${n}`).join(' + ');
-      return `<div style="background:rgba(251,207,59,0.05);border:1px dashed rgba(251,207,59,0.4);border-radius:8px;padding:8px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <div><b style="color:#ffd23f">🦆 Duct Tape Lure</b><div style="font-size:10px;color:#94a3b8;margin-top:2px">"Almost" works on Duct. Widens the bobber peak window.</div></div>
-          <button class="btn duct-craft" ${canCraft?'':'disabled'} title="Cost: ${cost}" style="background:${canCraft?'linear-gradient(135deg,#ffd23f,#b8860b)':'rgba(3,7,18,0.5)'};color:${canCraft?'#1a1a2e':'#475569'};border:1px solid rgba(251,207,59,0.5);width:auto;padding:6px 12px;margin:0;font-size:11px">CRAFT (${cost})</button>
-        </div>
-      </div>`;
+      // Generic crafting block — renders one row per CRAFT_RECIPES entry the player has either
+      // already crafted before or has the ingredients for. Hidden entirely if neither is true.
+      const visible=CRAFT_RECIPES.filter(r=>(baitInv[r.out]||0)>0||Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n));
+      if(!visible.length)return '';
+      const rows=visible.map(r=>{
+        const canCraft=Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n);
+        const cost=Object.entries(r.in).map(([k,n])=>`${BAIT_TYPES[k].e}×${n}`).join(' + ');
+        const bt=BAIT_TYPES[r.out],col=bt.c;
+        return `<div style="background:rgba(251,207,59,0.04);border:1px dashed ${col}66;border-radius:8px;padding:8px 12px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div><b style="color:${col}">${r.tag}</b> <span style="color:#94a3b8;font-size:10px">×${baitInv[r.out]||0}</span><div style="font-size:10px;color:#94a3b8;margin-top:2px">${r.blurb}</div></div>
+            <button class="btn recipe-craft" data-rid="${r.id}" ${canCraft?'':'disabled'} title="Cost: ${cost}" style="background:${canCraft?`linear-gradient(135deg,${col},#1a1a2e)`:'rgba(3,7,18,0.5)'};color:${canCraft?'#1a1a2e':'#475569'};border:1px solid ${col}88;width:auto;padding:6px 12px;margin:0;font-size:11px">CRAFT (${cost})</button>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">Tackle Bench · craft custom bait</div>${rows}`;
     })()}
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
     ${shop&&shop.boatworks?renderBoatworksRows():''}
@@ -2954,12 +3047,13 @@ function openShop(shop){
   const reopen=()=>openShop(shop);
   card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
-  card.querySelectorAll('.duct-craft').forEach(b=>b.onclick=()=>{
-    if(!Object.entries(DUCT_LURE_RECIPE).every(([k,n])=>(baitInv[k]||0)>=n))return;
-    Object.entries(DUCT_LURE_RECIPE).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)-n});
-    baitInv.ducttape=(baitInv.ducttape||0)+1;persist();sfx('win');
-    onUnlock('duct_lure_crafted');
-    pushAchToast({n:'DUCT TAPE LURE',d:'Crafted. "People swear by these."'});
+  card.querySelectorAll('.recipe-craft').forEach(b=>b.onclick=()=>{
+    const r=CRAFT_RECIPES.find(x=>x.id===b.dataset.rid);if(!r)return;
+    if(!Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n))return;
+    Object.entries(r.in).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)-n});
+    baitInv[r.out]=(baitInv[r.out]||0)+1;persist();sfx('win');
+    if(r.ach)onUnlock(r.ach);
+    pushAchToast({n:BAIT_TYPES[r.out].n.toUpperCase(),d:'Crafted at the tackle bench.'});
     reopen();
   });
   card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
@@ -2976,26 +3070,42 @@ function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el
   card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${rows}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   el.style.display='flex';
 }
+// Settings tab state — persists across reopens so the player isn't jolted back to the first tab.
+let _setTab='audio';
 function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
+  const tabBtn=(id,label)=>`<button class="set-tab" data-tab="${id}" style="background:${_setTab===id?'rgba(96,208,255,0.18)':'rgba(3,7,18,0.5)'};border:1px solid ${_setTab===id?'#60d0ff':'rgba(30,41,59,0.6)'};color:${_setTab===id?'#60d0ff':'#94a3b8'};font:600 11px 'JetBrains Mono',monospace;letter-spacing:1px;padding:7px 14px;border-radius:6px;cursor:pointer">${label}</button>`;
+  const row=(label,right)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">${label}</span>${right}</div>`;
+  // Audio tab: sound toggle + the two sliders.
+  const audioTab=`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
+    ${row('Audio Volume',`<input id="audio-vol" type="range" min="0" max="1" step="0.05" value="${_audVol}" oninput="DS.setAudVol(parseFloat(this.value))" style="width:160px;accent-color:#fb923c">`)}
+    ${row('Engine + ambient',`<span style="color:#94a3b8;font:10px 'JetBrains Mono',monospace">drives motor loop + camp ambience + storm rumble</span>`)}
+  `;
+  // Graphics tab: quality preset + shake.
+  const gfxTab=`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
+    ${row('Screen Shake',`<input id="shake-mul" type="range" min="0" max="1.5" step="0.1" value="${_shakeMul}" oninput="DS.setShakeMul(parseFloat(this.value))" style="width:160px;accent-color:#fb923c">`)}
+    ${row('Reset Save',`<button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button>`)}
+  `;
+  // Controls tab: keybinds + the bobber-rhythm key, which didn't exist when this card was first written.
+  const controlsTab=`
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.85;padding:6px 0">
+      <span style="color:#fbcf3b">W A S D</span> · Arrows — Drive<br>
+      <span style="color:#fbcf3b">Space</span> — Sonar Ping / Reel (in a fight)<br>
+      <span style="color:#fbcf3b">B</span> — Bobber-bounce tap (rhythm bonus during fights + Duct)<br>
+      <span style="color:#fbcf3b">F</span> — Cast (when stopped) / engage Duct<br>
+      <span style="color:#fbcf3b">E</span> — Dock at a bait shop<br>
+      <span style="color:#fbcf3b">G</span> — Beach at a shore camp (forage)<br>
+      <span style="color:#fbcf3b">P</span> — Photo mode (orbit cam)<br>
+      <span style="color:#fbcf3b">Esc</span> — Bail mini-game / close menus
+    </div>
+  `;
+  const tabHtml={audio:audioTab,gfx:gfxTab,controls:controlsTab}[_setTab];
   card.innerHTML=`<div class="m-kicker" style="color:#60d0ff">Settings</div><div class="m-title">Operations panel.</div>
-    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:12px 14px;margin:10px 0">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Audio Volume</span><input id="audio-vol" type="range" min="0" max="1" step="0.05" value="${_audVol}" oninput="DS.setAudVol(parseFloat(this.value))" style="width:160px;accent-color:#fb923c"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Screen Shake</span><input id="shake-mul" type="range" min="0" max="1.5" step="0.1" value="${_shakeMul}" oninput="DS.setShakeMul(parseFloat(this.value))" style="width:160px;accent-color:#fb923c"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Reset Save</span><button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button></div>
-    </div>
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.7;background:rgba(3,7,18,0.4);border-radius:8px;padding:10px">
-      <div style="color:#fb923c;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">Controls</div>
-      W/A/S/D · Arrows — Drive<br>
-      Space — Sonar Ping<br>
-      F — Cast (when stopped)<br>
-      E — Dock at a bait shop<br>
-      G — Beach at a shore camp (forage)<br>
-      P — Photo mode (orbit cam)<br>
-      Esc — Bail mini-game / close menus
-    </div>
-    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+    <div style="display:flex;gap:6px;margin:10px 0 8px">${tabBtn('audio','🔊 Audio')}${tabBtn('gfx','✨ Graphics')}${tabBtn('controls','🎮 Controls')}</div>
+    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:6px 14px;margin-bottom:10px;min-height:180px">${tabHtml}</div>
+    <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
+  card.querySelectorAll('.set-tab').forEach(b=>b.onclick=()=>{_setTab=b.dataset.tab;openSettings()});
   el.style.display='flex';
 }
 function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
