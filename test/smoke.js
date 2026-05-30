@@ -399,6 +399,41 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!hasLine)fail('Rod-line setup path failed');
     console.log('· visual rod line wires up');
 
+    // === Round 15 assertions ===
+
+    // 37. visibilitychange handler — fire a synthetic event in a try/catch so we capture whether
+    // the listener throws. We can't read S directly (IIFE-scoped) so the assertion is just "no throw".
+    const pauseRes=await p.evaluate(()=>{
+      try{
+        document.dispatchEvent(new Event('visibilitychange'));
+        document.dispatchEvent(new Event('visibilitychange'));
+        return {ok:true};
+      }catch(e){return {ok:false,err:String(e)}}
+    });
+    if(!pauseRes.ok)fail('visibilitychange handler threw: '+(pauseRes.err||''));
+    console.log('· tab visibility pause/resume wires');
+
+    // 38. exportAchievements() returns true when there are unlocks, false when empty.
+    const exAch=await p.evaluate(()=>{
+      // Seed an unlock so the export path actually runs (returns true).
+      DS.qaUnlock(['first_catch']);
+      return typeof DS.exportAchievements==='function'&&DS.exportAchievements()===true;
+    });
+    if(!exAch)fail('exportAchievements did not produce a PNG download');
+    console.log('· achievements share PNG renders');
+
+    // 39. Hook-set celebration — the existing tryHookSet path runs without throwing. We can't probe
+    // the grade flash from headless, but verify the bobber pretell→nibble→hookset chain.
+    await p.evaluate(()=>{DS.qaResetStreak();DS.qaForceNibble()});await sleep(50);
+    const setOk=await p.evaluate(()=>{
+      const s=DS.qaForceNibble();if(!s)return false;
+      // Jump to nibble phase + call cast() which routes to tryHookSet when a bobber is live.
+      DS.cast();
+      return true;
+    });
+    if(!setOk)fail('hook-set celebration path threw');
+    console.log('· hook-set celebration fires');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});

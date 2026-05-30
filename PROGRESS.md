@@ -72,6 +72,14 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 15 — tab-pause + underwater fish silhouette + hook-set celebration + per-hero rod color + achievements share PNG
+- **Tab visibility pause** — `visibilitychange` listener silences engine/storm/music/reel/camp audio, stashes `S.on`, restores on visible. Critical baseline so the game doesn't bleed in a background tab.
+- **Underwater fish silhouette** — a soft dark ellipse circles the bobber during the wait phase (radius 1.8u), spirals in during pretell (radius 0.6u), vanishes on nibble. Sells "something is swimming around your line."
+- **Hook-set celebration** — bigger splash (×1.5 particle count, golden tint), camera punch via `_shake`, brief 220ms golden `#grade` flash, `flashDamage(0.25)` on big fish so the strike has weight.
+- **Per-hero rod color** — `_bobberLine` material now picks `BT[S.bc].accents.stripe` (Reel blue stripe, Lilly lime, Fly bright blue) so the fishing line itself reads the operative.
+- **Achievements share PNG** — `DS.exportAchievements()` paints a 1200×630 OG card with the unlock count + 5 most-recent badges; "💾 Share PNG" button in the Achievements panel.
+- Smoke now **44/44 PASS, 0 fatal**.
+
 ### Round 14 — reel-whine into Duct + boss, streak share card, Pier's Notes 30-day toggle, visual rod line
 - **Reel-whine in Duct chase** (`endDuct` stop wired) — the R13 continuous-tension oscillator now sings during Duct fights too.
 - **Reel-whine in Deep Dock boss** phase-3 reel — frequency tracks tension, stops via `mini.addTeardown`.

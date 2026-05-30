@@ -2123,11 +2123,12 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
 // In-world bobber mesh + state for the wait-for-bite phase. Only one bobber lives at a time.
 let _bobberMesh=null,_bobberState=null;  // {phase:'wait'|'nibble',spot,fish,t0,nibbleAt,nibbleEnd,bobBase}
-// Bobber + the fishing-line that connects it to the boat. Dispose both together.
-let _bobberLine=null;
+// Bobber + the fishing-line + underwater fish silhouette. All disposed together.
+let _bobberLine=null,_bobberFish=null,_bobberFishT0=0;
 function disposeBobber(){
   if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}
   if(_bobberLine){scene.remove(_bobberLine);_bobberLine.geometry.dispose();_bobberLine.material.dispose();_bobberLine=null}
+  if(_bobberFish){scene.remove(_bobberFish);_bobberFish.geometry.dispose();_bobberFish.material.dispose();_bobberFish=null}
   _bobberState=null;
 }
 function cancelCast(){
@@ -2180,11 +2181,17 @@ function startBobberWait(spot,fish){
   const hi=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x444444,emissiveIntensity:0.2,roughness:0.5}));hi.position.y=0.05;grp.add(hi);
   const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.45,5),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0xffd23f,emissiveIntensity:0.7}));ant.position.y=0.32;grp.add(ant);
   grp.position.copy(bp);scene.add(grp);_bobberMesh=grp;
-  // Fishing line — thin grey LineSegments from a synthetic "rod-tip" point on the boat to the
-  // bobber. Updated each tick in tickBobber so it swings with bobber motion. Cheap (2 verts).
+  // Fishing line — thin LineSegments from rod-tip to bobber. Color picks the hero accent so each
+  // operative's rod reads. Updated each tick in tickBobber so it swings with bobber motion.
   const lg=new THREE.BufferGeometry();lg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
-  const lm=new THREE.LineBasicMaterial({color:0xeeeeee,transparent:true,opacity:0.55});
+  const heroAccent=(BT[S.bc]&&BT[S.bc].accents&&BT[S.bc].accents.stripe)||0xeeeeee;
+  const lm=new THREE.LineBasicMaterial({color:heroAccent,transparent:true,opacity:0.7});
   _bobberLine=new THREE.LineSegments(lg,lm);scene.add(_bobberLine);
+  // Underwater fish silhouette — a soft dark ellipse hovering just below the water surface,
+  // circling the bobber. Sells "something's swimming around your line" without spoiling the species.
+  const fishG=new THREE.Mesh(new THREE.SphereGeometry(0.42,12,8),new THREE.MeshBasicMaterial({color:0x041018,transparent:true,opacity:0.45,depthWrite:false}));
+  fishG.scale.set(1.4,0.4,0.7);fishG.position.set(bp.x+1.6,-0.35,bp.z);scene.add(fishG);_bobberFish=fishG;
+  _bobberFishT0=Date.now();
   // Wait time biases toward shorter for commons / minnow bait, longer for rare/legendary.
   const rar=fish.r==='legendary'?1.5:fish.r==='rare'?1.2:fish.r==='uncommon'?0.9:0.7;
   const wait=(1500+Math.random()*3500)*rar;
@@ -2208,6 +2215,22 @@ function tickBobber(t){
     p.setXYZ(0,tipLocal.x,tipLocal.y,tipLocal.z);
     p.setXYZ(1,_bobberMesh.position.x,_bobberMesh.position.y+0.32,_bobberMesh.position.z);
     p.needsUpdate=true;
+  }
+  // Underwater fish — circles the bobber during wait, spirals in during pretell, vanishes on
+  // nibble (the bobber dip sells it). Position lerps so the silhouette glides smoothly.
+  if(_bobberFish&&_bobberMesh){
+    const elapsed=(Date.now()-_bobberFishT0)*0.001;
+    if(s.phase==='nibble'){_bobberFish.visible=false}
+    else{
+      _bobberFish.visible=true;
+      const radius=s.phase==='pretell'?0.6:1.8;  // closes in during pretell
+      const a=elapsed*1.4;
+      _bobberFish.position.x=_bobberMesh.position.x+Math.cos(a)*radius;
+      _bobberFish.position.z=_bobberMesh.position.z+Math.sin(a)*radius;
+      _bobberFish.position.y=-0.35+Math.sin(elapsed*2.2)*0.05;
+      _bobberFish.rotation.y=a+Math.PI/2;
+      _bobberFish.material.opacity=s.phase==='pretell'?0.65:0.4;
+    }
   }
   // Idle bob — tiny vertical sine while waiting. Edge-trigger to pretell ~400ms before the F window
   // opens so the player gets a visual telegraph (per Dredge/RF4 research). Pretell wobbles + mini-dips.
@@ -2249,10 +2272,15 @@ function tryHookSet(){
     sfx('hit');radio('Yanked too early. Spooked it.','reel');
     disposeBobber();return true;
   }
-  // Nibble window — clean hook set! Big splash + go to fight.
+  // Nibble window — clean hook set! Bigger splash + camera punch + brief golden flash so the
+  // payoff lands. The fight UI takes over after the celebration cooldown.
   sfx('cast');sfx('ping');const bp=_bobberMesh.position.clone();bp.y=0.2;
   const fish=s.fish,spot=s.spot;
-  splash(bp,fish.fight>=2?22:12,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.5:1);wet.add(fish.fight>=2?12:8);
+  splash(bp,fish.fight>=2?30:18,fish.gator?0x9fd8b0:0xfff2c0,fish.fight>=2?1.9:1.4);wet.add(fish.fight>=2?18:14);
+  _shake=Math.max(_shake,0.45);  // camera punch — bigger for big fish via the existing flashDamage path
+  if(fish.fight>=2)flashDamage(0.25);  // brief vignette pop for legendaries/gators
+  // Golden flash via the #grade overlay — 220ms pulse so the player sees the strike.
+  const gr=$('grade');if(gr){gr.style.transition='opacity 0.22s ease-out';gr.style.opacity='0.55';setTimeout(()=>{gr.style.opacity=''},230)}
   disposeBobber();
   if(!fish.fight)landFish(fish,spot);else openFight(fish,spot);
   return true;
@@ -3455,6 +3483,19 @@ document.body.classList.add('mode-'+GAME_MODE);
 // boat() call later overwrites this with the actual hero once a class is chosen.
 document.body.classList.add('hero-reel');
 initEngine();wet.init();refreshTrophyPeek();applyGfx();
+// Pause when the tab is hidden — silence all continuous audio so we don't bleed in a background
+// tab, and stash S.on so we can restore it on visibilitychange→visible. The RAF loop is left
+// running (a paused tab throttles RAF automatically) so the scene is ready when the user returns.
+let _hiddenSavedOn=null;
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){
+    _hiddenSavedOn=S.on;S.on=false;
+    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();
+  }else{
+    if(_hiddenSavedOn===true)S.on=true;_hiddenSavedOn=null;
+    if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
+  }
+});
 // iOS Safari requires AudioContext.resume() inside a user-gesture handler. sfx() already lazy-
 // creates the ctx, but it can land in a 'suspended' state. Wire a one-shot pointerdown/touchend/
 // keydown that resumes it the first time the user actually does anything. {once:true} per type.
@@ -3706,7 +3747,8 @@ function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el
     const unlocked=c.rows.filter(([id])=>achievements.has(id)).length;
     return `<div style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:center;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;color:${c.col};margin-bottom:4px"><span>${c.name}</span><span style="color:#64748b;font-weight:400">${unlocked}/${c.rows.length}</span></div>${c.rows.map(renderRow).join('')}</div>`;
   }).join('');
-  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${catBlocks}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:14px">Close</button>`;
+  const shareBtn=got.length?`<button class="btn bx" onclick="DS.exportAchievements()" style="margin-top:14px;margin-right:8px;width:auto;display:inline-block">💾 Share PNG</button>`:'';
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${catBlocks}<div style="margin-top:14px;display:flex;gap:8px">${shareBtn}<button class="btn bx" onclick="DS.closePeek()" style="flex:1">Close</button></div>`;
   el.style.display='flex';
 }
 // Settings tab state — persists across reopens so the player isn't jolted back to the first tab.
@@ -3828,6 +3870,29 @@ function exportStreak(){
   x.fillStyle='#fb923c';x.fillRect(W*0.32,560,W*0.36,4);
   x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,608);
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-streak.png';document.body.appendChild(a);a.click();a.remove();
+  sfx('win');return true;
+}
+// Achievements share card — 1200x630 OG-friendly PNG showing the player's unlock count + the
+// 5 most-recently-earned badge names. Companion to exportTrophy/exportStreak.
+function exportAchievements(){
+  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
+  if(!got.length)return false;
+  const W=1200,H=630;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  const bg=x.createRadialGradient(W/2,H*0.45,40,W/2,H/2,W*0.8);
+  bg.addColorStop(0,'#0c1c2e');bg.addColorStop(0.45,'#0a0a18');bg.addColorStop(1,'#02060f');
+  x.fillStyle=bg;x.fillRect(0,0,W,H);
+  x.font='700 24px JetBrains Mono, monospace';x.fillStyle='#fb923c';x.textAlign='center';
+  x.fillText('DOCKSHIELD · THE DEPTH',W/2,90);
+  x.font='130px DM Sans, sans-serif';x.fillText('🏅',W/2,260);
+  x.font='700 90px DM Sans, sans-serif';x.fillStyle='#fde68a';x.fillText(got.length+' / '+Object.keys(ACH).length,W/2,360);
+  x.font='600 28px JetBrains Mono, monospace';x.fillStyle='#fbcf3b';x.fillText('achievements unlocked',W/2,395);
+  // Most-recent 5 badge names (achievement set preserves insertion order on add).
+  const recent=got.slice(-5).reverse();
+  x.font='400 20px DM Sans, sans-serif';x.textAlign='left';
+  recent.forEach((a,i)=>{x.fillStyle='#fbcf3b';x.fillText('★',W*0.18,475+i*28);x.fillStyle='#e8edf5';x.fillText(a.n,W*0.18+24,475+i*28)});
+  x.textAlign='center';x.fillStyle='#fb923c';x.fillRect(W*0.32,560,W*0.36,4);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,608);
+  const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-achievements.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
 }
 function applyGfx(){
@@ -4125,6 +4190,6 @@ function qaStumpCount(){
   if(!scene||!scene._sharedStumpGeo)return 0;
   let n=0;scene.traverse(o=>{if(o.geometry===scene._sharedStumpGeo)n++});return n;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
 })();
 
