@@ -681,9 +681,10 @@ const mini={
         tension=Math.min(1,tension+0.012);
         const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';
         bobT+=0.05;const bb=$('b-bob');if(bb)bb.style.left=(bobPos()*100)+'%';
+        reelAudio.update(tension);  // R14: line-singing tension feedback in the boss reel too
         if(tension>=1){clearInterval(lureWindow);phase=3;render()}
       },50);
-      mini.addTeardown(()=>clearInterval(lureWindow));
+      mini.addTeardown(()=>{clearInterval(lureWindow);reelAudio.stop()});
     };
     const release=()=>{
       clearInterval(lureWindow);
@@ -2122,7 +2123,13 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
 // In-world bobber mesh + state for the wait-for-bite phase. Only one bobber lives at a time.
 let _bobberMesh=null,_bobberState=null;  // {phase:'wait'|'nibble',spot,fish,t0,nibbleAt,nibbleEnd,bobBase}
-function disposeBobber(){if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}_bobberState=null}
+// Bobber + the fishing-line that connects it to the boat. Dispose both together.
+let _bobberLine=null;
+function disposeBobber(){
+  if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}
+  if(_bobberLine){scene.remove(_bobberLine);_bobberLine.geometry.dispose();_bobberLine.material.dispose();_bobberLine=null}
+  _bobberState=null;
+}
 function cancelCast(){
   // Hard-stop any in-flight cast: clear the animation interval, dispose the ring + bobber.
   if(_castAnim){clearInterval(_castAnim);_castAnim=null}
@@ -2173,6 +2180,11 @@ function startBobberWait(spot,fish){
   const hi=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x444444,emissiveIntensity:0.2,roughness:0.5}));hi.position.y=0.05;grp.add(hi);
   const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.45,5),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0xffd23f,emissiveIntensity:0.7}));ant.position.y=0.32;grp.add(ant);
   grp.position.copy(bp);scene.add(grp);_bobberMesh=grp;
+  // Fishing line — thin grey LineSegments from a synthetic "rod-tip" point on the boat to the
+  // bobber. Updated each tick in tickBobber so it swings with bobber motion. Cheap (2 verts).
+  const lg=new THREE.BufferGeometry();lg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
+  const lm=new THREE.LineBasicMaterial({color:0xeeeeee,transparent:true,opacity:0.55});
+  _bobberLine=new THREE.LineSegments(lg,lm);scene.add(_bobberLine);
   // Wait time biases toward shorter for commons / minnow bait, longer for rare/legendary.
   const rar=fish.r==='legendary'?1.5:fish.r==='rare'?1.2:fish.r==='uncommon'?0.9:0.7;
   const wait=(1500+Math.random()*3500)*rar;
@@ -2187,6 +2199,16 @@ function startBobberWait(spot,fish){
 function tickBobber(t){
   if(!_bobberState||!_bobberMesh)return;
   const s=_bobberState,now=Date.now();
+  // Fishing line — snap rod tip + bobber positions into the existing LineSegments buffer. The rod
+  // tip sits a touch above the boat's port-side gunwale; refreshed each frame so the line tracks
+  // the boat's idle bob + the bobber's nibble dip.
+  if(_bobberLine&&bMesh){
+    const p=_bobberLine.geometry.attributes.position;
+    const tipLocal=new THREE.Vector3(0.6,1.4,3.4).applyQuaternion(bMesh.quaternion).add(bMesh.position);
+    p.setXYZ(0,tipLocal.x,tipLocal.y,tipLocal.z);
+    p.setXYZ(1,_bobberMesh.position.x,_bobberMesh.position.y+0.32,_bobberMesh.position.z);
+    p.needsUpdate=true;
+  }
   // Idle bob — tiny vertical sine while waiting. Edge-trigger to pretell ~400ms before the F window
   // opens so the player gets a visual telegraph (per Dredge/RF4 research). Pretell wobbles + mini-dips.
   if(s.phase==='wait'){
@@ -2450,12 +2472,13 @@ function openDuctChase(){
     peaked=Math.max(peaked,progress);
     if(inBand&&Math.random()<0.25)sfx('click');
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    reelAudio.update(tension);  // R14: continuous tension feedback in the Duct chase too
     // Bobber bob: 50ms tick → ~20Hz position update, freq tuned so a full oscillation is ~1s.
     bobT+=0.05;if(bobEl)bobEl.style.left=(bobPos()*100)+'%';
     // Rig the escape: once the bar reaches this archetype's threshold, he bolts.
     if(progress>=esc.at*100){over=true;sfx('quack');runDuctEscapeAnim(esc.k);endDuct(esc,peaked)}
   },50);
-  const stop=()=>{over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
+  const stop=()=>{over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);reelAudio.stop()};
   function endDuct(e,peakPct){
     stop();
     if(peakPct>=60){ductStats.nearCatches++;logDuct('near');onUnlock('duct_near_miss')}
@@ -3785,6 +3808,28 @@ function exportTrophy(){
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-trophy.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
 }
+// Streak share card — same OG-friendly 1200×630 framing as exportTrophy. Shows the player's
+// current daily-streak count + all-time best as a shareable PNG.
+function exportStreak(){
+  if(!streak||(streak.count||0)<1)return false;
+  const W=1200,H=630;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  // Background — warmer than the trophy card, with a soft orange aura under the flame.
+  const bg=x.createRadialGradient(W/2,H*0.45,40,W/2,H/2,W*0.8);
+  bg.addColorStop(0,'#1a1006');bg.addColorStop(0.45,'#0a0a18');bg.addColorStop(1,'#02060f');
+  x.fillStyle=bg;x.fillRect(0,0,W,H);
+  x.font='700 24px JetBrains Mono, monospace';x.fillStyle='#fb923c';x.textAlign='center';
+  x.fillText('DOCKSHIELD · THE DEPTH',W/2,90);
+  x.font='160px DM Sans, sans-serif';x.fillText('🔥',W/2,310);
+  x.font='700 110px DM Sans, sans-serif';x.fillStyle='#fde68a';x.fillText('Day '+(streak.count||0),W/2,430);
+  x.font='600 32px JetBrains Mono, monospace';x.fillStyle='#fbcf3b';x.fillText('at the Bayou',W/2,472);
+  if((streak.max||0)>(streak.count||0)){
+    x.font='400 22px DM Sans, sans-serif';x.fillStyle='#94a3b8';x.fillText('best streak · '+streak.max+' days',W/2,520);
+  }
+  x.fillStyle='#fb923c';x.fillRect(W*0.32,560,W*0.36,4);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,608);
+  const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-streak.png';document.body.appendChild(a);a.click();a.remove();
+  sfx('win');return true;
+}
 function applyGfx(){
   if(!scene)return;
   const lowMode=gfxQuality==='low',highMode=gfxQuality==='high';
@@ -3802,6 +3847,9 @@ function applyGfx(){
 
 // Codex search/filter state — persists across reopens like the settings tab does.
 let _codexQ='',_codexTier='all';
+// Pier's Notes Duct sparkline span — toggles 14 ↔ 30 days via the in-card button.
+let _ductChartSpan=14;
+function toggleDuctSpan(){_ductChartSpan=_ductChartSpan===14?30:14;openCodex()}
 // Bait pantry filter — All / Foraged (worm/cricket/frog/minnow/crayfish) / Crafted (BAIT_TYPES.crafted/isLure).
 let _pantryTab='all';
 function openCodex(){
@@ -3851,21 +3899,30 @@ function openCodex(){
       <div style="flex:1;min-width:0"><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
       <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div>
       ${(()=>{
-        // 14-day sparkline. Each day = 3 stacked thin bars (sightings/attempts/near-catches),
-        // height proportional to that day's count vs the period max. Lore: "the pier keeps notes."
-        const today=new Date();const days=[];for(let i=13;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10))}
+        // N-day sparkline. _ductChartSpan toggles between 14 and 30 days. Best-week highlight
+        // strip marks the 7-day window with the most attempts.
+        const span=_ductChartSpan||14;
+        const today=new Date();const days=[];for(let i=span-1;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10))}
         const entries=days.map(d=>ductLog[d]||{s:0,a:0,n:0});
         const max=Math.max(1,...entries.map(e=>Math.max(e.s,e.a,e.n)));
-        if(max<=1&&Object.keys(ductLog).length===0)return '';  // hide chart until there's data
-        return `<div style="margin-top:8px;font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase">Pier's Notes · last 14 days</div>
-          <div style="display:flex;align-items:flex-end;gap:1px;height:34px;padding:2px 0;border-bottom:1px solid rgba(251,207,59,0.2)">
-            ${entries.map(e=>`<div title="${days[entries.indexOf(e)]} · sightings ${e.s} · attempts ${e.a} · near ${e.n}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%">
+        if(max<=1&&Object.keys(ductLog).length===0)return '';
+        // Best-week highlight: scan every 7-day sliding window for the one with the most attempts.
+        let bestStart=0,bestSum=-1;
+        for(let i=0;i<=entries.length-7;i++){let sum=0;for(let j=0;j<7;j++)sum+=entries[i+j].a;if(sum>bestSum){bestSum=sum;bestStart=i}}
+        const showBest=bestSum>0;
+        return `<div style="margin-top:8px;font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center">
+          <span>Pier's Notes · last ${span} days${showBest?` · best week ${bestSum} attempts`:''}</span>
+          <button onclick="DS.toggleDuctSpan()" style="background:rgba(251,207,59,0.08);border:1px solid rgba(251,207,59,0.3);color:#fbcf3b;font:600 8px 'JetBrains Mono',monospace;letter-spacing:1px;padding:2px 6px;border-radius:3px;cursor:pointer">${span===14?'30d':'14d'}</button>
+        </div>
+          <div style="position:relative;display:flex;align-items:flex-end;gap:1px;height:34px;padding:2px 0;border-bottom:1px solid rgba(251,207,59,0.2)">
+            ${showBest?`<div style="position:absolute;left:${(bestStart/entries.length)*100}%;width:${(7/entries.length)*100}%;top:0;bottom:0;background:rgba(16,185,129,0.08);border:1px dashed rgba(16,185,129,0.4);pointer-events:none"></div>`:''}
+            ${entries.map((e,i)=>`<div title="${days[i]} · sightings ${e.s} · attempts ${e.a} · near ${e.n}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%;position:relative">
               ${e.n>0?`<div style="height:${(e.n/max)*30}px;background:#10b981"></div>`:''}
               ${e.a>0?`<div style="height:${(e.a/max)*30}px;background:#fbcf3b"></div>`:''}
               ${e.s>0?`<div style="height:${(e.s/max)*30}px;background:rgba(251,207,59,0.4)"></div>`:''}
             </div>`).join('')}
           </div>
-          <div style="display:flex;gap:10px;margin-top:3px;font:9px 'JetBrains Mono',monospace;color:#64748b"><span><span style="display:inline-block;width:8px;height:8px;background:rgba(251,207,59,0.4)"></span> sighting</span><span><span style="display:inline-block;width:8px;height:8px;background:#fbcf3b"></span> attempt</span><span><span style="display:inline-block;width:8px;height:8px;background:#10b981"></span> near</span></div>`;
+          <div style="display:flex;gap:10px;margin-top:3px;font:9px 'JetBrains Mono',monospace;color:#64748b"><span><span style="display:inline-block;width:8px;height:8px;background:rgba(251,207,59,0.4)"></span> sighting</span><span><span style="display:inline-block;width:8px;height:8px;background:#fbcf3b"></span> attempt</span><span><span style="display:inline-block;width:8px;height:8px;background:#10b981"></span> near</span>${showBest?'<span style="color:#10b981">▢ best week</span>':''}</div>`;
       })()}
       </div>
     </div>
@@ -3902,7 +3959,7 @@ function refreshTrophyPeek(){
   const b=$('trophy-peek-btn');if(b)b.style.display=fishCatalog.size>0?'block':'none';
   // Daily-streak pill — only shown once the player has at least 1 day on the count.
   const sp=$('streak-pill');if(sp){
-    if(streak.count>0){sp.style.display='block';sp.innerHTML=`🔥 Day ${streak.count} at the Bayou${streak.max>streak.count?` · best ${streak.max}`:''}`}
+    if(streak.count>0){sp.style.display='block';sp.innerHTML=`🔥 Day ${streak.count} at the Bayou${streak.max>streak.count?` · best ${streak.max}`:''} <button onclick="DS.exportStreak();event.stopPropagation()" style="margin-left:6px;background:transparent;border:1px solid rgba(147,197,253,0.4);color:#93c5fd;padding:2px 8px;border-radius:4px;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;cursor:pointer">💾 SHARE</button>`}
     else sp.style.display='none';
   }
 }
@@ -4068,6 +4125,6 @@ function qaStumpCount(){
   if(!scene||!scene._sharedStumpGeo)return 0;
   let n=0;scene.traverse(o=>{if(o.geometry===scene._sharedStumpGeo)n++});return n;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
 })();
 
