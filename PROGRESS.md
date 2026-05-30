@@ -72,6 +72,14 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 14 — reel-whine into Duct + boss, streak share card, Pier's Notes 30-day toggle, visual rod line
+- **Reel-whine in Duct chase** (`endDuct` stop wired) — the R13 continuous-tension oscillator now sings during Duct fights too.
+- **Reel-whine in Deep Dock boss** phase-3 reel — frequency tracks tension, stops via `mini.addTeardown`.
+- **Streak share PNG** — `DS.exportStreak()` paints a 1200×630 OG-card (🔥 Day N at the Bayou + best streak). "💾 SHARE" button next to the s1 streak pill.
+- **Pier's Notes 30-day toggle** — Codex Duct sparkline switches 14 ↔ 30 day window via an in-card button; best-week green highlight strip marks the 7-day window with the most attempts.
+- **Visual fishing line** — thin grey `THREE.LineSegments` from the boat's rod-tip to the bobber, refreshed each frame in `tickBobber` so it swings with the bobber. Disposed alongside the bobber.
+- Smoke now **41/41 PASS, 0 fatal**.
+
 ### Round 13 — Phase V (research-driven): fishing feel + streak + catalysts + mobile polish
 Deep-research-informed pass: web-searched Dredge postmortem, Russian Fishing 4, Sea of Thieves, GTA V density principles, three.js r128 perf, mobile WebGL best practices (MDN/Apple HIG/Material 48dp). 5-critic adversarial plan pass + 3-finder bughunt review.
 
