@@ -1,182 +1,161 @@
-# DockShield — Automated Marine Asset Protection (DaaS)
+# DockShield: The Depth
 
-**Full-autonomous dock preservation subscription system.**  
-Lead capture → Auto-quote → Stripe checkout → Email delivery → Customer activation.  
-Zero human intervention required.
+A free-roam, GTA-style boat game set on **Castor Bayou** (region: **Bayou Bay**).
+Pick a hero, run rescue operations across an open lake, fish 13 species, hunt the
+uncatchable legendary rubber ducky **Duct**, forage your own bait, and upgrade
+your boat at the Boatworks — all in a single static page, no build step.
 
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  FRONTEND (Vercel — Static PWA)                         │
-│  CesiumJS 3D fly-in → Lead form → Tier selection        │
-│  Calls: Supabase REST (lead INSERT) + Edge Functions     │
-└───────────────┬──────────────────────┬──────────────────┘
-                │                      │
-                ▼                      ▼
-┌───────────────────────┐  ┌──────────────────────────────┐
-│  SUPABASE (PostgreSQL) │  │  EDGE FUNCTION: process-lead │
-│  leads / quotes /      │  │  Auto-tier → Quote record →  │
-│  customers tables      │  │  Stripe Checkout → Resend    │
-│  + RLS policies        │  │  email → Return checkout URL │
-└───────────────────────┘  └──────────────┬───────────────┘
-                                          │
-                                          ▼
-                           ┌──────────────────────────────┐
-                           │  STRIPE                       │
-                           │  Subscription checkout        │
-                           │  Webhook → stripe-webhook fn  │
-                           │  → Activate customer record   │
-                           └──────────────────────────────┘
-```
-
-### Pipeline Flow
-
-1. **Lead enters address + email** → Frontend INSERT to `leads` table
-2. **Selects tier** → Frontend calls `process-lead` Edge Function
-3. **Edge Function** creates quote record, Stripe checkout session, emails payment link
-4. **Frontend** shows checkout button with live Stripe URL
-5. **Customer pays** → Stripe webhook fires → `stripe-webhook` Edge Function activates customer
-6. **Customer record** created with service schedule — ready for fulfillment
+**Play it live:** https://dockshield.vercel.app
 
 ---
 
-## 60-Minute Deployment Playbook
+## Tech at a glance
 
-### Step 1: Supabase Backend (15 min)
+| | |
+| --- | --- |
+| **Engine** | THREE.js r128 (CDN), one IIFE assigned to `window.DS` |
+| **Front end** | `public/index.html` + `public/app.js` + `public/styles.css` — no bundler, no framework |
+| **Persistence** | `localStorage` (`dockshield_save_v1` save blob + `dockshield_gfx` graphics prefs) |
+| **Serverless** | `api/config.js` (public env injection) · `api/geocode.js` (address → home-dock pin) |
+| **Hosting** | Vercel — auto-deploys `public/` on push to `main` (`outputDirectory: public`, no build command) |
+| **PWA** | `public/manifest.json` + `public/sw.js` (offline shell) |
 
-1. Create project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** → paste contents of `supabase/schema.sql` → Run
-3. Note your **Project URL** and **Anon Key** (Settings → API)
-4. Note your **Service Role Key** (same page — keep secret)
+The game is entirely client-side. The `supabase/` tree and the Stripe/Resend
+edge functions are the **legacy DaaS marketing funnel** (see
+[Legacy backend](#legacy-backend-daas-funnel) below); the live experience runs in
+`GAME_MODE='game'`. The funnel is gated behind `GAME_MODE='business'` and remains
+revivable but is not part of the game.
 
-### Step 2: API Keys (10 min)
+---
 
-| Service | Get Key At | Enable |
-|---------|-----------|--------|
-| Cesium Ion | [cesium.com/ion](https://cesium.com/ion/tokens) | Default token works |
-| Google Maps | [console.cloud.google.com](https://console.cloud.google.com/apis) | Geocoding API + Map Tiles API |
-| Stripe | [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys) | Secret key (sk_live_...) |
-| Resend | [resend.com/api-keys](https://resend.com/api-keys) | Verify sending domain |
+## The game
 
-### Step 3: Deploy Edge Functions (10 min)
+### Heroes
+Each operative has a distinct hull profile, handling, weather tolerance, and a
+special ability.
+
+| Hero | Class | Role | Ability |
+| --- | --- | --- | --- |
+| **The Reel** | runabout | Rescue · Control | +25% bait from civilian rescues |
+| **Lilly Loch** | pontoon barge | Brawler · Traversal | +0.1 baseline hull damage resistance |
+| **The Fly** | knife-bow speedboat | Recon · Trap | 2s sonar cooldown + 5% top speed |
+
+### Loop
+Hero pick → 2 lore questions → free roam. Optional: enter a real address to drop
+your home dock (geocoded via `/api/geocode`).
+
+- **World** — 1200u lake, day/night cycle, live weather (45s refresh) + mist,
+  named POIs, minimap, a cryptid shadow patrolling the deep.
+- **Missions** — random drop-point beacons open 6 mini-games (battle, puzzle,
+  runner, tetris, dock rescue, baitwell). The 3-phase **Deep Dock** boss fires on
+  trigger.
+- **Fishing** — cast with **F** when stopped; a tension-band fight gated by line
+  strength and rod control; 13 species over 4 rarities, including gators and the
+  Bull gator.
+- **Duct the Rubber Ducky** — an uncatchable legendary that spawns rarely. Engage
+  with **F**; he escapes via one of 5 archetypes (slip / dive / fly / flop /
+  bounce), pays a +15 bait consolation, and logs sightings/attempts/near-catches
+  in a locked Codex entry. He never lands.
+- **Foraging** — beach the boat at a shore camp and press **G** to open
+  worm-dig / bug-catch / frog-grab / minnow-net mini-games. Forage builds a typed
+  **bait inventory** (worm/cricket/frog/minnow/crayfish) that biases your catch roll.
+- **Economy** — bait is the currency. Five docks:
+
+  | Shop | Stock |
+  | --- | --- |
+  | Garbone Bait & Cold Beer | starter rods/reels/line/box + consumables |
+  | Castor Marina Pro Shop | mid-tier gear |
+  | Spillway Salvage | high-tier reels/line/box |
+  | The Deep Dock Outfitter | depth-rated top gear |
+  | **Castor Boatworks** | engine / lights / armor / electronics upgrades (per hero, visible parts) |
+
+- **Meta (persisted)** — Fish Codex, Trophy Board, best score, achievements,
+  gear loadout, bait pantry, boat upgrades, mute, graphics quality.
+
+### Controls
+| Key | Action |
+| --- | --- |
+| **W A S D** | drive |
+| **F** | cast / engage Duct (when stopped) |
+| **E** | dock at a shop (slow + close) |
+| **G** | forage at a shore camp (slow + close) |
+| **P** | photo mode |
+| **Space** | reel / fight action |
+| **Esc** | close overlay |
+
+---
+
+## Develop
+
+No install required — it's static. Serve `public/` and open it:
 
 ```bash
-# Install Supabase CLI
-npm install -g supabase
-
-# Link to your project
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-
-# Set secrets
-supabase secrets set STRIPE_SECRET_KEY=sk_live_...
-supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...
-supabase secrets set RESEND_API_KEY=re_...
-supabase secrets set APP_DOMAIN=https://dockshield.vercel.app
-
-# Deploy functions
-supabase functions deploy process-lead
-supabase functions deploy stripe-webhook
+python3 -m http.server 8765 --directory public
+# → http://127.0.0.1:8765
 ```
 
-### Step 4: Stripe Webhook (5 min)
-
-1. Go to [Stripe Dashboard → Webhooks](https://dashboard.stripe.com/webhooks)
-2. Add endpoint: `https://YOUR_PROJECT.supabase.co/functions/v1/stripe-webhook`
-3. Select events: `checkout.session.completed`, `customer.subscription.deleted`
-4. Copy the webhook signing secret → `supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...`
-
-### Step 5: Frontend Deploy (10 min)
+### Verify changes
+The whole front end is hand-written and verified without a bundler:
 
 ```bash
-# Push to GitHub
-git init && git add -A && git commit -m "DockShield MVP"
-git remote add origin https://github.com/Drocai/dockshield.git
-git push -u origin main
-
-# Deploy to Vercel
-# Option A: Vercel Dashboard → Import Git Repository
-# Option B: Vercel CLI
-npm i -g vercel
-vercel --prod
+node --check public/app.js          # syntax gate
 ```
 
-Set environment variables in **Vercel Dashboard → Project Settings → Environment Variables**:
-- `CESIUM_ION_TOKEN`
-- `GOOGLE_MAPS_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+Add `?qa=1` to the URL to expose headless debug hooks on `DS` for smoke tests
+(Playwright with swiftshader WebGL):
 
-### Step 6: Verify (10 min)
+| Hook | Effect |
+| --- | --- |
+| `DS.qaOpen('battle'\|'puzzle'\|…\|'boss')` | force-open a mini-game overlay |
+| `DS.qaSpawnDuct()` | spawn Duct next to the boat |
+| `DS.qaDockCamp()` | open the first forage camp |
+| `DS.duct()` | open the Duct chase directly |
 
-1. Visit your Vercel URL
-2. Enter a test address and email
-3. Confirm 3D fly-in works (requires Cesium + Google Maps keys)
-4. Select a tier → confirm Stripe checkout opens
-5. Complete test payment with Stripe test card: `4242 4242 4242 4242`
-6. Verify in Supabase: lead → quote → customer records created
-7. Verify email received (requires Resend setup)
+### Conventions
+- `save_v1` is a single JSON blob; every load path uses `||` defaults, so there
+  is **no migration** — new fields are always optional.
+- One feature branch per change; merge to `main`; Vercel deploys on merge.
+- Verify every change with `node --check` + a headless smoke + screenshot review
+  before merge.
+
+**Do not touch** (deploy-critical / out of game scope):
+`public/manifest.json`, `public/sw.js`, `api/`, `supabase/functions/*`,
+`vercel.json`.
 
 ---
 
-## File Structure
+## Project layout
 
 ```
-daas-mvp/
-├── api/
-│   └── config.js              # Vercel serverless — injects public env vars
-├── public/
-│   ├── index.html             # PWA frontend (CesiumJS + lead capture + tier UI)
-│   ├── manifest.json          # PWA manifest
-│   └── sw.js                  # Service worker for offline support
-├── supabase/
-│   ├── config.toml            # Supabase project config
-│   ├── schema.sql             # Full database schema + RLS + analytics view
-│   └── functions/
-│       ├── process-lead/
-│       │   └── index.ts       # Auto-quote pipeline (quote → Stripe → email)
-│       └── stripe-webhook/
-│           └── index.ts       # Post-payment customer activation
-├── vercel.json                # Vercel deployment config
-├── .env.example               # Environment variable template
-└── README.md                  # This file
+public/
+  index.html        # markup + overlays (HUD, mini-game canvas, prompts)
+  app.js            # the entire game (THREE.js scene + systems + UI)  ← DS IIFE
+  styles.css        # all styling
+  manifest.json     # PWA manifest        (do not touch)
+  sw.js             # service worker       (do not touch)
+api/
+  config.js         # injects public env into the page
+  geocode.js        # address → lat/lng for the home-dock pin
+supabase/           # LEGACY DaaS funnel backend (not used by the game)
+vercel.json         # static deploy config
+PROGRESS.md         # build history + roadmap
 ```
 
 ---
 
-## Unit Economics (Target per 100 Clients)
+## Legacy backend (DaaS funnel)
 
-| Tier | Price | Mix | ARR |
-|------|-------|-----|-----|
-| Preventative | $49/mo | 20% | $11,760 |
-| Comprehensive | $99/mo | 60% | $71,280 |
-| Premium | $199/mo | 20% | $47,760 |
-| **Total** | | **100** | **$130,800** |
+Before the game pivot, DockShield was an automated dock-protection subscription
+service: lead capture → auto-quote → Stripe checkout → email delivery. That
+pipeline still lives in the repo and can be revived by flipping `GAME_MODE` to
+`'business'`.
 
-**Target Gross Margin: 65-75%**
+- `supabase/full_schema.sql` — canonical schema (leads/quotes/customers +
+  the later marina-platform tables). `schema.sql` and `schema_v2.sql` are the
+  historical split versions it supersedes.
+- `supabase/functions/process-lead` — quote → Stripe checkout → Resend email.
+- `supabase/functions/stripe-webhook` — post-payment customer activation.
+- `supabase/functions/geocode` — server-side geocode for the funnel.
 
----
-
-## Security Notes
-
-- Supabase Anon Key is safe for client-side (RLS enforced)
-- Service Role Key is ONLY in Edge Functions (server-side)
-- Stripe Secret Key is ONLY in Edge Functions
-- Frontend never touches secret keys
-- RLS policies restrict anon to INSERT-only on leads table
-- All other tables are service_role access only
-
----
-
-## Monitoring
-
-Query the pipeline health anytime:
-
-```sql
-SELECT * FROM pipeline_summary;
-```
-
-Returns: total_leads, new_leads, quoted_leads, active_leads, paid_quotes, active_customers, monthly_recurring_revenue.
+Deployment of the funnel (Supabase + Stripe + Resend secrets) is documented
+inline in those files and in `.env.example`.

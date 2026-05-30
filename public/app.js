@@ -8,7 +8,14 @@ const DS=(()=>{
 // gated on the way in.
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
-const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
+// BT = boat tuning per hero. col=hull base, accents = secondary palette used by mkBoat for trim/
+// decals/emblems. Three distinct visual identities now: Reel runs red/blue/yellow tournament-flashy;
+// Lilly runs pink/lime/camo-muddy; Fly runs matte stealth black/navy.
+const BT={
+  regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xc91111,wx:1, accents:{primary:0xc91111,trim:0xffffff,stripe:0x1d6dff,emblem:0xfde047,glow:0xfca5a5,ui:'#fca5a5'}},
+  pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x7a5b32,wx:.7, accents:{primary:0xec4899,trim:0x7a5b32,stripe:0x84cc16,emblem:0xfbcfe8,glow:0xf472b6,ui:'#f9a8d4',camo:true}},
+  speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x0c1424,wx:1.4, accents:{primary:0x0c1424,trim:0x1e293b,stripe:0x3b82f6,emblem:0x60a5fa,glow:0x60a5fa,ui:'#93c5fd'}}
+};
 // === PERSISTENCE ===
 // Trophy catalog, evidence case file, best score, and the mute pref persist to localStorage so the
 // Pokemon-style collection survives reloads, not just same-tab sessions. Guarded for private-mode
@@ -17,6 +24,41 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Biggest single fish ever landed across all runs — surfaced in the Codex + trophy peek.
+let bestFish=null;
+// Per-species log of first-landing context: {n:'Bluegill': {date, spot, score}}. Lets the Codex
+// surface a tiny "first caught" detail line per species. Append-only — only set on first land.
+let speciesLog={};
+// Per-day Duct sighting/attempt log (lore: "the pier keeps notes"). Keyed by YYYY-MM-DD,
+// each entry is {s,a,n} for sightings/attempts/near-catches. logDuct() bumps + trims to ~30 days.
+let ductLog={};
+// One-time tutorial flag — set to true after the player dismisses the first overlay so it never
+// shows again. Persisted so it survives reloads. Each kind ('cast', 'duct') is shown at most once.
+let tutorialSeen={};
+function logDuct(kind){
+  const day=new Date().toISOString().slice(0,10);
+  if(!ductLog[day])ductLog[day]={s:0,a:0,n:0};
+  if(kind==='sighting')ductLog[day].s++;else if(kind==='attempt')ductLog[day].a++;else if(kind==='near')ductLog[day].n++;
+  // Trim to the last 30 days so the blob doesn't grow unbounded.
+  const keys=Object.keys(ductLog).sort();while(keys.length>30){delete ductLog[keys.shift()]}
+}
+// Lifetime bait spent at any shop counts toward loyalty discount tiers:
+//   0     → 0% off, "Drifter"
+//   500   → 3% off, "Regular"
+//   2000  → 6% off, "Local"
+//   5000  → 10% off, "Old Salt"
+let loyaltySpent=0;
+const LOYALTY_TIERS=[
+  {at:0,    name:'Drifter',  pct:0},
+  {at:500,  name:'Regular',  pct:0.03},
+  {at:2000, name:'Local',    pct:0.06},
+  {at:5000, name:'Old Salt', pct:0.10}
+];
+function loyaltyTier(){let cur=LOYALTY_TIERS[0];for(const t of LOYALTY_TIERS)if(loyaltySpent>=t.at)cur=t;return cur}
+function loyaltyDiscount(cost){return Math.max(1,Math.round(cost*(1-loyaltyTier().pct)))}
+function loyaltyBuy(cost){const final=loyaltyDiscount(cost);bait-=final;loyaltySpent+=final;return final}
+// Shared price-label HTML — strikes through the original cost when a loyalty discount applies.
+function priceLabel(cost){const disc=loyaltyDiscount(cost);return disc<cost?`<s style="opacity:0.55;font-size:9px;margin-right:3px">${cost}</s>${disc} bait`:`${cost} bait`}
 // Duct the Rubber Ducky — the uncatchable legendary. Persisted lifetime stats only; he never
 // enters fishCatalog or the trophy case (canon: nobody has ever landed him).
 let ductStats={sightings:0,attempts:0,nearCatches:0};
@@ -24,7 +66,7 @@ let ductStats={sightings:0,attempts:0,nearCatches:0};
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
-let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0};
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0};
 let equippedBait='';   // '' = bare hook, no bait bias
 // === BOAT UPGRADES ===
 // Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
@@ -64,8 +106,32 @@ const BAIT_TYPES={
   cricket: {n:'Cricket',  c:'#8db347', e:'🦗', desc:'+18% uncommon, slight rare lift.'},
   minnow:  {n:'Minnow',   c:'#7ec8e3', e:'🐠', desc:'+20% rare odds (pike-biased).'},
   frog:    {n:'Frog',     c:'#5fa75f', e:'🐸', desc:'+25% rare, lures bass.'},
-  crayfish:{n:'Crayfish', c:'#cf4040', e:'🦞', desc:'+30% rare + 10% legendary.'}
+  crayfish:{n:'Crayfish', c:'#cf4040', e:'🦞', desc:'+30% rare + 10% legendary.'},
+  // Lore item — crafted at the tackle shop from rare forage. People swear it draws Duct in faster
+  // and "almost" works. Actually: it widens the bobber peak window during Duct fights by ~30%.
+  // Does NOT make him catchable. Consumed only on Duct attempts, not regular casts.
+  ducttape:{n:'Duct Tape Lure', c:'#ffd23f', e:'🦆', desc:'A wad of duct tape on a hook. "Almost" works on Duct.', isLure:true},
+  // Crafted: pacified minnow → cleaner bites on uncommon spots, no spook factor.
+  calmminnow:{n:'Calm Minnow Rig', c:'#a5d8ee', e:'🪞', desc:'+35% rare on uncommon spots, no spook.', crafted:true},
+  // Crafted: loud cricket → uncommon + double bites at lure-marked spots.
+  loudcricket:{n:'Loud Cricket Charm', c:'#d8e066', e:'📣', desc:'+25% uncommon · doubles bites at lure spots.', crafted:true}
 };
+// Duct Tape Lure recipe — crafted at any tackle shop. Designed to be just out of reach early on so
+// the player has to forage a while before they can chase the legend with it.
+const DUCT_LURE_RECIPE={crayfish:3,frog:4,minnow:6};
+// Crafting recipe table — each entry describes a craftable bait + its cost.
+// Yields BAIT_TYPES key (so they show in the pantry + are equippable like any other bait).
+const CRAFT_RECIPES=[
+  {id:'ducttape',out:'ducttape',in:DUCT_LURE_RECIPE,
+   ach:'duct_lure_crafted',
+   tag:'🦆 Duct Tape Lure',blurb:'"Almost" works on Duct. Widens the bobber peak window.'},
+  {id:'calmminnow',out:'calmminnow',in:{minnow:5,worm:5},
+   ach:'first_craft',
+   tag:'🪞 Calm Minnow Rig',blurb:'A pacified minnow. +35% rare on uncommon spots, no spook factor.'},
+  {id:'loudcricket',out:'loudcricket',in:{cricket:6,frog:1},
+   ach:'first_craft',
+   tag:'📣 Loud Cricket Charm',blurb:'A cricket that won\'t shut up. +25% uncommon AND lure-spots see double bites.'}
+];
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
 // improve the fishing loop: rod = fight control, reel = rare odds, line = max landable rarity,
@@ -104,24 +170,43 @@ let gfxQuality='medium';
 try{const g=localStorage.getItem('dockshield_gfx');if(g)gfxQuality=g}catch(e){}
 // Photo mode — free orbit camera with HUD hidden. Pauses the run while active.
 let photoMode=false,photoCam={yaw:0,pitch:0.35,dist:22},_photoResume=false;
+// Polish-pass user prefs: audio master volume + shake intensity multiplier. Plain numbers in the
+// save blob so JSON.stringify round-trips losslessly. Defaults applied via || in loadSave.
+// Master + per-bus volume. _audVol is the master multiplier (kept for backward-compat with the
+// existing slider + save field). The bus values default to 1.0 so a save without them sounds
+// identical to before. Each consumer reads master*bus.
+let _audVol=0.6,_shakeMul=1.0;
+let _sfxVol=1.0,_engineVol=1.0,_ambientVol=1.0,_musicVol=0.8;
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
     (d.ach||[]).forEach(n=>achievements.add(n));
-    bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;
+    bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;loyaltySpent=d.loyalty||0;
+    if(d.bestFish&&typeof d.bestFish==='object')bestFish=d.bestFish;
+    if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
+    if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
+    if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
     if(d.duct)Object.assign(ductStats,d.duct);
     if(d.baitInv)Object.assign(baitInv,d.baitInv);
     if(typeof d.equippedBait==='string')equippedBait=d.equippedBait;
     if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
+    if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
+    if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
+    if(typeof d.sfxVol==='number')_sfxVol=Math.max(0,Math.min(1,d.sfxVol));
+    if(typeof d.engineVol==='number')_engineVol=Math.max(0,Math.min(1,d.engineVol));
+    if(typeof d.ambientVol==='number')_ambientVol=Math.max(0,Math.min(1,d.ambientVol));
+    if(typeof d.musicVol==='number')_musicVol=Math.max(0,Math.min(1,d.musicVol));
   }catch(e){}
 }
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,tutorialSeen}))}catch(e){}
 }
+// QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
+function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
 loadSave();
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
@@ -173,6 +258,9 @@ function rollFish(spot){
     if(useBait==='minnow')return f.r==='rare'?1.20:f.n==='Three-eyed pike'?1.5:1;
     if(useBait==='frog')return f.r==='rare'?1.25:f.n==='Largemouth bass'?1.5:1;
     if(useBait==='crayfish')return f.r==='rare'?1.30:f.r==='legendary'?1.10:1;
+    // Crafted baits.
+    if(useBait==='calmminnow')return spot&&f.r==='uncommon'?1.35:f.r==='rare'?1.10:1;
+    if(useBait==='loudcricket')return f.r==='uncommon'?1.25:(spot&&spot.bias&&spot.bias.includes(f.n))?2.0:1;
     return 1;
   };
   let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;w*=baitBias(f);return {...f,w}});
@@ -186,9 +274,9 @@ let runCatches=[];
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
 // Voice lines lean on the Character Bible: Reel = bold/quotable, Fly = dry/short, Lilly = country direct.
 const HERO={
-  regular:{id:'reel',n:'The Reel',role:'Rescue · Control',kit:'Casting rod grapnel + heavy reel winch',badge:'#ef4444',col:'#fca5a5',voice:{start:"Line's tight. Somebody's coming home.",surge:'Bayou Bay paid for a show — keep it together.',rescue:'You can bite the boat — you ain’t getting the people.',evidence:'Got something. Bag it.'}},
-  pontoon:{id:'lilly',n:'Lilly Loch',role:'Brawler · Traversal',kit:'Swamp strength + improvised dock-board shield',badge:'#10b981',col:'#a7f3d0',voice:{start:'Water already moved. We move with it.',surge:'Bless your heart, hold on.',rescue:'I got you. Easy, easy.',evidence:'Castor Bayou’s talking. We’re listening.'}},
-  speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
+  regular:{id:'reel',n:'The Reel',role:'Rescue · Control',kit:'Casting rod grapnel + heavy reel winch',badge:'#ef4444',col:'#fca5a5',voice:{start:"Line's tight. Somebody's coming home.",surge:'Bayou Bay paid for a show — keep it together.',rescue:'You can bite the boat — you ain\'t getting the people.',evidence:'Got something. Bag it.',catchCommon:'Cleaner than I deserved. Keep working.',catchRare:'Heavy. Tournament heavy.',catchLegendary:'I felt that one in the rod butt. Folks at Garbone will want a look.',catchGator:'Hooked into a slab. Hands wide on the rod.'}},
+  pontoon:{id:'lilly',n:'Lilly Loch',role:'Brawler · Traversal',kit:'Swamp strength + improvised dock-board shield',badge:'#10b981',col:'#a7f3d0',voice:{start:'Water already moved. We move with it.',surge:'Bless your heart, hold on.',rescue:'I got you. Easy, easy.',evidence:'Castor Bayou\'s talking. We\'re listening.',catchCommon:'Pretty fish. Pretty water.',catchRare:'Look at that color. Bayou paints \'em right.',catchLegendary:'Mama\'d have a stroke if she saw this.',catchGator:'Bull on the line. Tail like a oar. Stay on the deck.'}},
+  speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We\'ll read it back at the yard.',catchCommon:'Logged.',catchRare:'Rare specimen. Photographed. Sample bagged.',catchLegendary:'Legendary signature. Sonar read it three hundred meters out.',catchGator:'Apex on the line. Confirm hull integrity before you boat it.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
 let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,missionsCleared:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
@@ -203,6 +291,9 @@ let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
 // Special boss drop type — never spawned randomly; only by spawnDeepDock() once unlock fires.
 const DP_BOSS={k:'boss',col:0x9333ea,n:'THE DEPTH RISES',open:'openBoss'};
+// Gator King — special drop that auto-spawns at East Rocks once the player has logged 3+ gators.
+const DP_GATOR_KING={k:'gator_king',col:0x4a8a32,n:'GATOR KING · EAST ROCKS',open:'openGatorKing'};
+const GATOR_NAMES=['Spotted gar','Alligator gar','Bull gator'];  // 3 trigger gators (Deep-Dock excluded — that's the boss)
 const DP_TYPES=[
   {k:'battle',  col:0xef4444,n:'AMBUSH SIGNAL',  open:'openBattle'},
   {k:'puzzle',  col:0xfbcf3b,n:'CIPHER FLOAT',   open:'openPuzzle'},
@@ -219,6 +310,29 @@ const EV=[
 ];
 let dockPos=new THREE.Vector3(0,0,-120),spd=0,aV=0,prev=new THREE.Vector3();
 let wps=[],wpI=0;
+// Frees every geometry/material under an Object3D so removing it from the scene doesn't leak GPU
+// memory. Used wherever meshes are rebuilt/removed mid-run (boats, drop points, rain).
+function disposeTree(obj){if(!obj)return;obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose())}})}
+// Hoisted scratch vectors — reused each frame so loop()/tickDuct() don't allocate per frame.
+const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.Vector3(),_vDuct=new THREE.Vector3(),_vFwd=new THREE.Vector3();
+// Frame counter — lets the loop stagger expensive work (e.g. water normals) across frames.
+let _frame=0;
+// Minimap zoom — 1.0 = default (whole lake), 2.2 = zoomed in (dense areas). Toggled with M.
+let _mmZoom=1.0;
+// Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
+let _isNight=false;
+// Offset (seconds) added to the day/night cycle clock — QA hook uses it to force a time of day.
+let _dayOffset=0;
+// Sun-arc edge-trigger state for golden-hour flash events (sunrise + sunset amber tint).
+let _lastDayness=null,_goldenFlashUntil=0;
+// Track the last-displayed bait value so the HUD can pulse on any change (up or down).
+let _lastBait=0;
+function pulseBait(delta){
+  const el=document.getElementById('h-bait');if(!el)return false;
+  el.classList.remove('bait-pop-up','bait-pop-down');void el.offsetWidth;  // restart animation
+  el.classList.add(delta>=0?'bait-pop-up':'bait-pop-down');
+  return true;
+}
 const keys={};
 let tch={lY:0,rX:0};
 let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
@@ -232,9 +346,18 @@ const mini={
   // mini.finish() drains them in a single sweep, regardless of which exit path fires.
   _teardowns:[],
   addTeardown(fn){this._teardowns.push(fn)},
+  // Shared backdrop painter for forage canvas games — radial vignette + faint grain stippling so
+  // none of them read as flat color boxes. Each caller passes its biome's "core" + "edge" colors.
+  paintForageBg(ctx,W,H,core,edge,grain){
+    const g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,Math.max(W,H));
+    g.addColorStop(0,core);g.addColorStop(0.55,edge);g.addColorStop(1,'#0a0d0c');
+    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=grain;for(let i=0;i<70;i++)ctx.fillRect((i*97)%W,(i*131)%H,1,1);
+  },
   finish(dp,score,radioLine,who){
     // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
+    if(_fightCleanup){_fightCleanup();_fightCleanup=null}
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     sfx(score>0?'win':'click');
@@ -345,6 +468,127 @@ const mini={
   },
   // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
   // === DEEP DOCK BOSS: three-phase encounter against the thing under the Deep Dock ===
+  // === GATOR KING: 3-phase mini-boss at East Rocks ===
+  // Phase 1 (LUNGES): lunge bar; strike inside 45-55% gold band; 5 clean hits → phase 2.
+  // Phase 2 (DRAG):   stiff tension-band fight, progress to 100 → phase 3.
+  // Phase 3 (TAIL):   3 telegraphed tail-slap warnings; tap DODGE (Space) in the gold window of the
+  //                   warning bar to avoid hull damage; 3 dodges → win.
+  openGatorKing(dp){
+    miniActive=true;S.on=false;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){mini.finish(dp,0,'Lost the line.','self');return}
+    let phase=1,hits=0,need=5,playerHull=Math.round(S.hull),tension=0.3,progress=0,over=false,lungeT=null,lungeBar=0,lungeDir=1;
+    let dodges=0,dodgeNeed=3,slapT=null,slapBar=0,slapArmed=false;  // phase 3 state
+    // Lilly hero ability: damage resist trims gator strikes by 30% (10% baseline + 20% boss-arena).
+    // Fly hero ability: a 1-slot wider strike band in phase 1 (recon clinches the timing).
+    const heroResist=S.bc==='pontoon'?0.30:0;
+    const flyBand=S.bc==='speedboat'?3:0;  // wider strike window in phase 1
+    const render=()=>{
+      const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
+      const phName={1:'PHASE 1 · LUNGES',2:'PHASE 2 · DRAG',3:'PHASE 3 · TAIL'}[phase];
+      let body='';
+      if(phase===1){
+        body=`<div class="sb"><div class="sr"><span class="sl">Hits</span><span class="sv y">${hits} / ${need}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
+          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b ${38-flyBand}%,#10b981 50%,#f59e0b ${62+flyBand}%,#ef4444 100%);overflow:hidden;margin:8px 0"><div id="gk-bar" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div></div>
+          <button class="btn bp" id="gk-strike" style="background:linear-gradient(135deg,#4a8a32,#2a5018)">STRIKE (Space)</button>`;
+      }else if(phase===2){
+        body=`<div class="m-sub" style="color:#94a3b8">Hold the line. Easy. He's tired.</div>
+          <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 65%,#f59e0b 85%,#ef4444 100%);overflow:hidden;margin:10px 0">
+            <div id="gk-band" style="position:absolute;top:0;bottom:0;left:42%;width:16%;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
+            <div id="gk-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
+          </div>
+          <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
+          <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="gk-prog" style="height:100%;width:0%;background:#4a8a32;transition:width 0.05s"></div></div>
+          <button class="btn bp" id="gk-reel" style="background:linear-gradient(135deg,#4a8a32,#2a5018);user-select:none">HOLD TO REEL (Space)</button>`;
+      }else{
+        body=`<div class="m-sub" style="color:#fb923c">Tail's coming around. DODGE (Space) when the bar peaks <b>gold</b>.</div>
+          <div class="sb"><div class="sr"><span class="sl">Dodges</span><span class="sv y">${dodges} / ${dodgeNeed}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
+          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#1a1a2e 0%,#1a1a2e 40%,#fbcf3b 50%,#1a1a2e 60%,#1a1a2e 100%);overflow:hidden;margin:8px 0"><div id="gk-slap" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#ef4444;box-shadow:0 0 8px #ef4444"></div></div>
+          <button class="btn bp" id="gk-dodge" style="background:linear-gradient(135deg,#fb923c,#9a3a10)">DODGE (Space)</button>`;
+      }
+      card.innerHTML=`<div class="m-kicker" style="color:#4a8a32">🐊 ${dp.userData.type.n} · ${phName}${heroResist>0?' <span style=color:#a7f3d0;font-size:9px>· Lilly resist active</span>':''}${flyBand>0?' <span style=color:#93c5fd;font-size:9px>· Fly recon active</span>':''}</div><div class="m-title">${phase===1?'Wait for the lunge.':phase===2?'Bring him in.':'Get out of the way.'}</div>${body}<button class="btn bx" id="gk-flee" style="margin-top:8px">Cut Line</button>`;
+      if(phase===1)$('gk-strike').onclick=strike;
+      if(phase===3)$('gk-dodge').onclick=dodge;
+      $('gk-flee').onclick=flee;
+    };
+    // Phase 1 — lunge bar oscillates; strike when inside the 45-55% (±flyBand) gold band.
+    const startLunges=()=>{lungeT=setInterval(()=>{
+      lungeBar+=0.05*lungeDir;if(lungeBar>=1){lungeBar=1;lungeDir=-1}else if(lungeBar<=0){lungeBar=0;lungeDir=1}
+      const b=$('gk-bar');if(b)b.style.left=(lungeBar*100)+'%';
+    },40);mini.addTeardown(()=>clearInterval(lungeT))};
+    const strike=()=>{
+      const pct=lungeBar*100,lo=38-flyBand,hi=62+flyBand;
+      if(pct>=45-flyBand&&pct<=55+flyBand){hits++;sfx('win');if(hits>=need){clearInterval(lungeT);phase=2;startReel();render();return}}
+      else{const dmg=Math.round(15*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.7);if(playerHull<=0){clearInterval(lungeT);lose();return}}
+      render();
+    };
+    // Phase 2 — band fight.
+    const startReel=()=>{
+      const bandHalf=0.08,bandCenter=0.5,climb=0.012,fall=0.011;
+      const tk=setInterval(()=>{
+        if(over)return;
+        const reel=keysSpace;
+        tension+=reel?climb:-fall;tension=Math.max(0,Math.min(1,tension));
+        if(tension>=1){over=true;clearInterval(tk);sfx('hit');flashDamage(0.4);finishGK(false);return}
+        const inBand=Math.abs(tension-bandCenter)<=bandHalf;
+        progress+=inBand?1.0:-0.7;progress=Math.max(0,Math.min(100,progress));
+        const tEl=$('gk-ten'),pEl=$('gk-prog');
+        if(tEl)tEl.style.left=(tension*100)+'%';if(pEl)pEl.style.width=progress+'%';
+        if(progress>=100){clearInterval(tk);phase=3;startTailSlaps();render()}
+      },50);
+      mini.addTeardown(()=>clearInterval(tk));
+    };
+    // Phase 3 — tail-slap dodge. Bar sweeps across; tap DODGE in the gold window (45-55%).
+    // Lilly resist halves slap damage. Missing the window costs hull. 3 successful dodges → win.
+    const startTailSlaps=()=>{
+      const sweep=()=>{slapBar=0;slapArmed=true;const dir=Math.random()<0.5?1:-1;if(dir<0)slapBar=1;
+        slapT=setInterval(()=>{
+          slapBar+=0.012*dir;
+          if((dir>0&&slapBar>=1)||(dir<0&&slapBar<=0)){
+            // Missed entirely — slap connects.
+            clearInterval(slapT);slapArmed=false;
+            const dmg=Math.round(20*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.8);
+            if(playerHull<=0){lose();return}
+            setTimeout(sweep,800);render();
+          }
+          const b=$('gk-slap');if(b)b.style.left=(slapBar*100)+'%';
+        },40);
+        mini.addTeardown(()=>clearInterval(slapT));
+      };
+      sweep();
+    };
+    const dodge=()=>{
+      if(!slapArmed||phase!==3)return;
+      const pct=slapBar*100;
+      if(pct>=45&&pct<=55){
+        clearInterval(slapT);slapArmed=false;dodges++;sfx('win');
+        if(dodges>=dodgeNeed){finishGK(true);return}
+        setTimeout(()=>{render();startTailSlaps()},700);
+      }else{
+        // Mistimed swat — half damage of a clean miss.
+        const dmg=Math.round(10*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.5);
+        if(playerHull<=0){clearInterval(slapT);lose();return}
+      }
+      render();
+    };
+    let keysSpace=false;
+    const keyHandler=e=>{
+      if(e.code==='Space'){e.preventDefault();
+        if(phase===1&&e.type==='keydown')strike();
+        else if(phase===3&&e.type==='keydown')dodge();
+        else if(phase===2)keysSpace=(e.type==='keydown');
+      }
+    };
+    document.addEventListener('keydown',keyHandler);document.addEventListener('keyup',keyHandler);
+    mini.addTeardown(()=>{document.removeEventListener('keydown',keyHandler);document.removeEventListener('keyup',keyHandler)});
+    const flee=()=>{S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
+    const finishGK=won=>{
+      over=true;
+      if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
+      else{mini.finish(dp,0,'He rolled and snapped the line. Gone again.','lilly')}
+    };
+    const lose=()=>finishGK(false);
+    startLunges();render();el.style.display='flex';radio('Gator King breached. Hold the line.','self');
+  },
   // Phase 1 (SHELL): sonar 6 times to crack the shell. Each ping +1 hit; window is short.
   // Phase 2 (LURE): tap the surfacing weak point in the right window — too early misses, too late
   //                 the creature breaches and bites for -25 hull.
@@ -353,7 +597,17 @@ const mini={
   openBoss(dp){
     miniActive=true;S.on=false;
     const card=$('mini-card'),el=$('mini');
-    let phase=1,hits=0,need=6,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
+    // Hero ability hooks for the Deep Dock arena:
+    //   The Fly:    -1 sonar hit needed in phase 1 (recon advantage), narrower phase-2 miss penalty
+    //   Lilly Loch: 30% damage resist on all phase damage (stacks with hull armor)
+    //   The Reel:   wider phase-3 release peak band (rod control reads the tension better)
+    const heroResist=S.bc==='pontoon'?0.30:0;
+    const heroFlyShell=S.bc==='speedboat'?1:0;
+    const heroReelPeak=S.bc==='regular'?0.06:0;  // widens peak band by ±6%
+    let phase=1,hits=0,need=6-heroFlyShell,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
+    // For the boss_clean achievement — track the lowest hull seen across the fight.
+    let _bossHullMin=playerHull,_bossStartHull=playerHull;
+    const _bossPhaseFlash=()=>{const gr=$('grade');if(!gr)return;const prev=gr.style.transition||'';gr.style.transition='opacity 0.2s ease-out';gr.style.opacity='0.4';setTimeout(()=>{gr.style.opacity='';gr.style.transition=prev},220)};
     const render=()=>{
       const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
       const phName={1:'PHASE 1 · SHELL',2:'PHASE 2 · LURE',3:'PHASE 3 · LINE'}[phase];
@@ -368,10 +622,16 @@ const mini={
       }else{
         body=`<div class="m-sub" style="color:#fbcf3b">Bar climbs as you reel. Release at peak — not too soon, not after the spike.</div>
           <div style="height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin:8px 0"><div id="m-b-bar" style="height:100%;width:${tension*100}%;background:linear-gradient(90deg,#3b82f6,#10b981,#fbcf3b,#ef4444);transition:width 0.05s linear"></div></div>
-          <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE</button>`;
+          <div style="margin:6px 0 2px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="b-streak">0</span></span></div>
+          <div style="position:relative;height:16px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+            <div id="b-peak" style="position:absolute;top:0;bottom:0;left:46%;width:8%;background:rgba(251,207,59,0.18);border-left:1px dashed rgba(251,207,59,0.6);border-right:1px dashed rgba(251,207,59,0.6)"></div>
+            <div id="b-bob" style="position:absolute;top:50%;left:0;width:11px;height:11px;margin:-5px 0 0 -5px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#fbcf3b 70%,#a06600);box-shadow:0 0 7px rgba(251,207,59,0.7)"></div>
+          </div>
+          <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE (tap B for tension nudge)</button>`;
       }
-      card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
-      if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;startLure()}render()};
+      const heroPill=heroResist>0?' <span style="color:#a7f3d0;font-size:9px">· Lilly resist active</span>':heroFlyShell>0?' <span style="color:#93c5fd;font-size:9px">· Fly recon active</span>':heroReelPeak>0?' <span style="color:#fca5a5;font-size:9px">· Reel rod-feel active</span>':'';
+      card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}${heroPill}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
+      if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;_bossPhaseFlash();startLure()}render()};
       if(phase===2)$('m-b-strike').onclick=strike;
       if(phase===3)$('m-b-release').onclick=release;
       $('m-b-flee').onclick=flee;
@@ -384,29 +644,65 @@ const mini={
       const bar=$('m-b-bar'),pct=bar?parseFloat(bar.style.width):0;
       clearInterval(lureWindow);
       // Gold band ~40-60%.
-      if(pct>=38&&pct<=62){phase=3;tension=0;startReel();render();return}
-      playerHull=Math.max(0,playerHull-25);S.hull=playerHull;sfx('hit');flashDamage(0.8);
+      if(pct>=38&&pct<=62){phase=3;tension=0;_bossPhaseFlash();startReel();render();return}
+      playerHull=Math.max(0,playerHull-Math.round(25*(1-heroResist)));S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.8);
       if(playerHull<=0){lose();return}
       // Missed → back to phase 1, need one more hit
       phase=1;need=Math.min(8,need+1);render();
     };
+    // Phase-3 bobber-bounce: tap B on the peak window for a small tension nudge — gives the player
+    // a way to hold the bar in the release sweet-spot longer instead of hoping the climb rate hits 0.85.
+    let bobT=0,bobFreq=1.3+Math.random()*0.5,bobPhase=Math.random()*Math.PI*2,bossStreak=0;
+    const bobPos=()=>0.5+Math.sin(bobT*bobFreq+bobPhase)*0.45;
+    const bobInPeak=()=>{const p=bobPos();return p>=0.46&&p<=0.54};
+    const tapBoss=()=>{
+      if(phase!==3)return;
+      if(bobInPeak()){
+        bossStreak++;tension=Math.min(1,tension+0.025);
+        const bb=$('b-bob'),be=$('b-streak');if(bb){bb.style.filter='brightness(2)';setTimeout(()=>bb&&(bb.style.filter='none'),100)}if(be)be.textContent=bossStreak;
+        sfx('ping');bobFreq=1.0+Math.random()*0.9;bobPhase=Math.random()*Math.PI*2;
+      }else{
+        bossStreak=0;const be=$('b-streak');if(be)be.textContent=0;sfx('hit');
+        bobFreq=0.9+Math.random()*1.1;bobPhase=Math.random()*Math.PI*2;
+      }
+    };
     const startReel=()=>{
-      lureWindow=setInterval(()=>{tension=Math.min(1,tension+0.012);const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';if(tension>=1){clearInterval(lureWindow);phase=3;render()}},50);
+      lureWindow=setInterval(()=>{
+        tension=Math.min(1,tension+0.012);
+        const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';
+        bobT+=0.05;const bb=$('b-bob');if(bb)bb.style.left=(bobPos()*100)+'%';
+        if(tension>=1){clearInterval(lureWindow);phase=3;render()}
+      },50);
       mini.addTeardown(()=>clearInterval(lureWindow));
     };
     const release=()=>{
       clearInterval(lureWindow);
       // Peak band 78-92%.
-      if(tension>=0.78&&tension<=0.92){win();return}
-      playerHull=Math.max(0,playerHull-20);S.hull=playerHull;sfx('hit');flashDamage(0.6);
+      // The Reel widens the release peak band — easier to time the hit on phase 3.
+      if(tension>=0.78-heroReelPeak&&tension<=0.92+heroReelPeak){win();return}
+      playerHull=Math.max(0,playerHull-Math.round(20*(1-heroResist)));S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.6);
       if(playerHull<=0){lose();return}
       tension=0;phase=3;startReel();render();
     };
     const flee=()=>{S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
-    const win=()=>{S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly')};
-    const lose=()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0};
+    // Final-hit beat: a brief grade fade + splash cue, then resolve. No global time-scale —
+    // the world keeps ticking normally so water/AI/fish-jumps don't desync.
+    const _bossFinalBeat=fn=>{
+      sfx('splash_big');const gr=$('grade');if(gr){const prev=gr.style.transition||'';gr.style.transition='opacity 0.6s ease-out';gr.style.opacity='0.5';setTimeout(()=>{gr.style.opacity='';gr.style.transition=prev},620)}
+      setTimeout(fn,600);
+    };
+    const win=()=>{
+      S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');
+      // Clean run = boss never knocked the player below 50% of starting hull.
+      if(_bossHullMin>=Math.max(50,_bossStartHull*0.5))onUnlock('boss_clean');
+      _bossFinalBeat(()=>mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly'));
+    };
+    const lose=()=>{_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
     // Spacebar fires the phase-1 ping
-    const keyHandler=e=>{if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}};
+    const keyHandler=e=>{
+      if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}
+      if(e.code==='KeyB'&&miniActive&&phase===3&&e.type==='keydown'){e.preventDefault();tapBoss()}
+    };
     document.addEventListener('keydown',keyHandler);
     mini.addTeardown(()=>document.removeEventListener('keydown',keyHandler));
     el.style.display='flex';render();
@@ -646,7 +942,7 @@ const mini={
   // 6x4 grid of dirt clods on a 320x220 canvas. Click a clod → it crumbles, ~50% chance of a worm,
   // ~15% chance of a cricket bonus, rest empty. 22s timer. Clods regrow on a 1.8s cycle.
   openForageWorm(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=320,H=220,cols=6,rows=4,cell=44,off=18;
     card.innerHTML=`<div class="m-kicker" style="color:#a47a52">Worm Dig · ${camp.userData.camp.n}</div>
@@ -658,7 +954,12 @@ const mini={
     const cv=$('m-fw-cv'),ctx=cv.getContext('2d');
     const clods=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)clods.push({x:off+c*cell,y:off+r*cell,r:Math.random()<0.05?0:1,t:0});
     let worms=0,crickets=0,t=22;const G={alive:true};
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill()}}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#3a2812','#2a1d0e','rgba(120,80,40,0.07)');
+      for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill();
+        // Dug-out highlight ring so the player can read "this one's done"
+        ctx.strokeStyle='rgba(120,80,40,0.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(c.x,c.y,16,0,Math.PI*2);ctx.stroke()}}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const c of clods){if(c.r>0&&Math.hypot(c.x-mx,c.y-my)<20){c.r=0;c.t=0;sfx('dig');const roll=Math.random();if(roll<0.55){worms++;baitInv.worm++;$('m-fw-w').textContent=worms}else if(roll<0.7){crickets++;baitInv.cricket++;$('m-fw-c').textContent=crickets}draw();persist();break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fw-t').textContent=t;for(const c of clods){if(c.r===0){c.t++;if(c.t>10){c.r=1;c.t=0}}}draw();if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);const total=worms+crickets;onUnlock('first_forage');if(total>=8)onUnlock('worm_farmer');mini.finishForage(`${worms} worms${crickets?', '+crickets+' crickets':''}.`,worms*4+crickets*8)}},1000);
     const rf=setInterval(()=>draw(),120);
@@ -670,7 +971,7 @@ const mini={
   // === FORAGE: BUG CATCH (crickets) ===
   // Bugs scuttle across the card. Tap to swat. 22s.
   openForageBug(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#8db347">Bug Catch · ${camp.userData.camp.n}</div>
@@ -682,7 +983,13 @@ const mini={
     const cv=$('m-fb-cv'),ctx=cv.getContext('2d');
     const bugs=[];const G={alive:true};let crickets=0,t=22;
     const spawn=()=>{if(bugs.length>5)return;const fromLeft=Math.random()<0.5;bugs.push({x:fromLeft?-10:W+10,y:20+Math.random()*(H-40),vx:(fromLeft?1:-1)*(1.3+Math.random()*1.7),vy:(Math.random()-0.5)*0.3,life:1})};
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#3a5018','#1f2a14','rgba(180,200,80,0.05)');
+      // Tufts of grass — random vertical slashes at deterministic positions for an alive backdrop.
+      ctx.strokeStyle='rgba(140,170,80,0.25)';ctx.lineWidth=1;
+      for(let i=0;i<22;i++){const x=(i*47)%W,y=H-((i*61)%30)-2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+2,y-8-((i*3)%4));ctx.stroke()}
+      for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const b of bugs){if(b.life>0&&Math.hypot(b.x-mx,b.y-my)<14){b.life=0;crickets++;baitInv.cricket++;$('m-fb-c').textContent=crickets;sfx('swat');persist();break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fb-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);onUnlock('first_forage');mini.finishForage(`${crickets} crickets in the box.`,crickets*6)}},1000);
     const sp=setInterval(spawn,500);
@@ -695,7 +1002,7 @@ const mini={
   // === FORAGE: FROG GRAB ===
   // Frogs hop, pause ~700ms, hop again. Tap during the still window.
   openForageFrog(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#5fa75f">Frog Grab · ${camp.userData.camp.n}</div>
@@ -706,7 +1013,13 @@ const mini={
       <button class="btn bx" id="m-fg-q">Pack Up</button>`;
     const cv=$('m-fg-cv'),ctx=cv.getContext('2d');
     const frogs=[{x:W/2,y:H/2,still:0.7,t:0}];const G={alive:true};let caught=0,t=25;
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#2c4a28','#16241a','rgba(110,180,110,0.05)');
+      // Lily-pad blobs to read as a swamp surface, deterministic so the marsh looks lived-in.
+      ctx.fillStyle='rgba(60,110,60,0.55)';
+      for(let i=0;i<6;i++){const x=((i*113)%(W-40))+20,y=((i*191)%(H-40))+20;ctx.beginPath();ctx.ellipse(x,y,18,12,(i*0.5)%6,0,Math.PI*2);ctx.fill()}
+      for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(let i=0;i<frogs.length;i++){const f=frogs[i];if(Math.hypot(f.x-mx,f.y-my)<16&&f.t>=f.still){caught++;baitInv.frog++;$('m-fg-f').textContent=caught;sfx('croak');persist();frogs.splice(i,1);if(frogs.length<2)frogs.push({x:30+Math.random()*(W-60),y:30+Math.random()*(H-60),still:0.5+Math.random()*0.5,t:0});break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fg-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} frogs.`,caught*12)}},1000);
     const rf=setInterval(()=>{if(!G.alive)return;for(const f of frogs){f.t+=0.06;if(f.t>f.still+0.6){f.x=30+Math.random()*(W-60);f.y=30+Math.random()*(H-60);f.t=0;f.still=0.5+Math.random()*0.5}}draw()},60);
@@ -719,7 +1032,7 @@ const mini={
   // Drag the net (click + drag) across moving minnows. Anything inside the swept rectangle when
   // released counts. 22s timer; 3-second cooldown between sweeps.
   openForageMinnow(camp){
-    miniActive=true;S.on=false;_catchOpen=true;
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
     const W=340,H=220;
     card.innerHTML=`<div class="m-kicker" style="color:#7ec8e3">Minnow Net · ${camp.userData.camp.n}</div>
@@ -731,7 +1044,14 @@ const mini={
     const cv=$('m-fm-cv'),ctx=cv.getContext('2d');
     const m=[];const G={alive:true,drag:null};let caught=0,cray=0,t=22;
     for(let i=0;i<10;i++)m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'});
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#0e3848','#06181f','rgba(126,200,227,0.06)');
+      // Faint horizontal current lines so the water reads as moving even when minnows pause.
+      ctx.strokeStyle='rgba(126,200,227,0.08)';ctx.lineWidth=1;
+      for(let i=0;i<8;i++){const y=(i*H/8+((Date.now()*0.02+i*40)%20));ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+      for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}
+      if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}
+    };
     const xy=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]};
     cv.onmousedown=e=>{if(!G.alive)return;const[x,y]=xy(e);G.drag={x0:x,y0:y,x1:x,y1:y}};
     cv.onmousemove=e=>{if(!G.drag)return;const[x,y]=xy(e);G.drag.x1=x;G.drag.y1=y};
@@ -743,9 +1063,77 @@ const mini={
     draw();el.style.display='flex';
   },
 
+  // === FORAGE: CRAYFISH (flip rocks) ===
+  // Stony shore at East Rocks. Grid of rocks; click to flip — most are empty, ~30% hide a crayfish,
+  // small chance of a "bonus rock" (extra). Crayfish that escape re-burrow after 1.2s so timing
+  // matters. Yields baitInv.crayfish (+sometimes minnow as a bycatch).
+  openForageCrayfish(camp){
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=340,H=220,cols=7,rows=5,cell=42,off=24;
+    card.innerHTML=`<div class="m-kicker" style="color:#cf4040">Crayfish Hole · ${camp.userData.camp.n}</div>
+      <div class="m-title">Flip the rocks.</div>
+      <div class="m-sub">Most are empty. Some hide crayfish — tap them <b>before they re-burrow</b>.</div>
+      <canvas id="m-fc-cv" width="${W}" height="${H}" style="background:#1f1410;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Crayfish</span><span class="sv y" id="m-fc-c">0</span></div><div class="sr"><span class="sl">Minnow</span><span class="sv g" id="m-fc-m">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fc-t">22</span></div></div>
+      <button class="btn bx" id="m-fc-q">Pack Up</button>`;
+    const cv=$('m-fc-cv'),ctx=cv.getContext('2d');
+    // Each rock can be flipped(false → true), then 'reveal'={none|cray|min} for ~1.2s, then re-buries.
+    const rocks=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const roll=Math.random();rocks.push({x:off+c*cell,y:off+r*cell,kind:roll<0.30?'cray':roll<0.42?'min':'none',flipped:false,revealUntil:0})}
+    let cray=0,caught=0,t=22;const G={alive:true};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#3a1e10','#1c0f08','rgba(200,120,80,0.06)');
+      // Faint shore-water suggestion at the bottom.
+      ctx.fillStyle='rgba(56,120,140,0.18)';ctx.fillRect(0,H-26,W,26);
+      const now=Date.now();
+      for(const k of rocks){
+        if(!k.flipped){
+          // Whole rock — grey/brown polygon.
+          ctx.fillStyle='#5a4030';ctx.beginPath();ctx.ellipse(k.x,k.y,16,12,0,0,Math.PI*2);ctx.fill();
+          ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1;ctx.stroke();
+        }else if(k.revealUntil>now){
+          // Flipped + revealing — show the dark pocket + the crayfish/minnow underneath.
+          ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.ellipse(k.x,k.y,15,10,0,0,Math.PI*2);ctx.fill();
+          if(k.kind==='cray'){ctx.fillStyle='#cf4040';ctx.beginPath();ctx.ellipse(k.x,k.y,9,6,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fbcf3b';ctx.beginPath();ctx.arc(k.x-3,k.y-1,1.5,0,Math.PI*2);ctx.arc(k.x+3,k.y-1,1.5,0,Math.PI*2);ctx.fill()}
+          else if(k.kind==='min'){ctx.fillStyle='#7ec8e3';ctx.beginPath();ctx.ellipse(k.x,k.y,7,4,0,0,Math.PI*2);ctx.fill()}
+        }else{
+          // Empty pocket — flipped but nothing left.
+          ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.ellipse(k.x,k.y,15,10,0,0,Math.PI*2);ctx.fill();
+        }
+      }
+    };
+    cv.onclick=e=>{
+      if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;
+      for(const k of rocks){
+        if(Math.hypot(k.x-mx,k.y-my)<16){
+          if(!k.flipped){
+            // First click: flip the rock, reveal whatever's under it for 1.2s.
+            k.flipped=true;k.revealUntil=Date.now()+1200;sfx('dig');
+            if(k.kind==='cray'||k.kind==='min')sfx('click');  // little chitter
+          }else if(k.revealUntil>Date.now()&&k.kind!=='none'){
+            // Catch it.
+            if(k.kind==='cray'){cray++;baitInv.crayfish=(baitInv.crayfish||0)+1;$('m-fc-c').textContent=cray;sfx('croak')}
+            else{caught++;baitInv.minnow=(baitInv.minnow||0)+1;$('m-fc-m').textContent=caught;sfx('net')}
+            k.kind='none';k.revealUntil=0;persist();
+          }
+          draw();return;
+        }
+      }
+    };
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fc-t').textContent=t;
+      // Slowly re-bury old flipped rocks so a patient player keeps having things to flip.
+      const now=Date.now();for(const k of rocks){if(k.flipped&&k.revealUntil<now-3000&&Math.random()<0.04){k.flipped=false;k.revealUntil=0;const roll=Math.random();k.kind=roll<0.30?'cray':roll<0.42?'min':'none'}}
+      if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${cray} crayfish${caught?', '+caught+' minnow':''}.`,cray*22+caught*5)}
+    },1000);
+    const rf=setInterval(()=>draw(),80);
+    $('m-fc-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',cray*22+caught*5)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onclick=null});
+    draw();el.style.display='flex';
+  },
   // Forage finish: pantry-checked achievements, score bonus, clear overlay, resume run.
   finishForage(msg,bonus){
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
+    if(_fightCleanup){_fightCleanup();_fightCleanup=null}
     if(bonus)S.score+=bonus;
     radio(msg,'lilly');sfx('win');
     miniActive=false;S.on=true;_catchOpen=false;
@@ -770,6 +1158,35 @@ function initEngine(){
     });
     const sky=new THREE.Mesh(skyGeo,skyMat);scene.add(sky);scene._sky=sky;
   }
+  // Soft radial sprite texture — a glowing disc with a feathered edge. Reused for the moon, its
+  // halo, and the star points so nothing renders as a hard square.
+  const _softTex=(()=>{
+    const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');
+    const g=x.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.35,'rgba(255,255,255,0.85)');
+    g.addColorStop(0.7,'rgba(255,255,255,0.18)');g.addColorStop(1,'rgba(255,255,255,0)');
+    x.fillStyle=g;x.fillRect(0,0,64,64);
+    const tx=new THREE.CanvasTexture(c);return tx;
+  })();
+  // Night sky — starfield (Points on a high dome) + a moon sprite. Hidden in daytime; faded in by
+  // the _isNight flag in loop(). Stars sit just inside the sky dome so fog doesn't eat them.
+  {
+    const N=520,pos=new Float32Array(N*3);
+    for(let i=0;i<N;i++){
+      // Upper hemisphere only — random points on a 460-radius dome.
+      const u=Math.random(),v=Math.random()*0.5;  // v<0.5 keeps them above the horizon
+      const th=u*Math.PI*2,ph=Math.acos(1-v*2*0.9);
+      pos[i*3]=Math.sin(ph)*Math.cos(th)*460;pos[i*3+1]=Math.abs(Math.cos(ph))*460+20;pos[i*3+2]=Math.sin(ph)*Math.sin(th)*460;
+    }
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    const sm=new THREE.PointsMaterial({map:_softTex,color:0xcfe0ff,size:4,sizeAttenuation:false,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending});
+    const stars=new THREE.Points(sg,sm);stars.visible=false;scene.add(stars);scene._stars=stars;
+    // Moon — soft textured disc + a wider additive halo glow.
+    const moon=new THREE.Sprite(new THREE.SpriteMaterial({map:_softTex,color:0xeaf0ff,transparent:true,opacity:0,depthWrite:false}));
+    moon.scale.set(34,34,1);moon.visible=false;scene.add(moon);scene._moon=moon;
+    const moonHalo=new THREE.Sprite(new THREE.SpriteMaterial({map:_softTex,color:0x9fb8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0,depthWrite:false}));
+    moonHalo.scale.set(110,110,1);moonHalo.visible=false;scene.add(moonHalo);scene._moonHalo=moonHalo;
+  }
   cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);cam.position.set(0,15,30);cam.lookAt(0,0,0);
   ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
   ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.2;
@@ -789,11 +1206,39 @@ function initEngine(){
   // Outer additive glow sprite — fakes a bloom flare around the sun without a postprocessing pass.
   const sunGlow=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffd9a0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.6,depthWrite:false}));sunGlow.scale.set(80,80,80);sunGlow.position.copy(sunDisc.position);scene.add(sunGlow);
   scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;scene._sunGlow=sunGlow;
+  // Water sun-glint — an additive sprite on the water plane along the sun's bearing. Cheap.
+  // Updated in loop() with the sun arc; hidden at night via the _isNight flag.
+  const glintMat=new THREE.SpriteMaterial({map:_softTex,color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.55,depthWrite:false});
+  const sunGlint=new THREE.Sprite(glintMat);sunGlint.scale.set(60,18,1);sunGlint.position.set(0,0.12,-60);scene.add(sunGlint);scene._sunGlint=sunGlint;
+  // God-ray light shafts — three soft additive cones radiating down from the sun position. Reuse
+  // _softTex so the cones have a feathered taper. Faded by sun height + Clear weather only.
+  {
+    const rays=new THREE.Group();
+    for(let i=0;i<3;i++){
+      const m=new THREE.SpriteMaterial({map:_softTex,color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0,depthWrite:false});
+      const s=new THREE.Sprite(m);s.scale.set(50+i*22,180+i*40,1);rays.add(s);
+    }
+    scene.add(rays);scene._godRays=rays;
+  }
 
   // Water — deeper blue-green, more reflective
   // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
   waterGeo=new THREE.PlaneGeometry(1200,1200,96,96);
-  const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
+  // Water reflection env — a tiny vertical sky gradient through PMREM so the metalness water
+  // mirrors a believable sky instead of reflecting black. Targeted to the water only (not
+  // scene.environment) so it doesn't over-brighten every other material. Defensive: no-ops if the
+  // GL context can't build it (e.g. some headless backends).
+  let _waterEnv=null;
+  try{
+    const ec=document.createElement('canvas');ec.width=16;ec.height=64;const ex=ec.getContext('2d');
+    const eg=ex.createLinearGradient(0,0,0,64);
+    eg.addColorStop(0,'#3b6280');eg.addColorStop(0.45,'#1a3a55');eg.addColorStop(1,'#06121e');
+    ex.fillStyle=eg;ex.fillRect(0,0,16,64);
+    const et=new THREE.CanvasTexture(ec);et.mapping=THREE.EquirectangularReflectionMapping;
+    const pmrem=new THREE.PMREMGenerator(ren);_waterEnv=pmrem.fromEquirectangular(et).texture;
+    et.dispose();pmrem.dispose();
+  }catch(e){_waterEnv=null}
+  const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMap:_waterEnv,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
@@ -811,9 +1256,13 @@ function initEngine(){
       if(DUCT.active&&!DUCT.engaged&&bMesh.position.distanceTo(DUCT.mesh.position)<14&&Math.abs(spd)<0.3)openDuctChase();
       else castLine();
     }
-    if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
+    if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&!miniActive&&!_peekOpen){e.preventDefault();
+      if(_nearShop&&Math.abs(spd)<0.25)dockShop(_nearShop.userData.shop);
+      else boatHorn();
+    }
     if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
+    if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
     if(e.code==='Escape'&&miniActive){e.preventDefault();
@@ -868,6 +1317,17 @@ function mkShopStructure(shop){
   // Neon sign — color-coded, emissive, with a glow sprite
   const sign=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.7,0.1),new THREE.MeshStandardMaterial({color:shop.col,emissive:shop.col,emissiveIntensity:0.8}));sign.position.set(0,2.1,0.6);g.add(sign);
   const signGlow=new THREE.Sprite(new THREE.SpriteMaterial({color:shop.col,blending:THREE.AdditiveBlending,transparent:true,opacity:0.5,depthWrite:false}));signGlow.scale.set(8,8,8);signGlow.position.set(0,2.1,0.6);g.add(signGlow);g.userData.signGlow=signGlow;
+  // Overhead name label — canvas-painted sprite that hovers above the shop. Hidden by default;
+  // tickShops shows it when the player gets close enough OR at night so the lake reads as named.
+  {
+    const c=document.createElement('canvas');c.width=512;c.height=128;const x=c.getContext('2d');
+    x.font='bold 56px DM Sans, sans-serif';x.textAlign='center';x.textBaseline='middle';
+    x.shadowColor='rgba(0,0,0,0.9)';x.shadowBlur=12;x.shadowOffsetY=2;
+    x.fillStyle='#'+shop.col.toString(16).padStart(6,'0');x.fillText(shop.n,256,64);
+    const tx=new THREE.CanvasTexture(c);
+    const lbl=new THREE.Sprite(new THREE.SpriteMaterial({map:tx,transparent:true,opacity:0,depthWrite:false,depthTest:false}));
+    lbl.scale.set(12,3,1);lbl.position.set(0,4.6,0.6);g.add(lbl);g.userData.nameLabel=lbl;
+  }
   const lt=new THREE.PointLight(shop.col,1.0,30);lt.position.set(0,3,0);g.add(lt);
   // Beacon ring on the water so it's findable from a distance
   const ring=new THREE.Mesh(new THREE.RingGeometry(6,7,32),new THREE.MeshBasicMaterial({color:shop.col,transparent:true,opacity:0.2,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.08;g.add(ring);g.userData.ring=ring;
@@ -880,7 +1340,16 @@ let _nearShop=null;
 function tickShops(){
   if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('shop-prompt');if(p)p.style.display='none';return}
   let near=null;
-  for(const m of shopMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
+  for(const m of shopMeshes){
+    if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;
+    // Night-bloom on the shop neon: bigger + brighter sprite, brighter base sign.
+    if(m.userData.signGlow){const sg=m.userData.signGlow;const sc=_isNight?11:8;sg.scale.set(sc,sc,sc);sg.material.opacity=_isNight?0.78:0.5}
+    const d=bMesh.position.distanceTo(m.position);
+    // Overhead name label: full opacity within 40u, half at 80u, hidden beyond — always visible at
+    // night within 100u so the lake reads as named after sunset.
+    if(m.userData.nameLabel){const lb=m.userData.nameLabel;let op=d<40?0.95:d<80?(80-d)/40*0.95:0;if(_isNight&&d<100)op=Math.max(op,(100-d)/100*0.85);lb.material.opacity=op}
+    if(d<9)near=m;
+  }
   _nearShop=near;
   const p=$('shop-prompt');if(!p)return;
   if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.shop.col.toString(16).padStart(6,'0')}">${near.userData.shop.n}</b> — press <b>E</b> to dock & shop`}
@@ -1079,8 +1548,20 @@ function maybeSpawnBoss(){
   radio('Boss flare just lit up the Deep Dock. Move when you’re ready.','fly');
   sfx('legendary');
 }
+// Gator King — auto-spawns at East Rocks Crayfish Hole once the player has logged all 3 trigger
+// gators (Spotted gar, Alligator gar, Bull gator). Like the Deep Dock boss, at most once per run.
+function maybeSpawnGatorKing(){
+  if(S.gatorKingSpawned||S.gatorKingDown||GAME_MODE!=='game')return;
+  if(!GATOR_NAMES.every(n=>fishCatalog.has(n)))return;
+  S.gatorKingSpawned=true;
+  const dp=mkDropPoint(DP_GATOR_KING);
+  // Anchor at the East Rocks Crayfish Hole camp coordinates (185, 80).
+  dp.position.set(185,0,80);dp.userData.isGatorKing=true;scene.add(dp);dropPoints.push(dp);
+  radio('Something big just slid into East Rocks. Crayfish Hole won\'t be quiet today.','lilly');
+  sfx('legendary');
+}
 function tickDropPoints(t){
-  maybeSpawnBoss();
+  maybeSpawnBoss();maybeSpawnGatorKing();
   for(let i=dropPoints.length-1;i>=0;i--){
     const dp=dropPoints[i],u=dp.userData;
     if(!u.active)continue;
@@ -1105,14 +1586,14 @@ function tickDropPoints(t){
 let _dpRespawnT=null;
 function clearDropPoint(dp){
   // Remove the resolved drop point and spawn a replacement at a new random spot.
-  scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
+  disposeTree(dp);scene.remove(dp);const idx=dropPoints.indexOf(dp);if(idx>=0)dropPoints.splice(idx,1);
   _dpRespawnT=setTimeout(()=>{_dpRespawnT=null;if(S.on&&GAME_MODE==='game'&&dropPoints.length<3)spawnDropPoint()},2000);
 }
 // Hard reset for the drop-point system — called by startGame() so a new run doesn't inherit
 // markers from the previous run.
 function resetDropPoints(){
   if(_dpRespawnT){clearTimeout(_dpRespawnT);_dpRespawnT=null}
-  dropPoints.slice().forEach(dp=>{scene.remove(dp)});dropPoints.length=0;
+  dropPoints.slice().forEach(dp=>{disposeTree(dp);scene.remove(dp)});dropPoints.length=0;
   if(GAME_MODE!=='game')return;
   // Home dock from the address field — always a 'rescue' drop point at the deterministic spot.
   const home=S.homeAddr?addrToPos(S.homeAddr):null;
@@ -1147,7 +1628,9 @@ const POIS=[
 ];
 function drawMinimap(){
   const c=$('mm-canvas');if(!c)return;
-  const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42;  // scale: world u -> px
+  const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42*_mmZoom;  // scale: world u -> px (× zoom toggle)
+  // When zoomed in, the dial follows the boat (offset projection); when at 1× it stays centered.
+  const camX=_mmZoom>1.5?bMesh.position.x:0,camZ=_mmZoom>1.5?bMesh.position.z:0;
   ctx.clearRect(0,0,W,H);
   // ring background
   ctx.fillStyle='rgba(3,7,18,0.7)';ctx.beginPath();ctx.arc(W/2,H/2,W/2-1,0,Math.PI*2);ctx.fill();
@@ -1158,7 +1641,7 @@ function drawMinimap(){
   // Project world coords to minimap px, clamping anything beyond the dial radius to the rim so it
   // still reads as a direction marker instead of disappearing.
   const R=W/2-4;
-  const proj=(wx,wz)=>{let px=wx*scl,pz=wz*scl;const d=Math.hypot(px,pz);if(d>R){px=px/d*R;pz=pz/d*R}return[W/2+px,H/2+pz]};
+  const proj=(wx,wz)=>{let px=(wx-camX)*scl,pz=(wz-camZ)*scl;const d=Math.hypot(px,pz);if(d>R){px=px/d*R;pz=pz/d*R}return[W/2+px,H/2+pz]};
   // POIs first (drawn under everything else)
   POIS.forEach(p=>{const[px,pz]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.globalAlpha=0.55;ctx.fillRect(px-1.5,pz-1.5,3,3);ctx.globalAlpha=1});
   // Bait shops — small diamond markers in their sign color so the player can navigate to gear.
@@ -1183,6 +1666,26 @@ function drawMinimap(){
   if(flareLive||(S.pingReveal&&Date.now()*0.001<S.pingReveal)){
     civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
     if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
+  }
+  // Duct compass marker — a pulsing gold dot. If he's beyond the dial radius the proj() clamps to
+  // the rim and we draw a small arrow chevron pointing outward so the player can chase the bearing.
+  if(DUCT.active){
+    const[dx,dz]=proj(DUCT.x,DUCT.z);
+    const offRim=Math.hypot(DUCT.x*scl,DUCT.z*scl)>R-1;
+    const pulse=0.6+Math.sin(now*4)*0.4;
+    // Sonar-reveal flash: for ~2s after a ping, paint a wider gold ring on Duct so the recon tool
+    // gets credit for "finding" him separately from the always-on compass marker.
+    if(S.lastPing&&now-S.lastPing<2){const age=now-S.lastPing;ctx.strokeStyle='#ffd23f';ctx.globalAlpha=Math.max(0,1-age/2)*0.9;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(dx,dz,4+age*6,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
+    ctx.fillStyle='#ffd23f';ctx.globalAlpha=pulse;
+    ctx.beginPath();ctx.arc(dx,dz,offRim?2.5:3,0,Math.PI*2);ctx.fill();
+    if(offRim){
+      // Arrow chevron pointing from boat → Duct, clamped to the rim.
+      const ang=Math.atan2(DUCT.z-bMesh.position.z,DUCT.x-bMesh.position.x);
+      ctx.save();ctx.translate(dx,dz);ctx.rotate(ang);ctx.fillStyle='#ffd23f';
+      ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(-2,-2.5);ctx.lineTo(-2,2.5);ctx.closePath();ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha=1;
   }
   ctx.restore();
 }
@@ -1227,7 +1730,7 @@ function spawnDuct(){
   DUCT.x=Math.cos(a)*r;DUCT.z=Math.sin(a)*r;DUCT.vx=(Math.random()-0.5)*0.05;DUCT.vz=(Math.random()-0.5)*0.05;
   DUCT.t0=Date.now()*0.001;DUCT.life=35+Math.random()*20;DUCT.active=true;DUCT.engaged=false;DUCT.wing.visible=false;
   DUCT.mesh.position.set(DUCT.x,0,DUCT.z);DUCT.mesh.visible=true;
-  ductStats.sightings++;persist();onUnlock('duct_sighting');
+  ductStats.sightings++;logDuct('sighting');persist();onUnlock('duct_sighting');
   radio('…is that a rubber duck? Tape on its back and everything. Get over there.','fly');
   sfx('quack');
 }
@@ -1241,9 +1744,9 @@ function tickDuct(t){
   if(Math.random()<0.01){DUCT.vx=(Math.random()-0.5)*0.06;DUCT.vz=(Math.random()-0.5)*0.06}
   DUCT.x+=DUCT.vx;DUCT.z+=DUCT.vz;
   const m=DUCT.mesh;m.position.set(DUCT.x,Math.sin(t*2.5)*0.12,DUCT.z);m.rotation.y=Math.atan2(DUCT.vx,DUCT.vz)+Math.sin(t)*0.2;
-  if(DUCT.glow)DUCT.glow.material.opacity=0.4+Math.sin(t*3)*0.15;
+  if(DUCT.glow){const base=_isNight?0.85:0.4;const sc=_isNight?7:5;DUCT.glow.material.opacity=base+Math.sin(t*3)*0.15;DUCT.glow.scale.set(sc,sc,sc)}
   // Periodic quack if on-screen-ish (in front of the camera).
-  if(t-DUCT.lastQuack>5.5){const toD=new THREE.Vector3(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=new THREE.Vector3();cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
+  if(t-DUCT.lastQuack>5.5){const toD=_vDuct.set(DUCT.x,0,DUCT.z).sub(cam.position);const fwd=_vFwd;cam.getWorldDirection(fwd);if(toD.normalize().dot(fwd)>0.3){sfx('quack');DUCT.lastQuack=t}}
   // Proximity prompt.
   const p=$('duct-prompt');if(p){const d=bMesh.position.distanceTo(m.position);if(d<14&&Math.abs(spd)<0.3&&!miniActive){p.style.display='block';p.innerHTML='🦆 <b>DUCT IN SIGHT</b> — press <b>F</b> to make your attempt'}else p.style.display='none'}
 }
@@ -1308,7 +1811,7 @@ function makeHullShape(p){
   s.lineTo(-p.halfBeam,p.sternZ);
   return s;
 }
-function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THREE.Group();
+function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT[cls];bMesh=new THREE.Group();
   const prof=HULL_PROFILE[cls]||HULL_PROFILE.regular;
   // Extruded hull — beveled top edge reads as a gunwale. Rotated so the extrude depth becomes height.
   const hullGeo=new THREE.ExtrudeGeometry(makeHullShape(prof),{depth:prof.depth,bevelEnabled:true,bevelThickness:0.12,bevelSize:0.12,bevelSegments:2});
@@ -1326,7 +1829,7 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   // Windshield
   const ws=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.6,0.08),new THREE.MeshStandardMaterial({color:0x88ddff,transparent:true,opacity:0.45,metalness:0.9,roughness:0.1}));ws.position.set(0,1.8,0.8);ws.rotation.x=-0.25;bMesh.add(ws);
   // Console
-  const console=new THREE.Mesh(new THREE.BoxGeometry(1,0.4,0.5),new THREE.MeshStandardMaterial({color:0x1a1a2e,metalness:0.6}));console.position.set(0,1.6,0.3);bMesh.add(console);
+  const dashConsole=new THREE.Mesh(new THREE.BoxGeometry(1,0.4,0.5),new THREE.MeshStandardMaterial({color:0x1a1a2e,metalness:0.6}));dashConsole.position.set(0,1.6,0.3);bMesh.add(dashConsole);
   // Motor
   const motor=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.2,0.9),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.7,roughness:0.3}));motor.position.set(0,0.2,-2.8);bMesh.add(motor);
   const motorCowl=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.3,0.5),new THREE.MeshStandardMaterial({color:0x222230}));motorCowl.position.set(0,0.9,-2.8);bMesh.add(motorCowl);
@@ -1339,22 +1842,52 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
   // Foam ring under the boat — scales with speed for hull-water contact read
   const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.6,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.35,side:THREE.DoubleSide}));foam.rotation.x=-Math.PI/2;foam.position.y=-0.18;bMesh.add(foam);bMesh.userData.foam=foam;
+  // Caustics shimmer — a wider additive ring that ripples under the boat. Cheap, big mood lift.
+  const caustics=new THREE.Mesh(new THREE.RingGeometry(3.2,5.2,32),new THREE.MeshBasicMaterial({color:0x6fc8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0.25,side:THREE.DoubleSide,depthWrite:false}));
+  caustics.rotation.x=-Math.PI/2;caustics.position.y=-0.16;bMesh.add(caustics);bMesh.userData.caustics=caustics;
   // === Hero accent kit + upgrade-visible parts ===
-  // Hero accents pull from the boat color but layer kit on top so each operative reads at a glance.
+  // Each operative gets a wildly different boat skin so they read at a glance from across the lake.
   const up=boatUpgrades[cls]||{};
+  const ac=t.accents||{};
   if(cls==='regular'){
-    // The Reel: chrome trim strips + decal stripe + extra port spotlight
-    [[-1.2,1.05,1],[1.2,1.05,1]].forEach(([x,y,z])=>{const trim=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,3),new THREE.MeshStandardMaterial({color:0xe6e6e6,metalness:0.95,roughness:0.2}));trim.position.set(x,y,z);bMesh.add(trim)});
-    const decal=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.3),new THREE.MeshBasicMaterial({color:0xe8590c,transparent:true,opacity:0.95}));decal.position.set(0.81,1.55,-0.3);decal.rotation.y=Math.PI/2;bMesh.add(decal);
+    // The Reel: tournament boat — red hull with white pinstripes, blue racing stripe, gold star
+    // emblem on the cabin. Flashy, sponsored-looking.
+    // Twin pinstripes along the gunwale (white).
+    [[-1.2,1.05,1],[1.2,1.05,1]].forEach(([x,y,z])=>{const trim=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,3.4),new THREE.MeshStandardMaterial({color:ac.trim,metalness:0.4,roughness:0.4}));trim.position.set(x,y,z);bMesh.add(trim)});
+    // Blue racing stripe down the centre of the deck.
+    const stripe=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.02,4.2),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.35}));stripe.position.set(0,0.6,0.3);bMesh.add(stripe);
+    // Gold "★" emblem on the port side of the cabin.
+    const emblem=new THREE.Mesh(new THREE.CircleGeometry(0.22,5),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.95}));emblem.position.set(-0.81,1.55,-0.3);emblem.rotation.y=-Math.PI/2;bMesh.add(emblem);
+    const emblem2=emblem.clone();emblem2.position.x=0.81;emblem2.rotation.y=Math.PI/2;bMesh.add(emblem2);
+    // Red accent panel on the cabin roof.
+    const roofAccent=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.06,2),new THREE.MeshStandardMaterial({color:ac.primary,emissive:ac.primary,emissiveIntensity:0.18}));roofAccent.position.set(0,1.88,-0.3);bMesh.add(roofAccent);
   }else if(cls==='pontoon'){
-    // Lilly: wood plank texture on the cabin, inner-tube floats on the gunwale
-    const planks=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.22),new THREE.MeshStandardMaterial({color:0x9a6a32,roughness:0.95,emissive:0x1a0e02,emissiveIntensity:0.2}));planks.position.set(0,1.4,-0.3);bMesh.add(planks);
-    [[-1.3,0.6,0.5],[1.3,0.6,0.5],[-1.3,0.6,-1.4],[1.3,0.6,-1.4]].forEach(([x,y,z])=>{const tube=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.1,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0x2a1410,emissiveIntensity:0.3}));tube.rotation.x=Math.PI/2;tube.position.set(x,y,z);bMesh.add(tube)});
+    // Lilly: camo + pink. Muddy olive base with a pink stripe and lime accents; flower emblem on
+    // the cabin. The wide pontoon body still reads as her hull, the trim now reads as personality.
+    // Camo paint: 3 muddy patches randomly tossed on the cabin.
+    const cabinCamo=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.22),new THREE.MeshStandardMaterial({color:ac.trim,roughness:0.95}));cabinCamo.position.set(0,1.4,-0.3);bMesh.add(cabinCamo);
+    [[0.4,1.5,-0.2,0.5],[-0.5,1.3,0.3,0.4],[0.2,1.7,-1.0,0.35]].forEach(([x,y,z,r])=>{const patch=new THREE.Mesh(new THREE.CircleGeometry(r,8),new THREE.MeshStandardMaterial({color:0x44551c,roughness:0.95}));patch.position.set(x,y,z);patch.rotation.y=Math.random()*Math.PI;bMesh.add(patch)});
+    // Pink top stripe.
+    const pinkStripe=new THREE.Mesh(new THREE.BoxGeometry(1.66,0.08,2.26),new THREE.MeshStandardMaterial({color:ac.primary,emissive:ac.primary,emissiveIntensity:0.45}));pinkStripe.position.set(0,1.9,-0.3);bMesh.add(pinkStripe);
+    // Lime green inner-tube floats (her trademark).
+    [[-1.3,0.6,0.5],[1.3,0.6,0.5],[-1.3,0.6,-1.4],[1.3,0.6,-1.4]].forEach(([x,y,z])=>{const tube=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.1,8,16),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.35}));tube.rotation.x=Math.PI/2;tube.position.set(x,y,z);bMesh.add(tube)});
+    // Daisy/flower emblem on each cabin side.
+    [-0.81,0.81].forEach(x=>{
+      const petal=new THREE.Mesh(new THREE.CircleGeometry(0.22,8),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.9}));petal.position.set(x,1.55,-0.3);petal.rotation.y=x<0?-Math.PI/2:Math.PI/2;bMesh.add(petal);
+      const core=new THREE.Mesh(new THREE.CircleGeometry(0.07,8),new THREE.MeshBasicMaterial({color:ac.stripe}));core.position.set(x,1.55,-0.3);core.position.x+=x<0?-0.01:0.01;core.rotation.y=x<0?-Math.PI/2:Math.PI/2;bMesh.add(core);
+    });
   }else if(cls==='speedboat'){
-    // Fly: matte stealth panels + sonar mast on the cabin
-    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.24),new THREE.MeshStandardMaterial({color:0x1a2330,roughness:0.85,metalness:0.4}));panel.position.set(0,1.4,-0.3);bMesh.add(panel);
+    // Fly: matte stealth boat — black hull, navy panels, glowing blue sonar mast + bow tracer line.
+    // Quiet, tactical, slightly menacing.
+    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.24),new THREE.MeshStandardMaterial({color:ac.trim,roughness:0.85,metalness:0.4}));panel.position.set(0,1.4,-0.3);bMesh.add(panel);
     const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,2.2,6),new THREE.MeshStandardMaterial({color:0x2a3a4a,metalness:0.8}));mast.position.set(0,2.6,-0.3);bMesh.add(mast);
-    const dish=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,4,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x3b82f6,emissive:0x102a44,emissiveIntensity:0.5,side:THREE.DoubleSide}));dish.position.set(0,3.7,-0.3);dish.rotation.x=Math.PI;bMesh.add(dish);
+    const dish=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,4,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:0x102a44,emissiveIntensity:0.5,side:THREE.DoubleSide}));dish.position.set(0,3.7,-0.3);dish.rotation.x=Math.PI;bMesh.add(dish);
+    // Bow tracer line — thin glowing blue strip down the centre of the deck.
+    const tracer=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.04,4.5),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.9}));tracer.position.set(0,0.6,0.5);bMesh.add(tracer);
+    // Blue arrow/wing emblem on each cabin side.
+    [-0.81,0.81].forEach(x=>{
+      const arrow=new THREE.Mesh(new THREE.CircleGeometry(0.18,3),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.95}));arrow.position.set(x,1.55,-0.3);arrow.rotation.y=x<0?-Math.PI/2:Math.PI/2;arrow.rotation.z=Math.PI/2;bMesh.add(arrow);
+    });
   }
   // ENGINE: upgrade tier scales the motor block + tint
   if((up.engine||0)>=1){const engBig=new THREE.Mesh(new THREE.BoxGeometry(0.9,1.5,1.1),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.85,roughness:0.25}));engBig.position.set(0,0.5,-3.1);bMesh.add(engBig)}
@@ -1368,6 +1901,9 @@ function mkBoat(cls){if(bMesh)scene.remove(bMesh);const t=BT[cls];bMesh=new THRE
   // ELECTRONICS: tier 1 = small antenna, tier 2 = larger dish
   if((up.electronics||0)>=1){const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,1.6,6),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x113a55,emissiveIntensity:0.7}));ant.position.set(0.5,2.2,-1);bMesh.add(ant)}
   if((up.electronics||0)>=2){const radome=new THREE.Mesh(new THREE.SphereGeometry(0.28,12,8),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x102a44,emissiveIntensity:0.45,transparent:true,opacity:0.85}));radome.position.set(0,3.0,-0.6);bMesh.add(radome)}
+  // Hero rim light — a side point light whose color matches the hero so the hull picks up a colored
+  // rim against the sky/water. Sits low + behind the cabin so it grazes the side of the hull.
+  const heroRim=new THREE.PointLight(t.col,0.55,9);heroRim.position.set(-1.6,1.0,-0.4);bMesh.add(heroRim);
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === WAKE PARTICLES ===
@@ -1459,6 +1995,9 @@ function fireSonar(){
   else if(S.sonarReady&&now<S.sonarReady)return false;
   else S.sonarReady=now+sonarCool;
   S.lastPing=now;sfx('ping');S.pingReveal=now+4+(eqUp('electronics').sonarBoost||0)*5;
+  // Duct sonar callout — if he's active and the player pings, the radio confirms the contact.
+  // Rate-limited via S.ductPingLast so spamming the ping doesn't spam the line.
+  if(DUCT.active&&(!S.ductPingLast||now-S.ductPingLast>8)){S.ductPingLast=now;radio('Sonar tagged something duck-shaped. Stay sharp.','fly')}
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -1514,6 +2053,9 @@ function applyWeatherVisuals(){
     rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
     const rainMat=new THREE.PointsMaterial({color:0x8899bb,size:0.15,transparent:true,opacity:0.5});
     const rain=new THREE.Points(rainGeo,rainMat);scene.add(rain);rainDrops.push(rain);
+  }else if(w.c!=='Rain'&&w.c!=='Drizzle'&&rainDrops.length){
+    // Weather cleared — tear down the rain particles instead of letting them fall forever.
+    rainDrops.forEach(r=>{disposeTree(r);scene.remove(r)});rainDrops.length=0;
   }
 }
 
@@ -1557,54 +2099,139 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 // 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
 // Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
 let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
+// In-world bobber mesh + state for the wait-for-bite phase. Only one bobber lives at a time.
+let _bobberMesh=null,_bobberState=null;  // {phase:'wait'|'nibble',spot,fish,t0,nibbleAt,nibbleEnd,bobBase}
+function disposeBobber(){if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}_bobberState=null}
 function cancelCast(){
-  // Hard-stop any in-flight cast: clear the animation interval and dispose the ring mesh.
+  // Hard-stop any in-flight cast: clear the animation interval, dispose the ring + bobber.
   if(_castAnim){clearInterval(_castAnim);_castAnim=null}
   if(_castRing){scene.remove(_castRing);_castRing.geometry.dispose();_castRing.material.dispose();_castRing=null}
+  disposeBobber();
   _castInFlight=false;
 }
 function castLine(){
   if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
+  // If a bobber is already in the water, F means "set the hook" — funnels through the nibble path.
+  if(_bobberState){tryHookSet();return true}
   if(_castInFlight)return false;
-  // Don't start a cast right on top of a beacon — the proximity trigger would open the mission and
-  // cancel the cast anyway. Tell the player to back off the marker.
+  if(!tutorialSeen.cast&&showTutorial('cast'))return false;
   if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
-  _castInFlight=true;
+  _castInFlight=true;S._castedThisRun=true;
   const spot=fishingSpot(bMesh.position);
-  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');sfx('cast');
-  // Visual: shrinking ring on the water at the boat's bow. Disposes when cast resolves.
+  radio(spot?`Casting in ${spot.n}. Something\'s rolling on it.`:'Line in the water.','self');sfx('cast');
+  // Visual: cast ring on the water at the boat's bow + the bobber arcs out.
   const ringMesh=new THREE.Mesh(new THREE.RingGeometry(1,1.2,24),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
   ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
-  // Offset ahead of the bow
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);ringMesh.position.add(fwd);
   scene.add(ringMesh);_castRing=ringMesh;
+  // Roll the fish at cast time so the wait window can be tuned to its rarity.
+  const fish=rollFish(spot);
   const t0=Date.now();
+  // Shorter cast animation (1.2s) — the bobber lands faster so the player gets back into the loop.
   _castAnim=setInterval(()=>{
-    // If the run ended while the line was out, bail without popping a dialog over the result screen.
     if(!S.on){cancelCast();return}
-    const age=(Date.now()-t0)/2500;
-    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;_castInFlight=false;resolveCast(spot);return}
+    const age=(Date.now()-t0)/1200;
+    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;startBobberWait(spot,fish);return}
     const sc=1+age*4;ringMesh.scale.set(sc,sc,sc);ringMesh.material.opacity=0.7*(1-age);
   },50);
 }
+// === BOBBER WAIT + NIBBLE PHASE ===
+// After the cast animation, a yellow bobber sits on the water in front of the bow. A "nibble"
+// event fires after a random delay (2-7s, biased shorter for common fish, longer for legendary).
+// During the ~1.2s nibble window the bobber dips, a high-pitched cue plays, and the radio whispers
+// "Bite!" — if the player taps F or SPACE in that window, the fight starts. Miss it, and the fish
+// steals the bait (consumes equipped bait, no fight). Early-strike before nibble spooks the fish.
+function startBobberWait(spot,fish){
+  const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);
+  const bp=bMesh.position.clone().add(fwd);bp.y=0.25;
+  splash(bp,8,0xcfe8ff,0.8);
+  // Build the bobber — small red-and-white sphere with a tiny antenna.
+  const grp=new THREE.Group();
+  const lo=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,Math.PI/2,Math.PI/2),new THREE.MeshStandardMaterial({color:0xef4444,emissive:0x661010,emissiveIntensity:0.4,roughness:0.5}));lo.position.y=-0.05;grp.add(lo);
+  const hi=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x444444,emissiveIntensity:0.2,roughness:0.5}));hi.position.y=0.05;grp.add(hi);
+  const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.45,5),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0xffd23f,emissiveIntensity:0.7}));ant.position.y=0.32;grp.add(ant);
+  grp.position.copy(bp);scene.add(grp);_bobberMesh=grp;
+  // Wait time biases toward shorter for commons / minnow bait, longer for rare/legendary.
+  const rar=fish.r==='legendary'?1.5:fish.r==='rare'?1.2:fish.r==='uncommon'?0.9:0.7;
+  const wait=(1500+Math.random()*3500)*rar;
+  _bobberState={phase:'wait',spot,fish,t0:Date.now(),nibbleAt:Date.now()+wait,nibbleEnd:0,bobBase:bp.y,grp};
+  // Prompt the player so they know what's happening.
+  const p=$('cast-prompt');if(p){p.style.display='block';p.innerHTML='🎣 <b>Line in the water</b> — watch the bobber. <b>F</b> to set the hook when it dips.'}
+  _castInFlight=false;
+}
+// Per-frame bobber drive. Cheap; only ticks while _bobberState exists.
+function tickBobber(t){
+  if(!_bobberState||!_bobberMesh)return;
+  const s=_bobberState,now=Date.now();
+  // Idle bob — tiny vertical sine while waiting.
+  if(s.phase==='wait'){
+    _bobberMesh.position.y=s.bobBase+Math.sin(t*1.8)*0.04;
+    if(now>=s.nibbleAt){
+      // Nibble! Strong dip + audio cue + radio whisper. Player has ~1.2s to set the hook.
+      s.phase='nibble';s.nibbleEnd=now+1200;sfx('cast');sfx('ping');
+      radio('BITE! Tap F.','self');
+      const p=$('cast-prompt');if(p)p.innerHTML='⚠️ <b style="color:#ef4444">SET THE HOOK</b> — tap <b>F</b>!';
+    }
+  }else if(s.phase==='nibble'){
+    // Bobber dips dramatically — the underline of "set the hook".
+    _bobberMesh.position.y=s.bobBase-0.25-Math.abs(Math.sin(t*9))*0.15;
+    if(now>=s.nibbleEnd){
+      // Missed the window — fish takes the bait silently.
+      radio('Bait gone. He took it clean.','lilly');
+      // Consume the equipped bait as the cost of missing.
+      if(equippedBait&&baitInv[equippedBait])baitInv[equippedBait]--;
+      persist();const p=$('cast-prompt');if(p)p.style.display='none';
+      disposeBobber();
+    }
+  }
+}
+function tryHookSet(){
+  if(!_bobberState)return false;
+  const s=_bobberState;const p=$('cast-prompt');if(p)p.style.display='none';
+  if(s.phase==='wait'){
+    // Early strike — fish spooks; line comes back empty.
+    sfx('hit');radio('Yanked too early. Spooked it.','reel');
+    disposeBobber();return true;
+  }
+  // Nibble window — clean hook set! Big splash + go to fight.
+  sfx('cast');sfx('ping');const bp=_bobberMesh.position.clone();bp.y=0.2;
+  const fish=s.fish,spot=s.spot;
+  splash(bp,fish.fight>=2?22:12,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.5:1);wet.add(fish.fight>=2?12:8);
+  disposeBobber();
+  if(!fish.fight)landFish(fish,spot);else openFight(fish,spot);
+  return true;
+}
+// Legacy resolveCast — only the no-bobber path uses this now (e.g. an out-of-band call).
 function resolveCast(spot){
-  if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
+  if(!S.on||miniActive)return;
   const fish=rollFish(spot);
-  // Bite splash at the bow where the line went out.
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);const bp=bMesh.position.clone().add(fwd);bp.y=0.2;
   splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);wet.add(fish.fight>=2?10:6);
   sfx('cast');
-  // No-fight species land immediately; anything with a fight goes through the tension minigame.
   if(!fish.fight){landFish(fish,spot)}
   else openFight(fish,spot);
 }
 // Logs the catalog + plays the catch sting + opens the keep/release dialog.
 function landFish(fish,spot){
   runCatches.push(fish);
-  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
+  if(!fishCatalog.has(fish.n)){
+    fishCatalog.add(fish.n);
+    // First-ever landing — stamp date + spot + score for the Codex tooltip.
+    if(!speciesLog[fish.n])speciesLog[fish.n]={date:new Date().toISOString().slice(0,10),spot:spot?spot.n:'Open water',score:fish.s};
+    persist();
+    if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full');
+  }
   if(fish.gator)onUnlock('gator_wrangler');
+  // Persist the biggest single catch ever (by score value) — surfaced in the Codex + trophy peek.
+  if(!bestFish||fish.s>(bestFish.s||0)){bestFish={n:fish.n,e:fish.e,r:fish.r,s:fish.s,date:new Date().toISOString().slice(0,10)};persist()}
   sfx(fish.r==='legendary'?'legendary':'catch');
+  // Per-hero catch chatter — picks the right voice key by rarity / type so the operative reacts in
+  // their own voice. Falls back to the legacy generic line if a voice key is missing.
+  const v=HERO[S.bc].voice;
+  const key=fish.gator?'catchGator':fish.r==='legendary'?'catchLegendary':fish.r==='rare'?'catchRare':'catchCommon';
+  const heroId=HERO[S.bc].id;  // 'reel' | 'lilly' | 'fly' — matches radio who-tags
+  if(v[key])radio(v[key],heroId);
   showCatchDialog(fish,spot);
 }
 // === FISHING FIGHT ===
@@ -1623,26 +2250,54 @@ function openFight(fish,spot){
   const fall=0.013+fish.fight*0.002;                      // tension fall while not reeling
   const drift=deficit*0.004;                              // under-gunned line creeps toward snap
   let tension=0.3,progress=0,reeling=false,over=false;
+  // Bobber-bounce: optional rhythm bonus during the regular fight. Rod tier widens the peak window:
+  // base 46-54%, max +0.07 wider per side at top-tier rod control.
+  const fPeakHalf=0.04+control*0.07,fPeakLo=0.5-fPeakHalf,fPeakHi=0.5+fPeakHalf;
   card.innerHTML=`
     <div class="m-kicker" style="color:${RARE_COLOR[fish.r]}">${fish.gator?'GATOR ON THE LINE':'FISH ON'} · ${spot?spot.n:'Open water'}</div>
     <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">${fish.e}<span>${fish.n}</span></div>
     <div class="m-sub">${fish.gator?'It is thrashing. Keep tension in the green — too hard and the line goes.':'Work it in. Hold REEL to build tension, ease off before it snaps.'} ${deficit>0?'<b style="color:#ef4444">Your line is under-rated for this fish — band is tight.</b>':''}</div>
+    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm <span style="color:#94a3b8;font-size:9px">(optional · rod ${eqRod().n})</span></span><span style="color:#fbcf3b">tap <b>B</b> · streak <span id="f-streak">0</span></span></div>
+    <div style="position:relative;height:18px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+      <div id="f-peak" style="position:absolute;top:0;bottom:0;left:${fPeakLo*100}%;width:${(fPeakHi-fPeakLo)*100}%;background:rgba(251,207,59,0.12);border-left:1px dashed rgba(251,207,59,0.5);border-right:1px dashed rgba(251,207,59,0.5)"></div>
+      <div id="f-bob" style="position:absolute;top:50%;left:0;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#fbcf3b 70%,#a06600);box-shadow:0 0 8px rgba(251,207,59,0.7)"></div>
+    </div>
     <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
       <div id="f-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
       <div id="f-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
     </div>
     <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
     <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="f-prog" style="height:100%;width:0%;background:${RARE_COLOR[fish.r]};transition:width 0.05s"></div></div>
-    <button class="btn bp" id="f-reel" style="background:linear-gradient(135deg,${RARE_COLOR[fish.r]},#0a4a3a);user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bp" id="f-reel" style="background:linear-gradient(135deg,${RARE_COLOR[fish.r]},#0a4a3a);user-select:none">HOLD TO REEL (Space) · TAP <b>B</b> ON BOBBER PEAK</button>
     <button class="btn bx" id="f-cut">Cut Line</button>`;
   const bandEl=$('f-band'),tenEl=$('f-ten'),progEl=$('f-prog');
   const paintBand=()=>{bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%'};
   paintBand();
-  const reelBtn=$('f-reel');
+  const reelBtn=$('f-reel'),fBobEl=$('f-bob'),fStreakEl=$('f-streak');
   const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.3)':'none'};
   reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
   reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
-  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  // Bobber state — phase + freq reroll on every tap so the rhythm keeps changing.
+  let fBobT=0,fBobFreq=1.2+Math.random()*0.7,fBobPhase=Math.random()*Math.PI*2,fStreak=0;
+  const fBobPos=()=>{const s=Math.sin(fBobT*fBobFreq+fBobPhase);return 0.5+s*0.45};
+  const fInPeak=()=>{const p=fBobPos();return p>=fPeakLo&&p<=fPeakHi};
+  const fTapBob=()=>{
+    if(over)return;
+    if(fInPeak()){
+      fStreak++;progress=Math.min(100,progress+1.4+Math.min(fStreak,5)*0.3);
+      sfx('ping');if(fBobEl){fBobEl.style.filter='brightness(2)';setTimeout(()=>{if(fBobEl)fBobEl.style.filter='none'},120)}
+      fBobFreq=1.0+Math.random()*0.9;fBobPhase=Math.random()*Math.PI*2;
+    }else{
+      fStreak=0;progress=Math.max(0,progress-0.6);sfx('hit');
+      fBobFreq=0.9+Math.random()*1.1;fBobPhase=Math.random()*Math.PI*2;
+    }
+    if(fStreakEl)fStreakEl.textContent=fStreak;
+  };
+  if(fBobEl){fBobEl.onclick=fTapBob;fBobEl.ontouchstart=e=>{e.preventDefault();fTapBob()}}
+  const keyH=e=>{
+    if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
+    if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();fTapBob()}
+  };
   document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
   $('f-cut').onclick=()=>finishFight(false,'Cut the line. It wins this round.');
   const tick=setInterval(()=>{
@@ -1655,6 +2310,8 @@ function openFight(fish,spot){
     if(inBand&&Math.random()<0.3)sfx('click');
     if(progress>=100){over=true;finishFight(true);return}
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    // Bobber update — same 50ms tick.
+    fBobT+=0.05;if(fBobEl)fBobEl.style.left=(fBobPos()*100)+'%';
   },50);
   const finishFight=(won,msg)=>{
     over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH);
@@ -1677,35 +2334,77 @@ const DUCT_ESCAPES=[
   {k:'dive', at:0.65, line:'Dove straight down. Surfaced way over there. Unreal.'},
   {k:'fly',  at:0.82, line:'…it grew WINGS. It flew off. We are not okay.'},
   {k:'flop', at:0.75, line:'Rubber-banded sideways and spat the bobber back at you.'},
-  {k:'bounce',at:0.70,line:'The bobber bounced YOU. Tape duck wins again.'}
+  {k:'bounce',at:0.70,line:'The bobber bounced YOU. Tape duck wins again.'},
+  // Polish v2 additions — extending the variety so each Duct encounter feels fresh.
+  {k:'tape', at:0.93, line:'He duct-taped your HOOK shut. Hook is a sticky brick now.'},
+  {k:'decoy',at:0.78, line:'A SECOND duck. They split off. We don\'t know which one was real.'}
 ];
 function openDuctChase(){
   if(!DUCT.active)return;
+  if(!tutorialSeen.duct&&showTutorial('duct'))return;  // first Duct encounter shows the tutorial first
   DUCT.engaged=true;const esc=DUCT_ESCAPES[Math.floor(Math.random()*DUCT_ESCAPES.length)];
-  ductStats.attempts++;persist();if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
+  ductStats.attempts++;logDuct('attempt');persist();
+  if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
+  if(ductStats.attempts>=25)onUnlock('duct_25_attempts');
   const p=$('duct-prompt');if(p)p.style.display='none';
   miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
   const card=$('mini-card'),el=$('mini');if(!card||!el){endDuct(esc,0);return}
+  // Duct Tape Lure: if equipped, consume one and widen the bobber peak window. Still doesn't land him.
+  const lureOn=equippedBait==='ducttape'&&(baitInv.ducttape||0)>0;
+  if(lureOn){baitInv.ducttape--;persist()}
   const bandHalf=0.13,bandCenter=0.55,climb=0.015,fall=0.014;
+  // Peak window is normally 46-54% (0.08 wide). Lure widens it to ~36-64% (0.28 wide) — "almost" works.
+  const peakLo=lureOn?0.36:0.46,peakHi=lureOn?0.64:0.54;
   let tension=0.3,progress=0,reeling=false,over=false,peaked=0;
   card.innerHTML=`
     <div class="m-kicker" style="color:#ffd23f">??? · IMPOSSIBLE CATCH</div>
     <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">🦆<span>Duct</span></div>
     <div class="m-sub">Tape on his back, smug look on his face. Reel him in — if you even can. <b style="color:#fbcf3b">Nobody ever has.</b></div>
+    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm${lureOn?' · <b style="color:#ffd23f">DUCT TAPE LURE</b>':''}</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="d-streak">0</span></span></div>
+    <div style="position:relative;height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+      <div id="d-peak" style="position:absolute;top:0;bottom:0;left:${peakLo*100}%;width:${(peakHi-peakLo)*100}%;background:rgba(251,207,59,0.18);border-left:2px dashed rgba(251,207,59,0.6);border-right:2px dashed rgba(251,207,59,0.6)"></div>
+      <div id="d-bob" style="position:absolute;top:50%;left:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#ffd23f 70%,#b8860b);box-shadow:0 0 12px rgba(251,207,59,0.8)"></div>
+    </div>
     <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
       <div id="d-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
       <div id="d-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
     </div>
     <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
     <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="d-prog" style="height:100%;width:0%;background:#ffd23f;transition:width 0.05s"></div></div>
-    <button class="btn bp" id="d-reel" style="background:linear-gradient(135deg,#ffd23f,#b8860b);color:#1a1a2e;user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bp" id="d-reel" style="background:linear-gradient(135deg,#ffd23f,#b8860b);color:#1a1a2e;user-select:none">HOLD TO REEL (Space) · TAP <b>B</b> ON BOBBER PEAK</button>
     <button class="btn bx" id="d-cut">Give Up</button>`;
-  const bandEl=$('d-band'),tenEl=$('d-ten'),progEl=$('d-prog');
+  const bandEl=$('d-band'),tenEl=$('d-ten'),progEl=$('d-prog'),bobEl=$('d-bob'),streakEl=$('d-streak');
   bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%';
   const reelBtn=$('d-reel');const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.2)':'none'};
   reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
   reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
-  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  // === BOBBER-BOUNCE rhythm sub-game ===
+  // A bobber dot rides a sine across the bar; the peak window is the dashed gold zone (46-54%).
+  // Tap B (or click the bobber) inside the window for a progress bonus + a streak counter. Misses
+  // shave progress slightly. Phase + frequency reroll on hit/miss so the rhythm is "always changing"
+  // — keeps each Duct encounter feeling fresh.
+  let bobT=0,bobFreq=1.2+Math.random()*0.6,bobPhase=Math.random()*Math.PI*2,streak=0;
+  const bobPos=()=>{const s=Math.sin(bobT*bobFreq+bobPhase);return 0.5+s*0.45};  // 0.05..0.95
+  const inPeak=()=>{const p=bobPos();return p>=peakLo&&p<=peakHi};
+  const tapBobber=()=>{
+    if(over)return;
+    if(inPeak()){
+      // Hit — small progress kick + streak. Streak amplifies subsequent kicks slightly.
+      streak++;progress=Math.min(99.5,progress+1.6+Math.min(streak,6)*0.4);
+      sfx('ping');bobEl.style.filter='brightness(2)';setTimeout(()=>{if(bobEl)bobEl.style.filter='none'},120);
+      bobFreq=1.0+Math.random()*0.9;bobPhase=Math.random()*Math.PI*2;
+    }else{
+      // Miss — light penalty + streak reset.
+      streak=0;progress=Math.max(0,progress-1.0);sfx('hit');
+      bobFreq=0.9+Math.random()*1.1;bobPhase=Math.random()*Math.PI*2;
+    }
+    if(streakEl)streakEl.textContent=streak;
+  };
+  if(bobEl){bobEl.onclick=tapBobber;bobEl.ontouchstart=e=>{e.preventDefault();tapBobber()}}
+  const keyH=e=>{
+    if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
+    if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();tapBobber()}
+  };
   document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
   $('d-cut').onclick=()=>endDuct({k:'giveup',line:'Let him go. He was never gonna let YOU win.'},progress);
   const tick=setInterval(()=>{
@@ -1716,13 +2415,19 @@ function openDuctChase(){
     peaked=Math.max(peaked,progress);
     if(inBand&&Math.random()<0.25)sfx('click');
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    // Bobber bob: 50ms tick → ~20Hz position update, freq tuned so a full oscillation is ~1s.
+    bobT+=0.05;if(bobEl)bobEl.style.left=(bobPos()*100)+'%';
     // Rig the escape: once the bar reaches this archetype's threshold, he bolts.
     if(progress>=esc.at*100){over=true;sfx('quack');runDuctEscapeAnim(esc.k);endDuct(esc,peaked)}
   },50);
   const stop=()=>{over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
   function endDuct(e,peakPct){
     stop();
-    if(peakPct>=60){ductStats.nearCatches++;onUnlock('duct_near_miss')}
+    if(peakPct>=60){ductStats.nearCatches++;logDuct('near');onUnlock('duct_near_miss')}
+    if(ductStats.nearCatches>=3)onUnlock('duct_three_near');
+    // Non-persistent toast variant when the chase ended very close — uses the same queue as
+    // achievements so it doesn't clobber a real unlock toast fired in the same frame.
+    if(peakPct>=80)pushAchToast({n:'ALMOST',d:(peakPct|0)+'%. Closer than anyone.'});
     bait+=15;persist();
     miniActive=false;_catchOpen=false;const e2=$('mini');if(e2)e2.style.display='none';const c2=$('mini-card');if(c2)c2.innerHTML='';
     if(!(S.played&&!$('s5').classList.contains('off')))S.on=true;
@@ -1735,15 +2440,31 @@ function openDuctChase(){
   radio('Duck on the line. This is it. THIS is the one.','self');
 }
 // Brief world animation on the duck mesh matching the escape archetype, then he's gone.
+// Self-terminating; the decoy clone (when used) disposes its own geometry+material at the end.
 function runDuctEscapeAnim(kind){
   const m=DUCT.mesh;if(!m)return;
   const wp=new THREE.Vector3(DUCT.x,0,DUCT.z);splash(wp,18,0xffe27a,1.3);if(typeof wet!=='undefined'&&wet)wet.add(20);
   if(kind==='fly'){DUCT.wing.visible=true}
-  let s=0;const a=setInterval(()=>{s+=0.05;if(s>=1||!m){clearInterval(a);return}
+  // decoy: a visual-only clone of the duck mesh that splits off in the opposite direction. No AI,
+  // no userData — just two THREE primitives we dispose ourselves at the end of the anim.
+  let decoyMesh=null;
+  if(kind==='decoy'){
+    const body=new THREE.Mesh(new THREE.SphereGeometry(0.65,12,8),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0x6a4a02,emissiveIntensity:0.4,roughness:0.5}));
+    decoyMesh=body;decoyMesh.position.set(DUCT.x+0.8,0,DUCT.z+0.4);scene.add(decoyMesh);
+  }
+  let s=0;const a=setInterval(()=>{
+    s+=0.05;
+    if(s>=1||!m){
+      clearInterval(a);
+      if(decoyMesh){scene.remove(decoyMesh);if(decoyMesh.geometry)decoyMesh.geometry.dispose();if(decoyMesh.material)decoyMesh.material.dispose();decoyMesh=null}
+      return;
+    }
     if(kind==='dive'){m.position.y=-s*3;DUCT.x+=1.2;DUCT.z+=0.6}
     else if(kind==='fly'){m.position.y=s*9;m.rotation.y+=0.3}
     else if(kind==='slip'){m.position.y=-s*2;m.rotation.y+=0.4}
     else if(kind==='flop'){m.position.x=DUCT.x+Math.sin(s*20)*2}
+    else if(kind==='tape'){m.rotation.z=s*0.6;m.position.y=Math.sin(s*Math.PI)*0.3;m.material&&(m.material.emissiveIntensity=0.4*(1-s))}
+    else if(kind==='decoy'){m.position.x=DUCT.x-s*4;m.position.y=Math.sin(s*Math.PI)*1.5;if(decoyMesh){decoyMesh.position.x=DUCT.x+0.8+s*4;decoyMesh.position.y=Math.sin(s*Math.PI)*1.5;decoyMesh.rotation.y=s*2}}
     else{m.position.y=Math.sin(s*Math.PI)*2;DUCT.x-=1.0}
   },30);
 }
@@ -1770,9 +2491,12 @@ function showCatchDialog(fish,spot){
 }
 function closeCatch(msg){
   if(_fightCleanup){_fightCleanup();_fightCleanup=null}  // kill any live fight interval/listeners
+  // Forage games run through the _catchOpen path, so Escape lands here — drain their timers too.
+  mini._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
   const el=$('mini'),card=$('mini-card');
   if(card)card.innerHTML='';if(el)el.style.display='none';
-  miniActive=false;_catchOpen=false;
+  // Reset _catchBusy so a later _catchOpen overlay (e.g. forage after a fight) can be Escaped too.
+  miniActive=false;_catchOpen=false;_catchBusy=false;
   // Only resume the world if the run is actually still live (guard against a dialog that somehow
   // outlived endGame).
   if(S.played&&!$('s5').classList.contains('off')){/* run already ended — stay on result screen */}
@@ -1793,10 +2517,154 @@ function sfx(type){
   const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth'],quack:[620,300,.16,'square'],dig:[160,90,.07,'square'],croak:[110,70,.16,'sawtooth'],swat:[400,120,.06,'square'],net:[300,500,.1,'sine'],splash_big:[200,60,.22,'sine']}[type]||[300,360,.08,'sine'];
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
   o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
-  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(0.06,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
+  const peak=Math.max(0.0001,0.06*_audVol*_sfxVol);
+  g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
-function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(!muted)sfx('click')}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop()}else sfx('click')}
+
+// === CONTINUOUS ENGINE + AMBIENT AUDIO ===
+// A throaty motor whose pitch + volume track boat speed, plus a constant low water-lap bed. Built
+// lazily on top of the shared AudioContext (after the user's first gesture) and driven each frame
+// from loop(). Oscillators can't restart, so stop() just ducks the gain to silence.
+const engineAudio={on:false,osc:null,sub:null,gain:null,lapGain:null,
+  ensure(){
+    if(this.on||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const ctx=_audioCtx;
+    // Motor: a sawtooth + detuned square through a lowpass for a low, throaty idle.
+    this.gain=ctx.createGain();this.gain.gain.value=0;this.gain.connect(ctx.destination);
+    const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=460;lp.connect(this.gain);
+    this.osc=ctx.createOscillator();this.osc.type='sawtooth';this.osc.frequency.value=58;this.osc.connect(lp);
+    this.sub=ctx.createOscillator();this.sub.type='square';this.sub.frequency.value=38;this.sub.detune.value=-10;this.sub.connect(lp);
+    this.osc.start();this.sub.start();
+    // Ambient water lap: a looping noise buffer through a bandpass at a whisper-low gain.
+    const buf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*0.5;
+    const lap=ctx.createBufferSource();lap.buffer=buf;lap.loop=true;
+    const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=620;bp.Q.value=0.6;
+    this.lapGain=ctx.createGain();this.lapGain.gain.value=0.012*_audVol*_ambientVol;
+    lap.connect(bp);bp.connect(this.lapGain);this.lapGain.connect(ctx.destination);lap.start();
+    this.on=true;
+  },
+  update(spd){
+    if(muted)return;if(!this.on)this.ensure();if(!this.on)return;
+    const now=_audioCtx.currentTime,a=Math.abs(spd);
+    this.osc.frequency.setTargetAtTime(56+a*150,now,0.08);
+    this.sub.frequency.setTargetAtTime(36+a*70,now,0.08);
+    this.gain.gain.setTargetAtTime((a>0.02?0.05+a*0.06:0.012)*_audVol*_engineVol,now,0.1);
+    this.lapGain.gain.setTargetAtTime((0.012+a*0.02)*_audVol*_ambientVol,now,0.2);
+  },
+  stop(){if(this.on&&_audioCtx){const now=_audioCtx.currentTime;this.gain.gain.setTargetAtTime(0,now,0.15);this.lapGain.gain.setTargetAtTime(0,now,0.2)}}
+};
+// Storm ambience — a low-pass-filtered noise loop that fades up in rain and down when it clears.
+// Adds depth without competing with the motor or lap. Built lazily, mute-gated, idempotent.
+const stormAudio={on:false,gain:null,src:null,
+  ensure(){
+    if(this.on||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const ctx=_audioCtx;
+    const buf=ctx.createBuffer(1,ctx.sampleRate*3,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*0.55;
+    const src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+    const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=180;lp.Q.value=0.7;
+    this.gain=ctx.createGain();this.gain.gain.value=0;
+    src.connect(lp);lp.connect(this.gain);this.gain.connect(ctx.destination);src.start();
+    this.src=src;this.on=true;
+  },
+  update(){
+    if(muted)return;
+    const raining=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
+    if(raining&&!this.on)this.ensure();
+    if(!this.on)return;
+    const target=raining?0.045*_audVol*_ambientVol:0;
+    this.gain.gain.setTargetAtTime(target,_audioCtx.currentTime,0.5);
+  },
+  stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.2)}
+};
+// === MUSIC ===
+// One soft ambient drone built from three detuned triangle oscillators (root + fifth + octave).
+// A slow LFO sweeps a lowpass filter so the texture breathes. Filter centre dips in foul weather
+// for a warmer-but-muffled feel; brightens on Clear. Mute + master + bus volume all gate it.
+const music={on:false,osc:[],gain:null,filt:null,lfo:null,
+  ensure(){
+    if(this.on||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const ctx=_audioCtx;
+    this.gain=ctx.createGain();this.gain.gain.value=0;
+    this.filt=ctx.createBiquadFilter();this.filt.type='lowpass';this.filt.frequency.value=900;this.filt.Q.value=0.4;
+    this.filt.connect(this.gain);this.gain.connect(ctx.destination);
+    // Slow LFO on the filter cutoff so the pad shimmers rather than sitting flat.
+    this.lfo=ctx.createOscillator();this.lfo.frequency.value=0.07;
+    const lfoGain=ctx.createGain();lfoGain.gain.value=180;
+    this.lfo.connect(lfoGain);lfoGain.connect(this.filt.frequency);this.lfo.start();
+    // Three pad voices — A minor chord (A2 = 110, E3 = 165, A3 = 220) detuned for warmth.
+    [[110,-5],[165,3],[220,-2]].forEach(([f,detune])=>{
+      const o=ctx.createOscillator();o.type='triangle';o.frequency.value=f;o.detune.value=detune;
+      const g=ctx.createGain();g.gain.value=0.33;
+      o.connect(g);g.connect(this.filt);o.start();this.osc.push(o);
+    });
+    this.on=true;
+  },
+  update(){
+    if(muted){this.stop();return}
+    if(!this.on)this.ensure();
+    if(!this.on)return;
+    const now=_audioCtx.currentTime;
+    // Music ducks slightly in heavy weather + when a fight overlay is up so it doesn't compete.
+    const fightDuck=_catchOpen||miniActive?0.35:1;
+    const target=0.035*_audVol*_musicVol*fightDuck;
+    this.gain.gain.setTargetAtTime(target,now,1.5);
+    // Foul-weather filter dip — warm, muffled.
+    const muffle=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle'||S.wx.c==='Overcast')?550:1100;
+    this.filt.frequency.setTargetAtTime(muffle,now,2.5);
+  },
+  stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.6)}
+};
+// === PER-CAMP AMBIENT AUDIO ===
+// Each shore camp has a flavor sound that fades up as the player approaches and out as they leave.
+// Lazily built on the shared AudioContext; one channel per camp id. All channels share the master
+// _audVol and the mute flag. Stopped on photo/end/reset/mute.
+const campAudio={chans:{},
+  // Build a one-off looping noise source through a per-camp filter — cheap and matches the existing
+  // engineAudio/stormAudio pattern (no asset loading).
+  _build(id){
+    if(!_audioCtx)return null;
+    const ctx=_audioCtx;
+    const buf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
+    const src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+    const filt=ctx.createBiquadFilter(),gain=ctx.createGain();gain.gain.value=0;
+    // Per-camp filter character — picks the texture (low rumble vs high gurgle vs band-pass croak).
+    if(id==='west_marsh'){filt.type='bandpass';filt.frequency.value=420;filt.Q.value=2.5}        // frog-pond croak band
+    else if(id==='north_creek'){filt.type='highpass';filt.frequency.value=1100;filt.Q.value=0.5}  // creek trickle
+    else if(id==='east_rocks'){filt.type='bandpass';filt.frequency.value=240;filt.Q.value=0.7}    // crayfish hole bubbles
+    else{filt.type='bandpass';filt.frequency.value=900;filt.Q.value=0.8}                          // worm beds — crickets-ish
+    src.connect(filt);filt.connect(gain);gain.connect(ctx.destination);src.start();
+    return {src,gain,filt};
+  },
+  ensure(id){
+    if(this.chans[id]||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const c=this._build(id);if(c)this.chans[id]=c;
+  },
+  // Drive the gains every frame: closest camp within 50u rolls in, all others roll out.
+  update(){
+    if(muted){this.stopAll();return}
+    if(!_audioCtx)return;
+    let nearestId=null,nearestD=Infinity;
+    for(const m of campMeshes){const d=bMesh.position.distanceTo(m.position);if(d<50&&d<nearestD){nearestD=d;nearestId=m.userData.camp.id}}
+    const now=_audioCtx.currentTime;
+    for(const id in this.chans){
+      const target=(id===nearestId)?Math.max(0,(50-nearestD)/50)*0.04*_audVol*_ambientVol:0;
+      this.chans[id].gain.gain.setTargetAtTime(target,now,0.6);
+    }
+    if(nearestId&&!this.chans[nearestId])this.ensure(nearestId);
+  },
+  stopAll(){if(!_audioCtx)return;const now=_audioCtx.currentTime;for(const id in this.chans)this.chans[id].gain.gain.setTargetAtTime(0,now,0.2)}
+};
+// Screen-shake magnitude — bumped by surge/damage, decays each frame in the camera follow.
+let _shake=0;
 
 // === WET-SCREEN DROPLET OVERLAY ===
 // Full-screen canvas2D layer above the WebGL scene, below the HUD. Droplets bead, drag down with a
@@ -1818,6 +2686,38 @@ const wet={cv:null,ctx:null,drops:[],enabled:true,
     }
   }
 };
+// === LIGHTNING ===
+// Random thunderbolts during Rain/Drizzle. Brief white screen-flash + a delayed thunder cue. If
+// the player is moving fast at the moment of strike, they take hull damage + a strong shake +
+// 'storm_survivor' achievement. Strikes are rate-limited so they punctuate, not spam.
+const storm={lastStrike:0,minGap:8,nextRand:5,
+  maybe(t){
+    if(!S.on)return;
+    if(!(S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle')))return;
+    if(t-this.lastStrike<this.minGap+this.nextRand)return;
+    // ~3% chance per frame (rate-gated above) — translates to ~one strike every 12-18s during rain.
+    if(Math.random()>0.03)return;
+    this.strike();
+  },
+  strike(){
+    this.lastStrike=Date.now()*0.001;this.nextRand=4+Math.random()*8;
+    // White flash: bump dmg-flash with a cool tint, then fade. Reuse the existing element.
+    const el=$('dmg-flash');if(el){const prev=el.style.background;el.style.background='radial-gradient(circle at center,rgba(255,255,255,0.5) 0%,rgba(160,200,255,0.55) 60%,rgba(80,120,200,0.5) 100%)';el.style.opacity='0.85';clearTimeout(this._t1);this._t1=setTimeout(()=>{el.style.opacity='0';clearTimeout(this._t2);this._t2=setTimeout(()=>{el.style.background=prev||''},500)},90)}
+    _shake=Math.max(_shake,0.5);wet.add(20);
+    // Damage if the player is moving fast — rewards staying slow during a storm.
+    if(Math.abs(spd)>0.7){
+      const dmg=Math.round((1-hullResist())*10);
+      S.hull=Math.max(0,S.hull-dmg);
+      flashDamage(0.5);onUnlock('storm_survivor');
+      radio('LIGHTNING. Slow it down out there.','fly');
+    }else{
+      radio('Lightning. Glad we eased off.','lilly');
+    }
+    // Delayed thunder cue via two sfx pops to fake a roll.
+    setTimeout(()=>sfx('splash_big'),180);
+    setTimeout(()=>sfx('hit'),420);
+  }
+};
 // === ACHIEVEMENT TRIGGER ===
 // Centralized unlock hook. Real definitions + toast UI land in the achievements commit; this stub
 // keeps callsites stable. ACH map declared near here so every check route through this fn.
@@ -1829,30 +2729,77 @@ const ACH={
   full_extraction:{n:'Lifeguard',d:'Got every civilian out alive.'},
   home_repaired:{n:'It Holds',d:'Saved your own home dock.'},
   deep_dock:{n:'Into The Depth',d:'Faced the thing under the Deep Dock.'},
-  codex_half:{n:'Field Naturalist',d:'Logged 6 species in the Fish Codex.'},
-  codex_full:{n:'Castor Compendium',d:'Logged all 12 species.'},
-  bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.'},
+  codex_half:{n:'Field Naturalist',d:'Logged 6 species in the Fish Codex.',p:()=>({cur:Math.min(fishCatalog.size,6),max:6})},
+  codex_full:{n:'Castor Compendium',d:'Logged all 12 species.',p:()=>({cur:Math.min(fishCatalog.size,FISH.length),max:FISH.length})},
+  bait_baron:{n:'Bait Baron',d:'Banked 500 bait at once.',p:()=>({cur:Math.min(bait,500),max:500})},
   duct_sighting:{n:'Tape on the Water',d:'Spotted Duct the rubber ducky.'},
   duct_near_miss:{n:'So Close',d:'Got Duct past 60% before he escaped.'},
-  duct_ten_attempts:{n:'Obsessed',d:'Tried to land Duct 10 times. You will not.'},
+  duct_ten_attempts:{n:'Obsessed',d:'Tried to land Duct 10 times. You will not.',p:()=>({cur:Math.min(ductStats.attempts||0,10),max:10})},
   first_forage:{n:'Off the Boat',d:'Foraged your first bait.'},
-  worm_farmer:{n:'Worm Farmer',d:'Banked 50 worms.'},
-  pantry_stocked:{n:'Pantry Stocked',d:'Every bait type at 5 or more.'},
+  worm_farmer:{n:'Worm Farmer',d:'Banked 50 worms.',p:()=>({cur:Math.min(baitInv.worm||0,50),max:50})},
+  pantry_stocked:{n:'Pantry Stocked',d:'Every bait type at 5 or more.',p:()=>{const types=['worm','cricket','frog','minnow','crayfish'];return {cur:types.filter(t=>(baitInv[t]||0)>=5).length,max:types.length}}},
   first_upgrade:{n:'Wrench In Hand',d:'Bought your first boat upgrade.'},
   boat_maxed:{n:'Tuned Up',d:'Maxed every upgrade slot on a hero boat.'},
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
-  gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'}
+  gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'},
+  // Polish v2 — Duct + boss tightening.
+  duct_25_attempts:{n:'Tape Faithful',d:'25 attempts on Duct. Still not him.',p:()=>({cur:Math.min(ductStats.attempts||0,25),max:25})},
+  duct_three_near:{n:'Almost A Story',d:'Three near-catches on Duct.',p:()=>({cur:Math.min(ductStats.nearCatches||0,3),max:3})},
+  boss_clean:{n:'Surgical',d:'Beat the Deep Dock without dropping below 50% hull.'},
+  duct_lure_crafted:{n:'Recipe From The Pier',d:'Crafted your first Duct Tape Lure.'},
+  gator_king:{n:'Crowned',d:'Took the Gator King at East Rocks.'},
+  storm_survivor:{n:'Sky Falls',d:'Survived a lightning strike at speed.'},
+  first_craft:{n:'Tackle Bench',d:'Crafted a custom bait at the pier.'}
 };
+// Tiny queue around the existing toast so rapid back-to-back unlocks don't clobber each other.
+// We DON'T touch showAchToast — it keeps its own clearTimeout pattern. The queue just gates calls
+// to it on a separate one-shot timer so the next one fires AFTER the current toast's full life.
+const TOAST_LIFE=4200;  // matches showAchToast (3800ms visible + 400ms fade)
+let _achQ=[],_achBusy=false,_achDrainT=null;
+function _drainAch(){
+  _achBusy=false;_achDrainT=null;
+  const next=_achQ.shift();
+  if(next){_achBusy=true;showAchToast(next);_achDrainT=setTimeout(_drainAch,TOAST_LIFE)}
+}
+function pushAchToast(a){
+  if(_achBusy){_achQ.push(a);return}
+  _achBusy=true;showAchToast(a);_achDrainT=setTimeout(_drainAch,TOAST_LIFE);
+}
 function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
-  achievements.add(id);persist();showAchToast(ACH[id]);sfx('win');
+  achievements.add(id);persist();pushAchToast(ACH[id]);sfx('win');
 }
 function showAchToast(a){
   const t=$('ach-toast');if(!t)return;
-  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div>`;
-  t.style.display='block';t.style.opacity='1';
-  clearTimeout(showAchToast._t);showAchToast._t=setTimeout(()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0')t.style.display='none'},400)},3800);
+  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div><div style="font-size:9px;color:#475569;margin-top:4px;letter-spacing:1px">tap to dismiss</div>`;
+  t.style.display='block';t.style.opacity='1';t.style.cursor='pointer';t.style.pointerEvents='auto';
+  const dismiss=()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0'){t.style.display='none';t.style.pointerEvents='none'}},400)};
+  t.onclick=()=>{clearTimeout(showAchToast._t);dismiss();if(_achDrainT){clearTimeout(_achDrainT);_achDrainT=setTimeout(_drainAch,400)}};
+  clearTimeout(showAchToast._t);showAchToast._t=setTimeout(dismiss,3800);
+}
+// === ONE-TIME TUTORIAL OVERLAY ===
+// Shown the first time a player encounters a key system (cast / Duct chase). Dismissible, persists
+// the seen flag so it never reappears. Reuses the #mini overlay (transparent backdrop) for layout.
+const TUTORIALS={
+  cast:{title:'How to Fish',body:'Press <b style="color:#fbcf3b">F</b> when you\'re stopped to cast. During the fight, <b style="color:#fbcf3b">hold SPACE</b> to reel — keep the tension cursor in the green band. Tap <b style="color:#fbcf3b">B</b> on the gold bobber peak for a bonus.'},
+  duct:{title:'Duct in Sight',body:'Press <b style="color:#fbcf3b">F</b> to engage Duct. He\'s <b style="color:#fbcf3b">never been caught</b>. Get as close as you can — the bobber rhythm + a <b style="color:#ffd23f">Duct Tape Lure</b> from the tackle bench widen your peak window.'},
+  forage:{title:'Foraging',body:'Beach the boat at a shore camp (press <b style="color:#fbcf3b">G</b> when slow + close). Each camp has 1-2 mini-games for bait. Stock the pantry to equip + bias your catch rolls.'},
+  boatworks:{title:'Castor Boatworks',body:'Spend bait on visible upgrades — <b style="color:#fb923c">Engine</b> (speed), <b style="color:#60d0ff">Lights</b> (range), <b style="color:#94a3b8">Armor</b> (resist), <b style="color:#a78bfa">Electronics</b> (sonar). Each slot has 3 tiers; you can only buy the next step. Upgrades are per-hero and visible on the boat. Look for the <b style="color:#fbcf3b">BEST VALUE</b> badge for the cheapest next step.'}
+};
+function showTutorial(kind){
+  if(tutorialSeen[kind])return false;
+  const t=TUTORIALS[kind];if(!t)return false;
+  tutorialSeen[kind]=true;persist();
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return false;
+  miniActive=true;_peekOpen=true;S.on=false;
+  card.innerHTML=`<div class="m-kicker" style="color:#fb923c">First Time · ${t.title}</div>
+    <div class="m-title">${t.title}</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">${t.body}</div>
+    <div style="margin-top:10px;font:10px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase">Settings · Controls tab has the full keymap</div>
+    <button class="btn bp" onclick="DS.closePeek()" style="margin-top:14px;background:linear-gradient(135deg,#fb923c,#9a3a10)">Got it</button>`;
+  el.style.display='flex';
+  return true;
 }
 
 // === HULL-DAMAGE VISUAL FEEDBACK ===
@@ -1862,6 +2809,7 @@ let _dmgFade=null;
 function flashDamage(intensity){
   const el=$('dmg-flash');if(!el)return;
   el.style.opacity=Math.min(0.85,intensity).toFixed(2);
+  _shake=Math.max(_shake,0.35+intensity*0.5);  // impacts kick the camera proportional to the hit
   clearTimeout(_dmgFade);_dmgFade=setTimeout(()=>{el.style.opacity='0'},220);
 }
 
@@ -1881,30 +2829,84 @@ function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
 function tickAI(){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
 
 // === RENDER ===
-function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
+function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
   const wA=0.25+S.wx.ws*0.04;const wp=waterGeo.attributes.position;
   for(let i=0;i<wp.count;i++){const x=wp.getX(i),y=wp.getY(i);wp.setZ(i,waterOZ[i]+Math.sin(x*0.05+t)*wA+Math.cos(y*0.07+t*0.8)*(wA*0.6))}
-  wp.needsUpdate=true;waterGeo.computeVertexNormals();
+  // computeVertexNormals on a 96x96 plane is the loop's biggest CPU cost — stagger it (and skip
+  // entirely on low gfx, where flat normals are fine) without any visible difference.
+  wp.needsUpdate=true;if(gfxQuality!=='low'&&_frame%2===0)waterGeo.computeVertexNormals();
   // Pin bob
   if(scene._pinG)scene._pinG.position.y=Math.sin(t*1.2)*0.4;
   if(scene._beacon)scene._beacon.material.opacity=0.14+Math.sin(t*2)*0.06;
   // Foam ring grows with speed and pulses to read as turbulence
-  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);f.material.opacity=0.25+sp*0.5+Math.sin(t*4)*0.05}
+  if(bMesh&&bMesh.userData.foam){const f=bMesh.userData.foam;const sp=Math.abs(spd);const sc=1+sp*1.2;f.scale.set(sc,sc,sc);
+    // Speed-rim: bloom the foam ring opacity slightly above 0.6 throttle for that "burst out of the
+    // hull" rim feel. Cheap — modulates an existing mesh, no new geometry.
+    const rim=sp>0.6?(sp-0.6)*0.7:0;
+    f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05);
+    // Caustics: a wider additive ring that ripples + rotates slowly under the boat.
+    if(bMesh.userData.caustics){const c=bMesh.userData.caustics;const cs=1+sp*0.4+Math.sin(t*1.7)*0.05;
+      c.scale.set(cs,cs,cs);c.rotation.z=t*0.3;c.material.opacity=0.18+Math.sin(t*2.2)*0.08+sp*0.1}}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
+  // _dayOffset lets the QA hook jump the cycle (e.g. force night for a screenshot) without waiting.
   if(scene._sunDisc&&scene._sun){
-    const cyc=(t%360)/360,ang=cyc*Math.PI*2;
+    const cyc=((t+_dayOffset)%360+360)%360/360,ang=cyc*Math.PI*2;
     const sunY=Math.sin(ang)*60+30;const sunX=Math.cos(ang)*120;
     scene._sunDisc.position.set(sunX,sunY,-280);if(scene._sunHalo)scene._sunHalo.position.copy(scene._sunDisc.position);if(scene._sunGlow)scene._sunGlow.position.copy(scene._sunDisc.position);
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
+    // Golden-hour flash — when dayness crosses 0.12 (sunrise rising / sunset falling), fire a soft
+    // amber tint to the #grade overlay for ~3.5s. Edge-triggered via _lastDayness so it pulses
+    // exactly once per crossing.
+    if(typeof _lastDayness==='number'){
+      const rising=_lastDayness<0.12&&dayness>=0.12;
+      const setting=_lastDayness>0.12&&dayness<=0.12&&dayness>0;
+      if((rising||setting)&&!_goldenFlashUntil){
+        _goldenFlashUntil=Date.now()+3500;
+        const gr=$('grade');if(gr){gr.style.transition='opacity 0.6s ease-out';gr.style.background='radial-gradient(ellipse 75% 70% at 50% 45%,rgba(251,146,60,0.18) 0%,transparent 55%,rgba(2,6,18,0.55) 100%),linear-gradient(180deg,rgba(255,170,80,0.25) 0%,transparent 14%,transparent 86%,rgba(2,6,18,0.4) 100%)';gr.style.opacity='1'}
+        radio(rising?'Sun\'s up. Lake lights.':'Sundown. It gets quiet now.','self');
+      }
+    }
+    _lastDayness=dayness;
+    if(_goldenFlashUntil&&Date.now()>_goldenFlashUntil){
+      _goldenFlashUntil=0;const gr=$('grade');if(gr){gr.style.background='';gr.style.opacity=''}
+    }
+    // Water glint: a streak on the water along the light's bearing in front of the camera. Warm
+    // sun by day, cool moonlight by night — so the reflection always reads.
+    if(scene._sunGlint){const gl=scene._sunGlint;const dx=Math.cos(ang);const ahead=cam?cam.position:bMesh.position;
+      gl.position.set(ahead.x+dx*40,0.12,ahead.z-60+sunY*0.4);
+      if(dayness>0.05){gl.material.color.setHex(0xfff2c0);gl.material.opacity=dayness*0.6;gl.visible=true}
+      else{gl.material.color.setHex(0xaec6ff);gl.material.opacity=0.22;gl.visible=true}}
+    // Night hysteresis: flip on at sunY<25 (low sun), off at sunY>35 — prevents flicker at dusk.
+    if(!_isNight&&sunY<25)_isNight=true;else if(_isNight&&sunY>35)_isNight=false;
+    // Night sky: fade stars + moon in/out with how dark it is. Moon arcs opposite the sun.
+    const nightAmt=Math.max(0,Math.min(1,(28-sunY)/40));  // 0 at high sun, ramps in as it sets
+    if(scene._stars){const on=nightAmt>0.02;scene._stars.visible=on;if(on)scene._stars.material.opacity=nightAmt*0.9*(0.85+Math.sin(t*1.5)*0.15)}
+    if(scene._moon){const on=nightAmt>0.02;const mx=-sunX,my=Math.max(40,-sunY+90);
+      [scene._moon,scene._moonHalo].forEach(s=>{if(s){s.visible=on;s.position.set(mx,my,-300)}});
+      if(on){scene._moon.material.opacity=nightAmt*0.95;if(scene._moonHalo)scene._moonHalo.material.opacity=nightAmt*0.35}}
+    // God rays — three soft cones flaring down from the sun. Only on Clear days and during the
+    // golden-hour window when the sun's angle is shallow (dayness 0.05..0.55), where shafts read.
+    if(scene._godRays&&gfxQuality!=='low'){
+      const clearWx=S.wx.c==='Clear';
+      const golden=Math.max(0,Math.min(1,(0.55-Math.abs(dayness-0.3))/0.55));  // peak at dayness=0.3
+      const op=clearWx?golden*0.45:0;
+      const ahead=cam?cam.position:bMesh.position;
+      scene._godRays.position.set(sunX*0.4+ahead.x*0.3,18,sunY*0.4-90);
+      scene._godRays.rotation.z=Math.atan2(sunX,sunY)*0.4;
+      for(let i=0;i<scene._godRays.children.length;i++){
+        const s=scene._godRays.children[i];s.material.opacity=op*(1-i*0.22);
+        s.position.x=Math.sin(t*0.3+i)*4;
+      }
+    }
     if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
       // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
       if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}
   }
   // Sky-dome gradient tracks dayness + weather tint. Top stays cooler than bottom band.
   if(scene._sky){
-    const cyc=(t%360)/360,ang=cyc*Math.PI*2,dayness=Math.max(0,Math.sin(ang));
+    const cyc=((t+_dayOffset)%360+360)%360/360,ang=cyc*Math.PI*2,dayness=Math.max(0,Math.sin(ang));
     const wxC=S.wx.c==='Rain'||S.wx.c==='Drizzle'?0:S.wx.c==='Clouds'||S.wx.c==='Overcast'?0.4:1;
     const u=scene._sky.material.uniforms;
     u.topColor.value.setRGB(0.02+dayness*0.04*wxC,0.05+dayness*0.06*wxC,0.10+dayness*0.10*wxC);
@@ -1941,11 +2943,18 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     spd*=bt.dr;
     if(!frozen&&Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
-    const dir=new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);prev.copy(bMesh.position);
-    bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
+    const dir=_vDir.set(0,0,-1).applyAxisAngle(_yAxis,bMesh.rotation.y);prev.copy(bMesh.position);
+    bMesh.position.addScaledVector(dir,spd);
+    // Per-hero idle bob personality — Reel is balanced (default), Lilly is the wide pontoon (slow,
+    // higher bob amplitude), Fly is the knife-bow speedboat (quicker, lower amplitude, tighter sway).
+    const hp=S.bc==='pontoon'?{bobA:0.28,bobF:1.6,sway:0.06}:S.bc==='speedboat'?{bobA:0.14,bobF:2.6,sway:0.10}:{bobA:0.20,bobF:2.2,sway:0.08};
+    const stillness=Math.max(0,1-Math.abs(spd)*5);  // 1 when fully stopped, 0 at speed → extra sway when docked
+    bMesh.position.y=0.3+Math.sin(t*hp.bobF)*hp.bobA+Math.sin(t*1.3+0.5)*0.1;
+    bMesh.rotation.z=-aV*2.5+Math.sin(t*0.8)*hp.sway*stillness;
+    bMesh.rotation.x=spd*0.05+Math.cos(t*0.7)*hp.sway*0.5*stillness;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
-    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel');wet.add(14);sfx('splash_big')}
+    if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel');wet.add(14);sfx('splash_big');_shake=Math.max(_shake,0.55)}
     S.dist+=bMesh.position.distanceTo(prev);const as=Math.abs(spd*40);if(as>S.maxSpd)S.maxSpd=as;
     const dd=bMesh.position.distanceTo(dockPos);
     // Score formula: business mode rewards staying near the dock corridor; game mode rewards
@@ -1958,7 +2967,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     if(GAME_MODE==='game'){let nd=Infinity;for(const d of dropPoints){if(!d.userData.active||d.userData.qa)continue;const dist=bMesh.position.distanceTo(d.position);if(dist<nd)nd=dist}$('h-dst').textContent=nd===Infinity?'—':nd.toFixed(0)+'m';const dl=$('h-dst').previousElementSibling;if(dl&&dl.textContent!=='Beacon')dl.textContent='Beacon'}
     else $('h-dst').textContent=dd.toFixed(0)+'m';
     const hd=((bMesh.rotation.y*180/Math.PI%360)+360)%360;$('h-hdg').textContent=['N','NE','E','SE','S','SW','W','NW'][Math.round(hd/45)%8];$('h-scr').textContent=S.score;
-    const hb=$('h-bait');if(hb)hb.textContent=bait;
+    const hb=$('h-bait');if(hb){hb.textContent=bait;if(bait!==_lastBait){pulseBait(bait-_lastBait);_lastBait=bait}}
     // Hull HUD + color states
     const hh=$('h-hull');if(hh){hh.textContent=Math.round(S.hull)+'%';hh.style.color=S.hull<30?'#ef4444':(S.hull<60?'#f59e0b':'#fb923c')}
     const dmgMul=1-hullResist();
@@ -1998,11 +3007,28 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
       }
     }
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
-    const bh=new THREE.Vector3(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(new THREE.Vector3(0,1,0),bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+    const bh=_vCam.set(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(_yAxis,bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);
+    // Screen-shake (surge/impact) — random jitter that decays fast for a punchy, recoverable hit.
+    if(_shake>0.002){const sk=_shake*_shakeMul;cam.position.x+=(Math.random()-0.5)*sk;cam.position.y+=(Math.random()-0.5)*sk*0.6;_shake*=0.86}
+    cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
+    // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
+    const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
+    engineAudio.update(spd);stormAudio.update();campAudio.update();music.update();
+    // Bobber wait/nibble tick — only does work if a bobber is in the water.
+    tickBobber(t);
+    // First-cast hint pip: subtle yellow nudge when the player is stopped over castable water and
+    // hasn't fished yet this session. Hides once they've made a cast or while a bobber is out.
+    const hint=$('cast-hint');if(hint){
+      const stopped=Math.abs(spd)<0.15;
+      const onWater=fishingSpot(bMesh.position)!==null;
+      const noBobber=!_bobberState&&!_catchOpen&&!miniActive;
+      if(stopped&&onWater&&noBobber&&!S._castedThisRun){hint.style.display='block';hint.textContent='Press F to cast'}
+      else hint.style.display='none';
+    }
   }else if(photoMode){
     // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
     photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
@@ -2010,6 +3036,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
     photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
     const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
+    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -2026,7 +3053,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;
 // stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
 // Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
 function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
-function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -2074,7 +3101,7 @@ function startGame(){S.on=true;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.n
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -2116,7 +3143,15 @@ function endGame(won){S.on=false;S.played=true;$('hud').style.display='none';$('
   if(haulWrap&&GAME_MODE==='game'&&runCatches.length>0){
     const byR={common:0,uncommon:0,rare:0,legendary:0};runCatches.forEach(f=>byR[f.r]++);
     haulWrap.style.display='block';haulTotal.textContent=runCatches.length+' caught';
-    haulDetail.innerHTML=['legendary','rare','uncommon','common'].filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px">${r}</span> · ${byR[r]}`).join(' &nbsp; ');
+    // Sparkline-style rarity breakdown: a single proportional bar split by tier.
+    const total=runCatches.length;
+    const tierOrder=['common','uncommon','rare','legendary'];
+    const bar=`<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:rgba(3,7,18,0.5);margin:8px 0 6px">${tierOrder.map(r=>byR[r]>0?`<div title="${r} · ${byR[r]}" style="flex:${byR[r]};background:${RARE_COLOR[r]}"></div>`:'').join('')}</div>`;
+    const legend=tierOrder.filter(r=>byR[r]>0).map(r=>`<span style="color:${RARE_COLOR[r]};text-transform:uppercase;letter-spacing:1px;font-size:10px">${r}</span> <b style="color:#fde68a;font-size:11px">${byR[r]}</b>`).join(' &nbsp; ');
+    // Find the biggest fish (highest score value) for a "biggest catch" callout.
+    const biggest=runCatches.reduce((a,b)=>(!a||b.s>a.s)?b:a,null);
+    const biggestLine=biggest?`<div style="margin-top:6px;padding:6px 10px;background:rgba(${biggest.r==='legendary'?'255,210,63':biggest.r==='rare'?'139,92,246':'16,185,129'},0.10);border-left:2px solid ${RARE_COLOR[biggest.r]};border-radius:4px;font-size:11px;color:#cbd5e1"><b>Biggest:</b> ${biggest.e} ${biggest.n} <span style="color:#fbcf3b">+${biggest.s}</span></div>`:'';
+    haulDetail.innerHTML=bar+legend+biggestLine;
   }else if(haulWrap)haulWrap.style.display='none';
   // Persistent trophy board (rare + legendary uniques across all runs).
   const trWrap=$('r-trophy-wrap'),trCount=$('r-trophy-count'),trList=$('r-trophy-list');
@@ -2164,7 +3199,7 @@ function paintDiscount(){
 }
 
 // === SERVICES ===
-async function fetchWx(){try{const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=demo&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
+async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:a})});if(r.ok){const d=await r.json();if(d.lat&&d.lng)return{lat:d.lat,lng:d.lng}}return null}catch(e){return null}}
 async function saveData(w){
   if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;
@@ -2199,7 +3234,15 @@ function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('
 function playFromTier(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
 function replay(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
-function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});mkBoat(c);const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}}
+function boat(c){
+  S.bc=c;
+  document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});
+  mkBoat(c);
+  const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}
+  // Tag the body with the hero class so CSS can tint HUD accents to match the operative.
+  document.body.classList.remove('hero-reel','hero-lilly','hero-fly');
+  document.body.classList.add('hero-'+(c==='regular'?'reel':c==='pontoon'?'lilly':'fly'));
+}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
   const d=S.discount||0;const price=Math.round(t.p*(1-d/100));
@@ -2212,7 +3255,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
@@ -2269,8 +3312,30 @@ async function launchGame(){
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
+// Apply a default hero tint so the s1 boat-picker chips have themed accents on first load. The
+// boat() call later overwrites this with the actual hero once a class is chosen.
+document.body.classList.add('hero-reel');
 initEngine();wet.init();refreshTrophyPeek();applyGfx();
 {const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
+// First-load cinematic intro — 6-second title fade over the existing idle-cam sweep. Shown once
+// (gated by tutorialSeen.intro) so returning players don't sit through it. The idle camera is
+// already orbiting the lake whenever S.on is false, so we just layer a title card on top.
+if(GAME_MODE==='game'&&!tutorialSeen.intro){
+  tutorialSeen.intro=true;persist();
+  const el=document.createElement('div');el.id='intro-card';
+  el.style.cssText='position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;background:radial-gradient(ellipse at center,rgba(2,6,18,0.55) 0%,rgba(2,6,18,0.95) 100%);color:#fbcf3b;font-family:DM Sans,sans-serif;opacity:0;transition:opacity 0.8s ease-out;pointer-events:auto;cursor:pointer';
+  el.innerHTML=`
+    <div style="font:700 12px JetBrains Mono,monospace;letter-spacing:4px;color:#94a3b8;text-transform:uppercase;margin-bottom:12px">A Castor Bayou Story</div>
+    <div style="font:800 56px DM Sans,sans-serif;letter-spacing:1px;text-shadow:0 4px 30px rgba(0,0,0,0.7)">DockShield</div>
+    <div style="font:600 22px DM Sans,sans-serif;color:#fb923c;margin-top:6px;letter-spacing:6px;text-transform:uppercase">The Depth</div>
+    <div style="margin-top:36px;font:11px JetBrains Mono,monospace;color:#64748b;letter-spacing:1.5px">something is rising below the waterline</div>`;
+  document.body.appendChild(el);
+  // Fade in → hold → fade out → remove. Total ~6s; user can skip by clicking anywhere.
+  requestAnimationFrame(()=>{el.style.opacity='1'});
+  const fadeOut=()=>{el.style.opacity='0';setTimeout(()=>el.remove(),900)};
+  const t1=setTimeout(fadeOut,5200);
+  document.addEventListener('click',()=>{clearTimeout(t1);fadeOut()},{once:true,passive:true});
+}
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
@@ -2299,6 +3364,8 @@ function dockShop(shop){if(S.on){S.on=false;_shopResumeRun=true}const p=$('shop-
 function dockCamp(camp,mesh){
   if(S.on){S.on=false;_shopResumeRun=true}
   const p=$('forage-prompt');if(p)p.style.display='none';
+  // First forage: show the tutorial overlay instead of the picker — closing it reveals the picker.
+  if(!tutorialSeen.forage&&showTutorial('forage')){_shopResumeRun=true;return}
   sfx('win');radio('Beached at '+camp.n+'. Dig in.','self');
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
@@ -2307,7 +3374,7 @@ function dockCamp(camp,mesh){
     cricket: {n:'Swat Crickets',  c:'#8db347', e:'🦗', d:'Bugs run across the patch. Tap to swat.',     fn:'openForageBug'},
     frog:    {n:'Grab Frogs',     c:'#5fa75f', e:'🐸', d:'They pause, then hop. Catch the pause.',     fn:'openForageFrog'},
     minnow:  {n:'Net Minnows',    c:'#7ec8e3', e:'🐠', d:'Click + drag a net rectangle to scoop.',     fn:'openForageMinnow'},
-    crayfish:{n:'Net the Crayfish',c:'#cf4040',e:'🦞', d:'Drag-net rocky water. Rare crayfish drop.',  fn:'openForageMinnow'}  // shares the minnow board (with crayfish bias from the spawn pool)
+    crayfish:{n:'Flip the Rocks',  c:'#cf4040',e:'🦞', d:'Stony shore. Tap a flipped rock before they re-burrow.', fn:'openForageCrayfish'}
   };
   const rows=camp.games.map(k=>{const g=gameMeta[k];if(!g)return '';
     return `<button class="btn forage-row" data-fn="${g.fn}" style="width:100%;text-align:left;background:rgba(3,7,18,0.5);border:1px solid ${g.c}33;border-left:3px solid ${g.c};border-radius:8px;padding:10px 12px;margin:5px 0;color:#e8edf5">
@@ -2341,20 +3408,35 @@ const SHOP_ITEMS=[
 // tier (one above what you own) as buyable; already-owned tiers show ✓ OWNED.
 function renderBoatworksRows(){
   const heroBoat=BT[S.bc].n;const hu=boatUpgrades[S.bc]||{};
-  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Boat Upgrades · ${heroBoat}</div>`;
+  // Identify the cheapest *buyable* next-tier slot for a "BEST VALUE" badge so the player has a
+  // tasteful nudge toward the next upgrade rather than staring at a wall of identical rows.
+  let bestCost=Infinity,bestKey=null;
+  for(const slot of ['engine','lights','armor','electronics']){
+    const cur=hu[slot]||0,tier=cur+1;
+    if(tier>=BOAT_UP[slot].length)continue;
+    const it=BOAT_UP[slot][tier];
+    if(bait>=it.cost&&it.cost<bestCost){bestCost=it.cost;bestKey=slot+':'+tier}
+  }
+  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Boat Upgrades · ${heroBoat} <span style="color:#475569">· hover for after-purchase balance</span></div>`;
   for(const slot of ['engine','lights','armor','electronics']){
     const cur=hu[slot]||0;
     for(let tier=1;tier<BOAT_UP[slot].length;tier++){
-      const it=BOAT_UP[slot][tier];const owned=cur>=tier,buyable=cur===tier-1&&bait>=it.cost;
-      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
+      const it=BOAT_UP[slot][tier];const cost=loyaltyDiscount(it.cost),owned=cur>=tier,buyable=cur===tier-1&&bait>=cost;
+      // Cost preview: post-purchase bait balance + delta, as a native title tooltip on the button.
+      const tip=owned?'Already owned':`After: ${Math.max(0,bait-cost)} bait (${bait}−${cost})`;
+      const isBest=bestKey===slot+':'+tier;
+      html+=`<div style="position:relative;display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5};${isBest?'box-shadow:0 0 0 1px rgba(251,207,59,0.55);':''}">
+        ${isBest?`<span style="position:absolute;top:-6px;right:10px;background:#fbcf3b;color:#1a1a2e;font:700 8px 'JetBrains Mono',monospace;letter-spacing:1px;padding:2px 6px;border-radius:3px">BEST VALUE</span>`:''}
         <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slot}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
-        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" title="${tip}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=cost?priceLabel(it.cost):'—'}</button>
       </div>`;
     }
   }
   return html;
 }
 function openShop(shop){
+  // First Boatworks visit shows the tutorial — closing it then opens the shop on the next call.
+  if(shop&&shop.boatworks&&!tutorialSeen.boatworks&&showTutorial('boatworks'))return;
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
   const title=shop?shop.n:'Tackle Shop';
@@ -2366,10 +3448,10 @@ function openShop(shop){
   if(shop&&shop.sells){
     for(const slot of Object.keys(shop.sells)){
       for(const tier of shop.sells[slot]){
-        const it=GEAR[slot][tier];const owned=gear[slot]>=tier;const buyable=gear[slot]===tier-1&&bait>=it.cost;
+        const it=GEAR[slot][tier];const cost=loyaltyDiscount(it.cost);const owned=gear[slot]>=tier;const buyable=gear[slot]===tier-1&&bait>=cost;
         gearHtml+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
           <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slotLabel[slot]}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
-          <button class="btn bp gear-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?titleCol:'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+          <button class="btn bp gear-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?titleCol:'#374151'}">${owned?'✓ OWNED':bait>=cost?priceLabel(it.cost):'—'}</button>
         </div>`;
       }
     }
@@ -2378,61 +3460,208 @@ function openShop(shop){
   const conRows=SHOP_ITEMS.filter(it=>conIds.includes(it.id)).map(it=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-left:3px solid ${it.c};border-radius:8px;margin:5px 0">
       <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;color:${it.c};font-size:12.5px">${it.n}</div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.desc}</div></div>
-      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:7px 13px;margin:0;background:${bait>=it.cost?it.c:'#374151'};font-size:11px">${bait>=it.cost?it.cost+' bait':'—'}</button>
+      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:7px 13px;margin:0;background:${bait>=loyaltyDiscount(it.cost)?it.c:'#374151'};font-size:11px">${bait>=loyaltyDiscount(it.cost)?priceLabel(it.cost):'—'}</button>
     </div>`).join('');
   card.innerHTML=`
     <div class="m-kicker" style="color:${titleCol}">${shop?'Bait Shop':'Tackle Shop'}</div>
     <div class="m-title" style="font-size:18px">${title}</div>
     ${shop?`<div class="m-sub" style="font-style:italic">"${shop.blurb}"</div>`:''}
-    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px"><span style="color:#94a3b8">Bait on hand</span><span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Bait Pantry · equip one for your next casts</div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
-      <button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>
-      ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
+    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px;gap:10px">
+      <div><span style="color:#94a3b8">Bait on hand</span> <span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
+      ${(()=>{const t=loyaltyTier();const nxt=LOYALTY_TIERS[LOYALTY_TIERS.indexOf(t)+1];
+        return `<div style="text-align:right;font:10px 'JetBrains Mono',monospace;line-height:1.4"><span style="color:${t.pct>0?'#10b981':'#94a3b8'};letter-spacing:1px;text-transform:uppercase">${t.name}${t.pct>0?` · -${(t.pct*100|0)}%`:''}</span>${nxt?`<br><span style="color:#64748b">Next: ${nxt.name} at ${nxt.at} spent (${nxt.at-loyaltySpent} to go)</span>`:''}</div>`;
+      })()}
     </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 4px">
+      <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Bait Pantry · equip one for your next casts</div>
+      <div style="display:flex;gap:3px">
+        ${['all','foraged','crafted'].map(t=>`<button class="pantry-tab" data-t="${t}" style="background:${_pantryTab===t?'rgba(251,207,59,0.2)':'rgba(3,7,18,0.5)'};border:1px solid ${_pantryTab===t?'#fbcf3b':'rgba(30,41,59,0.6)'};color:${_pantryTab===t?'#fbcf3b':'#94a3b8'};font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;padding:4px 8px;border-radius:4px;cursor:pointer">${t.toUpperCase()}</button>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+      ${_pantryTab!=='crafted'?`<button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>`:''}
+      ${Object.entries(BAIT_TYPES).filter(([k,bt])=>{
+        if(_pantryTab==='all')return true;
+        const isCrafted=bt.crafted||bt.isLure;
+        return _pantryTab==='crafted'?isCrafted:!isCrafted;
+      }).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
+    </div>
+    ${(()=>{
+      // Generic crafting block — renders one row per CRAFT_RECIPES entry the player has either
+      // already crafted before or has the ingredients for. Hidden entirely if neither is true.
+      const visible=CRAFT_RECIPES.filter(r=>(baitInv[r.out]||0)>0||Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n));
+      if(!visible.length)return '';
+      const rows=visible.map(r=>{
+        const canCraft=Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n);
+        const cost=Object.entries(r.in).map(([k,n])=>`${BAIT_TYPES[k].e}×${n}`).join(' + ');
+        const bt=BAIT_TYPES[r.out],col=bt.c;
+        return `<div style="background:rgba(251,207,59,0.04);border:1px dashed ${col}66;border-radius:8px;padding:8px 12px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div><b style="color:${col}">${r.tag}</b> <span style="color:#94a3b8;font-size:10px">×${baitInv[r.out]||0}</span><div style="font-size:10px;color:#94a3b8;margin-top:2px">${r.blurb}</div></div>
+            <button class="btn recipe-craft" data-rid="${r.id}" ${canCraft?'':'disabled'} title="Cost: ${cost}" style="background:${canCraft?`linear-gradient(135deg,${col},#1a1a2e)`:'rgba(3,7,18,0.5)'};color:${canCraft?'#1a1a2e':'#475569'};border:1px solid ${col}88;width:auto;padding:6px 12px;margin:0;font-size:11px">CRAFT (${cost})</button>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">Tackle Bench · craft custom bait</div>${rows}`;
+    })()}
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
     ${shop&&shop.boatworks?renderBoatworksRows():''}
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
     ${conRows}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
   const reopen=()=>openShop(shop);
-  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
+  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
-  card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
-  card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<it.cost)return;bait-=it.cost;boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
+  card.querySelectorAll('.pantry-tab').forEach(b=>b.onclick=()=>{_pantryTab=b.dataset.t;reopen()});
+  card.querySelectorAll('.recipe-craft').forEach(b=>b.onclick=()=>{
+    const r=CRAFT_RECIPES.find(x=>x.id===b.dataset.rid);if(!r)return;
+    if(!Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n))return;
+    Object.entries(r.in).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)-n});
+    baitInv[r.out]=(baitInv[r.out]||0)+1;persist();sfx('win');
+    if(r.ach)onUnlock(r.ach);
+    pushAchToast({n:BAIT_TYPES[r.out].n.toUpperCase(),d:'Crafted at the tackle bench.'});
+    reopen();
+  });
+  card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
+  card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
   el.style.display='flex';
 }
 
 // Stubs — real bodies land in dedicated commits below. They render a placeholder card so the
 // buttons don't no-op in this commit while the bait-economy ships first.
+// Category buckets for the achievements UI — id prefix determines the category bin.
+// Anything not matched falls into 'misc'. Order here defines the render order.
+const ACH_CATEGORIES=[
+  {id:'fishing',name:'Fishing',col:'#10b981',ids:['first_catch','first_release','legendary_landed','gator_wrangler','bait_baron','codex_half','codex_full']},
+  {id:'duct',name:'Duct',col:'#ffd23f',ids:['duct_sighting','duct_near_miss','duct_ten_attempts','duct_25_attempts','duct_three_near','duct_lure_crafted']},
+  {id:'rescue',name:'Rescue',col:'#fb923c',ids:['five_missions','full_extraction','home_repaired','deep_dock','boss_clean','gator_king','storm_survivor']},
+  {id:'gear',name:'Gear & Boat',col:'#60d0ff',ids:['first_gear','fully_decked','first_upgrade','boat_maxed']},
+  {id:'forage',name:'Foraging & Craft',col:'#a47a52',ids:['first_forage','worm_farmer','pantry_stocked','first_craft']}
+];
 function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
-  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
   const all=Object.entries(ACH);
-  const rows=all.map(([id,a])=>{const u=achievements.has(id);return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(3,7,18,0.45);border-radius:8px;margin:4px 0;opacity:${u?1:0.45}"><div style="font-size:22px">${u?'🏅':'🔒'}</div><div><div style="font:700 12.5px 'DM Sans',sans-serif;color:${u?'#fbcf3b':'#94a3b8'}">${a.n}</div><div style="font-size:11px;color:#94a3b8;line-height:1.4">${a.d}</div></div></div>`}).join('');
-  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${rows}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
+  // Assign every entry to a category; ids that don't show up in any bucket fall into 'misc'.
+  const seen=new Set();
+  const cats=ACH_CATEGORIES.map(c=>({...c,rows:c.ids.filter(id=>ACH[id]).map(id=>{seen.add(id);return [id,ACH[id]]})}));
+  const misc=all.filter(([id])=>!seen.has(id));
+  if(misc.length)cats.push({id:'misc',name:'Misc',col:'#94a3b8',rows:misc});
+  const renderRow=([id,a])=>{
+    const u=achievements.has(id);
+    // Tiered achievements with a .p(state) function render a tiny progress bar + cur/max readout.
+    let progHtml='';
+    if(!u&&typeof a.p==='function'){
+      try{const pr=a.p();if(pr&&pr.max>0){const pct=Math.min(100,(pr.cur/pr.max)*100);
+        progHtml=`<div style="margin-top:5px;display:flex;align-items:center;gap:6px"><div style="flex:1;height:5px;background:rgba(3,7,18,0.7);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#fb923c,#fbcf3b)"></div></div><span style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;min-width:42px;text-align:right">${pr.cur} / ${pr.max}</span></div>`}}catch(e){}
+    }
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(3,7,18,0.45);border-radius:8px;margin:4px 0;opacity:${u?1:0.55}"><div style="font-size:22px">${u?'🏅':'🔒'}</div><div style="flex:1;min-width:0"><div style="font:700 12.5px 'DM Sans',sans-serif;color:${u?'#fbcf3b':'#94a3b8'}">${a.n}</div><div style="font-size:11px;color:#94a3b8;line-height:1.4">${a.d}</div>${progHtml}</div></div>`;
+  };
+  const catBlocks=cats.filter(c=>c.rows.length).map(c=>{
+    const unlocked=c.rows.filter(([id])=>achievements.has(id)).length;
+    return `<div style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:center;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;color:${c.col};margin-bottom:4px"><span>${c.name}</span><span style="color:#64748b;font-weight:400">${unlocked}/${c.rows.length}</span></div>${c.rows.map(renderRow).join('')}</div>`;
+  }).join('');
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${catBlocks}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:14px">Close</button>`;
   el.style.display='flex';
 }
+// Settings tab state — persists across reopens so the player isn't jolted back to the first tab.
+let _setTab='audio';
 function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
+  const tabBtn=(id,label)=>`<button class="set-tab" data-tab="${id}" style="background:${_setTab===id?'rgba(96,208,255,0.18)':'rgba(3,7,18,0.5)'};border:1px solid ${_setTab===id?'#60d0ff':'rgba(30,41,59,0.6)'};color:${_setTab===id?'#60d0ff':'#94a3b8'};font:600 11px 'JetBrains Mono',monospace;letter-spacing:1px;padding:7px 14px;border-radius:6px;cursor:pointer">${label}</button>`;
+  const row=(label,right)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">${label}</span>${right}</div>`;
+  // Audio tab: sound toggle + the two sliders.
+  const audioTab=`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
+    ${row('Master Volume',`<input id="audio-vol" type="range" min="0" max="1" step="0.05" value="${_audVol}" oninput="DS.setAudVol(parseFloat(this.value))" style="width:160px;accent-color:#fb923c">`)}
+    ${row('· SFX',`<input id="sfx-vol" type="range" min="0" max="1" step="0.05" value="${_sfxVol}" oninput="DS.setSfxVol(parseFloat(this.value))" style="width:160px;accent-color:#94a3b8">`)}
+    ${row('· Engine',`<input id="engine-vol" type="range" min="0" max="1" step="0.05" value="${_engineVol}" oninput="DS.setEngineVol(parseFloat(this.value))" style="width:160px;accent-color:#94a3b8">`)}
+    ${row('· Ambient',`<input id="ambient-vol" type="range" min="0" max="1" step="0.05" value="${_ambientVol}" oninput="DS.setAmbientVol(parseFloat(this.value))" style="width:160px;accent-color:#94a3b8">`)}
+    ${row('· Music',`<input id="music-vol" type="range" min="0" max="1" step="0.05" value="${_musicVol}" oninput="DS.setMusicVol(parseFloat(this.value))" style="width:160px;accent-color:#94a3b8">`)}
+  `;
+  // Graphics tab: quality preset + shake.
+  const gfxTab=`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
+    ${row('Screen Shake',`<input id="shake-mul" type="range" min="0" max="1.5" step="0.1" value="${_shakeMul}" oninput="DS.setShakeMul(parseFloat(this.value))" style="width:160px;accent-color:#fb923c">`)}
+    ${row('Reset Save',`<button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button>`)}
+  `;
+  // Controls tab: keybinds + the bobber-rhythm key, which didn't exist when this card was first written.
+  const controlsTab=`
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.85;padding:6px 0">
+      <span style="color:#fbcf3b">W A S D</span> · Arrows — Drive<br>
+      <span style="color:#fbcf3b">Space</span> — Sonar Ping / Reel (in a fight)<br>
+      <span style="color:#fbcf3b">B</span> — Bobber-bounce tap (rhythm bonus during fights + Duct)<br>
+      <span style="color:#fbcf3b">F</span> — Cast (when stopped) / engage Duct<br>
+      <span style="color:#fbcf3b">E</span> — Dock at a bait shop<br>
+      <span style="color:#fbcf3b">G</span> — Beach at a shore camp (forage)<br>
+      <span style="color:#fbcf3b">P</span> — Photo mode (orbit cam)<br>
+      <span style="color:#fbcf3b">M</span> — Toggle minimap zoom<br>
+      <span style="color:#fbcf3b">Esc</span> — Bail mini-game / close menus
+    </div>
+    ${row('Replay Tutorials',`<button class="btn bx" onclick="DS.replayTutorials();this.textContent='Will Replay'" style="width:auto;padding:6px 12px;margin:0">Clear seen flags</button>`)}
+  `;
+  const tabHtml={audio:audioTab,gfx:gfxTab,controls:controlsTab}[_setTab];
   card.innerHTML=`<div class="m-kicker" style="color:#60d0ff">Settings</div><div class="m-title">Operations panel.</div>
-    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:12px 14px;margin:10px 0">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="color:#cbd5e1">Sound</span><button class="btn bx" id="set-mute" onclick="DS.toggleMute();document.getElementById('set-mute').textContent=document.getElementById('mute-btn').textContent" style="width:auto;padding:6px 12px;margin:0">${muted?'🔇 Off':'🔊 On'}</button></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid rgba(30,41,59,0.4)"><span style="color:#cbd5e1">Reset Save</span><button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button></div>
-    </div>
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.7;background:rgba(3,7,18,0.4);border-radius:8px;padding:10px">
-      <div style="color:#fb923c;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">Controls</div>
-      W/A/S/D · Arrows — Drive<br>
-      Space — Sonar Ping<br>
-      F — Cast (when stopped)<br>
-      E — Dock at a bait shop<br>
-      G — Beach at a shore camp (forage)<br>
-      P — Photo mode (orbit cam)<br>
-      Esc — Bail mini-game / close menus
-    </div>
-    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+    <div style="display:flex;gap:6px;margin:10px 0 8px">${tabBtn('audio','🔊 Audio')}${tabBtn('gfx','✨ Graphics')}${tabBtn('controls','🎮 Controls')}</div>
+    <div style="background:rgba(3,7,18,0.5);border-radius:8px;padding:6px 14px;margin-bottom:10px;min-height:180px">${tabHtml}</div>
+    <button class="btn bx" onclick="DS.closePeek()">Close</button>`;
+  card.querySelectorAll('.set-tab').forEach(b=>b.onclick=()=>{_setTab=b.dataset.tab;openSettings()});
   el.style.display='flex';
 }
 function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
+function setAudVol(v){_audVol=Math.max(0,Math.min(1,v));persist()}
+function setShakeMul(v){_shakeMul=Math.max(0,Math.min(1.5,v));persist()}
+function setSfxVol(v){_sfxVol=Math.max(0,Math.min(1,v));persist()}
+function setEngineVol(v){_engineVol=Math.max(0,Math.min(1,v));persist()}
+function setAmbientVol(v){_ambientVol=Math.max(0,Math.min(1,v));persist()}
+function setMusicVol(v){_musicVol=Math.max(0,Math.min(1,v));persist()}
+// Clear all tutorial-seen flags so the first-time overlays re-fire on the next encounter.
+// Intro is excluded — re-firing it on the next reload would surprise the player.
+function replayTutorials(){const intro=tutorialSeen.intro;tutorialSeen={};if(intro)tutorialSeen.intro=intro;persist()}
+// Render the player's biggest catch into a shareable PNG. Lays the trophy out on a 1200×630
+// open-graph-friendly card and triggers a browser download.
+// === MOBILE TOUCH GLUE ===
+// Bridge mobile buttons to the right action based on context — the same E/G/B/F keys on desktop.
+function touchDock(){if(_nearShop)dockShop(_nearShop.userData.shop);else if(_bobberState)tryHookSet();else sfx('click')}
+function touchForage(){if(_nearCamp)dockCamp(_nearCamp.userData.camp,_nearCamp);else sfx('click')}
+function touchBobber(){
+  // On mobile, BOBBER taps the rhythm bobber dot directly (Duct or fight). If neither is open,
+  // and we're in the wait/nibble window, treat it as a hook-set.
+  const dbob=document.getElementById('d-bob');if(dbob){dbob.click();return}
+  const fbob=document.getElementById('f-bob');if(fbob){fbob.click();return}
+  if(_bobberState)tryHookSet();
+}
+// === BOAT HORN ===
+// Honk when the player taps E away from a shop, or when this hook is called from the mobile button.
+let _hornLast=0;
+function boatHorn(){
+  const now=Date.now()*0.001;if(now-_hornLast<1.2)return;_hornLast=now;
+  sfx('catch');setTimeout(()=>sfx('hit'),140);  // two short pops fake a horn
+  // Cheeky radio variant per hero.
+  const lines={regular:'(toot)',pontoon:'HONK! Make way!',speedboat:'(short blip)'};
+  radio(lines[S.bc]||'(toot)',HERO[S.bc]?HERO[S.bc].id:'self');
+}
+function touchHorn(){boatHorn()}
+function exportTrophy(){
+  if(!bestFish)return false;
+  const W=1200,H=630;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  // Background — radial gradient + a subtle vignette.
+  const bg=x.createRadialGradient(W/2,H*0.4,40,W/2,H/2,W*0.7);
+  bg.addColorStop(0,'#0c1c2e');bg.addColorStop(1,'#02060f');x.fillStyle=bg;x.fillRect(0,0,W,H);
+  const rcol=({legendary:'#ffd23f',rare:'#a78bfa',uncommon:'#3b82f6',common:'#10b981'})[bestFish.r]||'#fb923c';
+  // Top kicker.
+  x.font='700 24px JetBrains Mono, monospace';x.fillStyle='#fb923c';x.textAlign='center';x.fillText('DOCKSHIELD · THE DEPTH', W/2, 90);
+  // Big emoji + name.
+  x.font='180px DM Sans, sans-serif';x.fillText(bestFish.e||'🏆',W/2,310);
+  x.font='700 80px DM Sans, sans-serif';x.fillStyle=rcol;x.fillText(bestFish.n,W/2,420);
+  // Score + date.
+  x.font='600 36px JetBrains Mono, monospace';x.fillStyle='#fde68a';x.fillText('+'+bestFish.s+' score',W/2,490);
+  x.font='400 24px DM Sans, sans-serif';x.fillStyle='#94a3b8';x.fillText('biggest catch · '+(bestFish.date||''),W/2,538);
+  // Rarity stripe.
+  x.fillStyle=rcol;x.fillRect(W*0.3,576,W*0.4,4);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,610);
+  // Trigger download.
+  const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-trophy.png';document.body.appendChild(a);a.click();a.remove();
+  sfx('win');return true;
+}
 function applyGfx(){
   if(!scene)return;
   const lowMode=gfxQuality==='low',highMode=gfxQuality==='high';
@@ -2448,26 +3677,101 @@ function applyGfx(){
 }
 /* gfxQuality declaration + initial load moved to the persistence block at the top of the file. */
 
+// Codex search/filter state — persists across reopens like the settings tab does.
+let _codexQ='',_codexTier='all';
+// Bait pantry filter — All / Foraged (worm/cricket/frog/minnow/crayfish) / Crafted (BAIT_TYPES.crafted/isLure).
+let _pantryTab='all';
 function openCodex(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
   const caught=fishCatalog.size,total=FISH.length;
-  const byTier=r=>FISH.filter(f=>f.r===r);
+  // Filter pipeline — query (case-insensitive name match) + tier filter (all | per-rarity | caught-only).
+  const matches=f=>{
+    if(_codexTier!=='all'&&_codexTier!=='caught'&&f.r!==_codexTier)return false;
+    if(_codexTier==='caught'&&!fishCatalog.has(f.n))return false;
+    if(_codexQ&&!f.n.toLowerCase().includes(_codexQ.toLowerCase()))return false;
+    return true;
+  };
+  const tierPill=(id,label,c)=>`<button class="cdx-tier" data-t="${id}" style="background:${_codexTier===id?(c||'#60d0ff')+'33':'rgba(3,7,18,0.5)'};border:1px solid ${_codexTier===id?(c||'#60d0ff'):'rgba(30,41,59,0.5)'};color:${_codexTier===id?(c||'#60d0ff'):'#94a3b8'};font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:5px 10px;border-radius:5px;cursor:pointer">${label}</button>`;
+  const byTier=r=>FISH.filter(f=>f.r===r&&matches(f));
   const tierBlock=(label,r)=>{const list=byTier(r);if(!list.length)return '';
-    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?f.f:'Not yet caught'}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label} <span style="color:#64748b">· ${list.filter(f=>fishCatalog.has(f.n)).length}/${list.length}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);const sl=speciesLog[f.n];const tip=got?(sl?`${f.f}\n— First landed ${sl.date} at ${sl.spot} (+${sl.score})`:f.f):'Not yet caught';return `<span title="${tip}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+  // If the filter zeros out a tier, hide the whole block (showing only matching rows).
+  const allEmpty=['common','uncommon','rare','legendary'].every(r=>byTier(r).length===0);
   card.innerHTML=`
     <div class="m-kicker" style="color:#60d0ff">Fish Codex</div>
     <div class="m-title">${caught} / ${total} species landed.</div>
     <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
-    ${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}
-    <div style="margin:12px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#ffd23f;text-transform:uppercase">??? · The Impossible</div>
-    <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
-      <div style="font-size:26px;filter:grayscale(0.3)">🦆</div>
-      <div><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
-      <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div></div>
+    ${bestFish?`<div style="display:flex;align-items:center;gap:10px;background:rgba(${bestFish.r==='legendary'?'255,210,63':bestFish.r==='rare'?'139,92,246':'16,185,129'},0.08);border:1px solid ${RARE_COLOR[bestFish.r]||'#475569'}55;border-radius:8px;padding:8px 12px;margin:8px 0">
+      <div style="font-size:22px">${bestFish.e||'🏆'}</div>
+      <div style="flex:1;min-width:0"><div style="font:9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase">Trophy · biggest ever</div>
+      <div style="color:${RARE_COLOR[bestFish.r]||'#e8edf5'};font-weight:600;font-size:13px">${bestFish.n} <span style="color:#fde68a">+${bestFish.s}</span> <span style="color:#64748b;font-size:10px">· ${bestFish.date||''}</span></div></div>
+      <button class="btn bx" onclick="DS.exportTrophy()" title="Save as PNG" style="width:auto;padding:5px 10px;margin:0;font-size:10px">💾 Save</button>
+    </div>`:''}
+    <div style="display:flex;gap:6px;margin:10px 0 4px;align-items:center">
+      <input id="cdx-q" type="text" placeholder="Search species…" value="${_codexQ}" style="flex:1;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.25);color:#e8edf5;border-radius:6px;padding:7px 10px;font:12px 'DM Sans',sans-serif">
+      ${_codexQ?'<button id="cdx-clear" title="Clear search" style="background:rgba(3,7,18,0.5);border:1px solid rgba(30,41,59,0.5);color:#94a3b8;border-radius:6px;padding:5px 10px;cursor:pointer">✕</button>':''}
     </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+      ${tierPill('all','All')}
+      ${tierPill('common','Common',RARE_COLOR.common)}
+      ${tierPill('uncommon','Uncommon',RARE_COLOR.uncommon)}
+      ${tierPill('rare','Rare',RARE_COLOR.rare)}
+      ${tierPill('legendary','Legendary',RARE_COLOR.legendary)}
+      ${tierPill('caught','Caught only','#fb923c')}
+    </div>
+    ${allEmpty?`<div style="text-align:center;padding:24px;color:#64748b;font:12px 'DM Sans',sans-serif">No species match the current filter.</div>`:`${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}`}
+    <div style="margin:12px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#ffd23f;text-transform:uppercase">??? · The Impossible</div>
+    <div style="display:flex;align-items:flex-start;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
+      <div style="font-size:26px;filter:grayscale(0.3)">🦆</div>
+      <div style="flex:1;min-width:0"><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
+      <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div>
+      ${(()=>{
+        // 14-day sparkline. Each day = 3 stacked thin bars (sightings/attempts/near-catches),
+        // height proportional to that day's count vs the period max. Lore: "the pier keeps notes."
+        const today=new Date();const days=[];for(let i=13;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10))}
+        const entries=days.map(d=>ductLog[d]||{s:0,a:0,n:0});
+        const max=Math.max(1,...entries.map(e=>Math.max(e.s,e.a,e.n)));
+        if(max<=1&&Object.keys(ductLog).length===0)return '';  // hide chart until there's data
+        return `<div style="margin-top:8px;font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase">Pier's Notes · last 14 days</div>
+          <div style="display:flex;align-items:flex-end;gap:1px;height:34px;padding:2px 0;border-bottom:1px solid rgba(251,207,59,0.2)">
+            ${entries.map(e=>`<div title="${days[entries.indexOf(e)]} · sightings ${e.s} · attempts ${e.a} · near ${e.n}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%">
+              ${e.n>0?`<div style="height:${(e.n/max)*30}px;background:#10b981"></div>`:''}
+              ${e.a>0?`<div style="height:${(e.a/max)*30}px;background:#fbcf3b"></div>`:''}
+              ${e.s>0?`<div style="height:${(e.s/max)*30}px;background:rgba(251,207,59,0.4)"></div>`:''}
+            </div>`).join('')}
+          </div>
+          <div style="display:flex;gap:10px;margin-top:3px;font:9px 'JetBrains Mono',monospace;color:#64748b"><span><span style="display:inline-block;width:8px;height:8px;background:rgba(251,207,59,0.4)"></span> sighting</span><span><span style="display:inline-block;width:8px;height:8px;background:#fbcf3b"></span> attempt</span><span><span style="display:inline-block;width:8px;height:8px;background:#10b981"></span> near</span></div>`;
+      })()}
+      </div>
+    </div>
+    ${(()=>{
+      // Duct Tape Lure — Codex entry. Locked until crafted at least once.
+      const crafted=achievements.has('duct_lure_crafted')||(baitInv.ducttape||0)>0;
+      return `<div style="margin:10px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${crafted?'#ffd23f':'#475569'};text-transform:uppercase">Craftable · The Lure</div>
+        <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.04);border:1px dashed rgba(255,210,63,${crafted?0.35:0.15});border-radius:8px;padding:10px 12px;opacity:${crafted?1:0.55}">
+          <div style="font-size:26px;${crafted?'':'filter:grayscale(1)'}">🦆</div>
+          <div><div style="font-weight:700;color:${crafted?'#ffd23f':'#64748b'}">${crafted?'Duct Tape Lure':'🔒 ???'}</div>
+          <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">${crafted?`A wad of tape on a hook. People at the pier swear it "almost" works. The bobber peak window opens up <b style="color:#fde68a">3.5×</b> wider during a Duct chase. He still doesn't land.<br>On hand: <b style="color:#fde68a">${baitInv.ducttape||0}</b>`:'Recipe is at the tackle shop. Forage the rare bait and you\'ll see it.'}</div></div>
+        </div>`;
+    })()}
+    ${(()=>{
+      // Gator King — Codex entry. Locked until first defeat.
+      const won=achievements.has('gator_king');
+      return `<div style="margin:10px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${won?'#4a8a32':'#475569'};text-transform:uppercase">Mini-Boss · East Rocks</div>
+        <div style="display:flex;align-items:center;gap:10px;background:rgba(74,138,50,0.06);border:1px dashed rgba(74,138,50,${won?0.45:0.15});border-radius:8px;padding:10px 12px;opacity:${won?1:0.6}">
+          <div style="font-size:26px;${won?'':'filter:grayscale(1)'}">🐊</div>
+          <div><div style="font-weight:700;color:${won?'#86c97c':'#64748b'}">${won?'Gator King':'🔒 ???'}</div>
+          <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">${won?'Took him at the Crayfish Hole. He stays put for the rest of the run, but he\'ll be back next time.':'Land every gator on the bayou. Then go to East Rocks.'}</div></div>
+        </div>`;
+    })()}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  // Wire the search + tier pills. Each rebuild calls openCodex() so the panel re-renders with the
+  // new filter state without us re-querying scattered DOM nodes.
+  const qIn=$('cdx-q');if(qIn){qIn.oninput=()=>{_codexQ=qIn.value;openCodex();const q2=$('cdx-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}}}
+  const qClr=$('cdx-clear');if(qClr)qClr.onclick=()=>{_codexQ='';openCodex()};
+  card.querySelectorAll('.cdx-tier').forEach(b=>b.onclick=()=>{_codexTier=b.dataset.t;openCodex()});
   el.style.display='flex';
 }
 // Show the trophy peek button on s1 only if there's something to show.
@@ -2518,6 +3822,56 @@ function qaOpen(kind){
 // QA hook for Duct — spawns him near the boat for smoke tests. Must override DUCT.x/z AFTER
 // spawnDuct() (which randomizes them) so tickDuct keeps him in range.
 function qaSpawnDuct(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(DUCT.active)despawnDuct();spawnDuct();DUCT.x=bMesh.position.x+8;DUCT.z=bMesh.position.z;DUCT.vx=0;DUCT.vz=0;DUCT.mesh.position.set(DUCT.x,0,DUCT.z);return true}
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},mode:GAME_MODE};
+// QA-only hook: drives a single Duct escape archetype synchronously so the smoke can verify each
+// branch in runDuctEscapeAnim doesn't throw. Gated on ?qa=1 like the other QA hooks.
+function qaDuctEscape(kind){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(!DUCT.active){spawnDuct()}
+  try{runDuctEscapeAnim(kind);return true}catch(e){return false}
+}
+// QA-only: fire a list of unlock IDs through the toast queue without grinding the prereqs.
+function qaUnlock(ids){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(!Array.isArray(ids))return false;
+  // Real unlock path — adds to the persistent achievements Set + fires the toast through onUnlock.
+  // Falls back to a raw toast if the id isn't a registered achievement (so synthetic ids still flash).
+  ids.forEach(id=>{if(ACH[id]){onUnlock(id)}else{pushAchToast({n:id,d:'(qa)'})}});return true;
+}
+function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
+// QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
+// can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
+function qaForceNight(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  const t=Date.now()*0.001;_dayOffset=(270-((t%360)))-0;  // land the cycle at 270° (sunY≈-30)
+  return !!(scene&&scene._stars&&scene._moon);
+}
+// QA: spawn the Gator King drop directly (skips the gators-required gate).
+function qaSpawnGatorKing(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  if(S.gatorKingSpawned)return true;
+  S.gatorKingSpawned=true;
+  const dp=mkDropPoint(DP_GATOR_KING);dp.position.set(185,0,80);dp.userData.isGatorKing=true;scene.add(dp);dropPoints.push(dp);
+  return true;
+}
+// QA: open the Gator King mini-boss UI directly (parallels qaOpen for the regular drop types).
+function qaOpenGatorKing(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  let dp=dropPoints.find(d=>d.userData&&d.userData.isGatorKing);
+  if(!dp){qaSpawnGatorKing();dp=dropPoints.find(d=>d.userData&&d.userData.isGatorKing)}
+  if(!dp)return false;
+  mini.openGatorKing(dp);return true;
+}
+// QA: force a lightning strike (skips the rate-limit / rain gate).
+function qaStrikeLightning(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  storm.strike();return true;
+}
+// QA: stuff the bait pantry with ducttape recipe ingredients so the craft button appears.
+function qaSeedDuctRecipe(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  Object.entries(DUCT_LURE_RECIPE).forEach(([k,n])=>{baitInv[k]=(baitInv[k]||0)+n});
+  persist();return true;
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,getSave,mode:GAME_MODE};
 })();
 
