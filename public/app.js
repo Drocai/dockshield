@@ -699,7 +699,16 @@ const mini={
     const cv=$('m-fw-cv'),ctx=cv.getContext('2d');
     const clods=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)clods.push({x:off+c*cell,y:off+r*cell,r:Math.random()<0.05?0:1,t:0});
     let worms=0,crickets=0,t=22;const G={alive:true};
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill()}}};
+    const draw=()=>{
+      // Layered backdrop: radial vignette + grain stippling so it doesn't look like a flat brown box.
+      const g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,Math.max(W,H));
+      g.addColorStop(0,'#3a2812');g.addColorStop(0.55,'#2a1d0e');g.addColorStop(1,'#150c06');
+      ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='rgba(120,80,40,0.07)';for(let i=0;i<60;i++)ctx.fillRect((i*97)%W,(i*131)%H,1,1);
+      for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill();
+        // Dug-out highlight ring so the player can read "this one's done"
+        ctx.strokeStyle='rgba(120,80,40,0.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(c.x,c.y,16,0,Math.PI*2);ctx.stroke()}}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const c of clods){if(c.r>0&&Math.hypot(c.x-mx,c.y-my)<20){c.r=0;c.t=0;sfx('dig');const roll=Math.random();if(roll<0.55){worms++;baitInv.worm++;$('m-fw-w').textContent=worms}else if(roll<0.7){crickets++;baitInv.cricket++;$('m-fw-c').textContent=crickets}draw();persist();break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fw-t').textContent=t;for(const c of clods){if(c.r===0){c.t++;if(c.t>10){c.r=1;c.t=0}}}draw();if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);const total=worms+crickets;onUnlock('first_forage');if(total>=8)onUnlock('worm_farmer');mini.finishForage(`${worms} worms${crickets?', '+crickets+' crickets':''}.`,worms*4+crickets*8)}},1000);
     const rf=setInterval(()=>draw(),120);
@@ -864,6 +873,16 @@ function initEngine(){
   // Updated in loop() with the sun arc; hidden at night via the _isNight flag.
   const glintMat=new THREE.SpriteMaterial({map:_softTex,color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.55,depthWrite:false});
   const sunGlint=new THREE.Sprite(glintMat);sunGlint.scale.set(60,18,1);sunGlint.position.set(0,0.12,-60);scene.add(sunGlint);scene._sunGlint=sunGlint;
+  // God-ray light shafts — three soft additive cones radiating down from the sun position. Reuse
+  // _softTex so the cones have a feathered taper. Faded by sun height + Clear weather only.
+  {
+    const rays=new THREE.Group();
+    for(let i=0;i<3;i++){
+      const m=new THREE.SpriteMaterial({map:_softTex,color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0,depthWrite:false});
+      const s=new THREE.Sprite(m);s.scale.set(50+i*22,180+i*40,1);rays.add(s);
+    }
+    scene.add(rays);scene._godRays=rays;
+  }
 
   // Water — deeper blue-green, more reflective
   // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
@@ -1433,6 +1452,9 @@ function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT
   const hl=new THREE.SpotLight(0xffeedd,0.6,50,Math.PI*0.15,0.5);hl.position.set(0,1.8,3.5);const hlTarget=new THREE.Object3D();hlTarget.position.set(0,0,15);bMesh.add(hlTarget);hl.target=hlTarget;bMesh.add(hl);bMesh.add(hlTarget);
   // Foam ring under the boat — scales with speed for hull-water contact read
   const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.6,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.35,side:THREE.DoubleSide}));foam.rotation.x=-Math.PI/2;foam.position.y=-0.18;bMesh.add(foam);bMesh.userData.foam=foam;
+  // Caustics shimmer — a wider additive ring that ripples under the boat. Cheap, big mood lift.
+  const caustics=new THREE.Mesh(new THREE.RingGeometry(3.2,5.2,32),new THREE.MeshBasicMaterial({color:0x6fc8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0.25,side:THREE.DoubleSide,depthWrite:false}));
+  caustics.rotation.x=-Math.PI/2;caustics.position.y=-0.16;bMesh.add(caustics);bMesh.userData.caustics=caustics;
   // === Hero accent kit + upgrade-visible parts ===
   // Hero accents pull from the boat color but layer kit on top so each operative reads at a glance.
   const up=boatUpgrades[cls]||{};
@@ -1462,6 +1484,9 @@ function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT
   // ELECTRONICS: tier 1 = small antenna, tier 2 = larger dish
   if((up.electronics||0)>=1){const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,1.6,6),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x113a55,emissiveIntensity:0.7}));ant.position.set(0.5,2.2,-1);bMesh.add(ant)}
   if((up.electronics||0)>=2){const radome=new THREE.Mesh(new THREE.SphereGeometry(0.28,12,8),new THREE.MeshStandardMaterial({color:0x60d0ff,emissive:0x102a44,emissiveIntensity:0.45,transparent:true,opacity:0.85}));radome.position.set(0,3.0,-0.6);bMesh.add(radome)}
+  // Hero rim light — a side point light whose color matches the hero so the hull picks up a colored
+  // rim against the sky/water. Sits low + behind the cabin so it grazes the side of the hull.
+  const heroRim=new THREE.PointLight(t.col,0.55,9);heroRim.position.set(-1.6,1.0,-0.4);bMesh.add(heroRim);
   bMesh.position.set(0,0.3,20);scene.add(bMesh)}
 
 // === WAKE PARTICLES ===
@@ -1794,20 +1819,51 @@ function openDuctChase(){
     <div class="m-kicker" style="color:#ffd23f">??? · IMPOSSIBLE CATCH</div>
     <div class="m-title" style="font-size:22px;display:flex;gap:10px;align-items:center">🦆<span>Duct</span></div>
     <div class="m-sub">Tape on his back, smug look on his face. Reel him in — if you even can. <b style="color:#fbcf3b">Nobody ever has.</b></div>
+    <div style="margin:8px 0 4px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="d-streak">0</span></span></div>
+    <div style="position:relative;height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+      <div id="d-peak" style="position:absolute;top:0;bottom:0;left:46%;width:8%;background:rgba(251,207,59,0.18);border-left:2px dashed rgba(251,207,59,0.6);border-right:2px dashed rgba(251,207,59,0.6)"></div>
+      <div id="d-bob" style="position:absolute;top:50%;left:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#ffd23f 70%,#b8860b);box-shadow:0 0 12px rgba(251,207,59,0.8)"></div>
+    </div>
     <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 70%,#f59e0b 86%,#ef4444 100%);overflow:hidden;margin:10px 0">
       <div id="d-band" style="position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
       <div id="d-ten" style="position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div>
     </div>
     <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
     <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="d-prog" style="height:100%;width:0%;background:#ffd23f;transition:width 0.05s"></div></div>
-    <button class="btn bp" id="d-reel" style="background:linear-gradient(135deg,#ffd23f,#b8860b);color:#1a1a2e;user-select:none">HOLD TO REEL (Space)</button>
+    <button class="btn bp" id="d-reel" style="background:linear-gradient(135deg,#ffd23f,#b8860b);color:#1a1a2e;user-select:none">HOLD TO REEL (Space) · TAP <b>B</b> ON BOBBER PEAK</button>
     <button class="btn bx" id="d-cut">Give Up</button>`;
-  const bandEl=$('d-band'),tenEl=$('d-ten'),progEl=$('d-prog');
+  const bandEl=$('d-band'),tenEl=$('d-ten'),progEl=$('d-prog'),bobEl=$('d-bob'),streakEl=$('d-streak');
   bandEl.style.left=((bandCenter-bandHalf)*100)+'%';bandEl.style.width=(bandHalf*2*100)+'%';
   const reelBtn=$('d-reel');const setReel=v=>{reeling=v;reelBtn.style.filter=v?'brightness(1.2)':'none'};
   reelBtn.onmousedown=()=>setReel(true);reelBtn.onmouseup=()=>setReel(false);reelBtn.onmouseleave=()=>setReel(false);
   reelBtn.ontouchstart=e=>{e.preventDefault();setReel(true)};reelBtn.ontouchend=e=>{e.preventDefault();setReel(false)};
-  const keyH=e=>{if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown')}};
+  // === BOBBER-BOUNCE rhythm sub-game ===
+  // A bobber dot rides a sine across the bar; the peak window is the dashed gold zone (46-54%).
+  // Tap B (or click the bobber) inside the window for a progress bonus + a streak counter. Misses
+  // shave progress slightly. Phase + frequency reroll on hit/miss so the rhythm is "always changing"
+  // — keeps each Duct encounter feeling fresh.
+  let bobT=0,bobFreq=1.2+Math.random()*0.6,bobPhase=Math.random()*Math.PI*2,streak=0;
+  const bobPos=()=>{const s=Math.sin(bobT*bobFreq+bobPhase);return 0.5+s*0.45};  // 0.05..0.95
+  const inPeak=()=>{const p=bobPos();return p>=0.46&&p<=0.54};
+  const tapBobber=()=>{
+    if(over)return;
+    if(inPeak()){
+      // Hit — small progress kick + streak. Streak amplifies subsequent kicks slightly.
+      streak++;progress=Math.min(99.5,progress+1.6+Math.min(streak,6)*0.4);
+      sfx('ping');bobEl.style.filter='brightness(2)';setTimeout(()=>{if(bobEl)bobEl.style.filter='none'},120);
+      bobFreq=1.0+Math.random()*0.9;bobPhase=Math.random()*Math.PI*2;
+    }else{
+      // Miss — light penalty + streak reset.
+      streak=0;progress=Math.max(0,progress-1.0);sfx('hit');
+      bobFreq=0.9+Math.random()*1.1;bobPhase=Math.random()*Math.PI*2;
+    }
+    if(streakEl)streakEl.textContent=streak;
+  };
+  bobEl&&(bobEl.onclick=tapBobber);
+  const keyH=e=>{
+    if(e.code==='Space'){e.preventDefault();setReel(e.type==='keydown');return}
+    if(e.code==='KeyB'&&e.type==='keydown'){e.preventDefault();tapBobber()}
+  };
   document.addEventListener('keydown',keyH);document.addEventListener('keyup',keyH);
   $('d-cut').onclick=()=>endDuct({k:'giveup',line:'Let him go. He was never gonna let YOU win.'},progress);
   const tick=setInterval(()=>{
@@ -1818,6 +1874,8 @@ function openDuctChase(){
     peaked=Math.max(peaked,progress);
     if(inBand&&Math.random()<0.25)sfx('click');
     tenEl.style.left=(tension*100)+'%';progEl.style.width=progress+'%';
+    // Bobber bob: 50ms tick → ~20Hz position update, freq tuned so a full oscillation is ~1s.
+    bobT+=0.05;if(bobEl)bobEl.style.left=(bobPos()*100)+'%';
     // Rig the escape: once the bar reaches this archetype's threshold, he bolts.
     if(progress>=esc.at*100){over=true;sfx('quack');runDuctEscapeAnim(esc.k);endDuct(esc,peaked)}
   },50);
@@ -2077,7 +2135,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Speed-rim: bloom the foam ring opacity slightly above 0.6 throttle for that "burst out of the
     // hull" rim feel. Cheap — modulates an existing mesh, no new geometry.
     const rim=sp>0.6?(sp-0.6)*0.7:0;
-    f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05)}
+    f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05);
+    // Caustics: a wider additive ring that ripples + rotates slowly under the boat.
+    if(bMesh.userData.caustics){const c=bMesh.userData.caustics;const cs=1+sp*0.4+Math.sin(t*1.7)*0.05;
+      c.scale.set(cs,cs,cs);c.rotation.z=t*0.3;c.material.opacity=0.18+Math.sin(t*2.2)*0.08+sp*0.1}}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
   // _dayOffset lets the QA hook jump the cycle (e.g. force night for a screenshot) without waiting.
   if(scene._sunDisc&&scene._sun){
@@ -2101,6 +2162,20 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(scene._moon){const on=nightAmt>0.02;const mx=-sunX,my=Math.max(40,-sunY+90);
       [scene._moon,scene._moonHalo].forEach(s=>{if(s){s.visible=on;s.position.set(mx,my,-300)}});
       if(on){scene._moon.material.opacity=nightAmt*0.95;if(scene._moonHalo)scene._moonHalo.material.opacity=nightAmt*0.35}}
+    // God rays — three soft cones flaring down from the sun. Only on Clear days and during the
+    // golden-hour window when the sun's angle is shallow (dayness 0.05..0.55), where shafts read.
+    if(scene._godRays&&gfxQuality!=='low'){
+      const clearWx=S.wx.c==='Clear';
+      const golden=Math.max(0,Math.min(1,(0.55-Math.abs(dayness-0.3))/0.55));  // peak at dayness=0.3
+      const op=clearWx?golden*0.45:0;
+      const ahead=cam?cam.position:bMesh.position;
+      scene._godRays.position.set(sunX*0.4+ahead.x*0.3,18,sunY*0.4-90);
+      scene._godRays.rotation.z=Math.atan2(sunX,sunY)*0.4;
+      for(let i=0;i<scene._godRays.children.length;i++){
+        const s=scene._godRays.children[i];s.material.opacity=op*(1-i*0.22);
+        s.position.x=Math.sin(t*0.3+i)*4;
+      }
+    }
     if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
       // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
       if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}

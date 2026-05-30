@@ -70,7 +70,15 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Moon-glint**: the water glint now switches from warm sun (day) to cool moonlight (night) instead of vanishing.
 - **Water reflection**: PMREM env map (tiny sky gradient) on the water material only — metalness water now mirrors a believable sky instead of black. Defensive `try/catch` so it no-ops on backends that can't build it.
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
-- **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot). Smoke now asserts 12 checks incl. night-sky meshes exist.
+- **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
+
+### Round 4 — Duct bobber-bounce + god rays + caustics + hero rim + forage polish
+- **Duct bobber-bounce rhythm sub-game**: a gold bobber oscillates on a sine inside a separate bar above the tension band; the dashed window at 46–54% is the peak target. **Tap `B`** (or click the bobber) when it's in the window for a progress bonus + streak counter; misses subtract progress and reset the streak. **Phase + frequency reroll on every tap**, so the rhythm is "always changing" — each Duct fight feels distinct.
+- **God-ray light shafts**: 3 soft additive sprite cones radiating down from the sun. Peak opacity during golden-hour window (dayness 0.05–0.55), Clear weather only, skipped on Low gfx. Sway slowly on `t`.
+- **Caustics shimmer**: a wider additive ring under the boat (`bMesh.userData.caustics`) that ripples + rotates with `t`; opacity grows slightly with speed. Reads as light-through-water.
+- **Hero rim lighting**: per-hero colored `PointLight` mounted low + behind the cabin so the hull picks up a colored side-rim against the sky/water (matches `BT[cls].col`).
+- **Forage worm-dig polish**: radial-gradient backdrop + grain stippling + dug-out highlight rings, replacing the flat brown canvas.
+- Smoke now asserts **13 checks** (bobber UI element present on Duct chase).
 
 ---
 

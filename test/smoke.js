@@ -114,6 +114,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_night.png')}).catch(()=>{});
     console.log('· night sky renders');
 
+    // 7. Bobber-bounce sub-game: open a Duct chase and confirm the bobber UI exists.
+    await p.evaluate(()=>DS.qaSpawnDuct());await sleep(200);
+    await p.evaluate(()=>DS.duct());await sleep(400);
+    const bobberHud=await p.evaluate(()=>!!document.getElementById('d-bob')&&!!document.getElementById('d-streak'));
+    if(!bobberHud)fail('Duct bobber-bounce UI missing');
+    await p.keyboard.press('Escape');await sleep(300);
+    console.log('· duct bobber-bounce UI renders');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
