@@ -17,6 +17,21 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Biggest single fish ever landed across all runs — surfaced in the Codex + trophy peek.
+let bestFish=null;
+// Per-day Duct sighting/attempt log (lore: "the pier keeps notes"). Keyed by YYYY-MM-DD,
+// each entry is {s,a,n} for sightings/attempts/near-catches. logDuct() bumps + trims to ~30 days.
+let ductLog={};
+// One-time tutorial flag — set to true after the player dismisses the first overlay so it never
+// shows again. Persisted so it survives reloads. Each kind ('cast', 'duct') is shown at most once.
+let tutorialSeen={};
+function logDuct(kind){
+  const day=new Date().toISOString().slice(0,10);
+  if(!ductLog[day])ductLog[day]={s:0,a:0,n:0};
+  if(kind==='sighting')ductLog[day].s++;else if(kind==='attempt')ductLog[day].a++;else if(kind==='near')ductLog[day].n++;
+  // Trim to the last 30 days so the blob doesn't grow unbounded.
+  const keys=Object.keys(ductLog).sort();while(keys.length>30){delete ductLog[keys.shift()]}
+}
 // Lifetime bait spent at any shop counts toward loyalty discount tiers:
 //   0     → 0% off, "Drifter"
 //   500   → 3% off, "Regular"
@@ -153,6 +168,9 @@ function loadSave(){
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
     (d.ach||[]).forEach(n=>achievements.add(n));
     bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;loyaltySpent=d.loyalty||0;
+    if(d.bestFish&&typeof d.bestFish==='object')bestFish=d.bestFish;
+    if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
+    if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
     if(d.duct)Object.assign(ductStats,d.duct);
@@ -166,7 +184,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,loyalty:loyaltySpent}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,loyalty:loyaltySpent,bestFish,ductLog,tutorialSeen}))}catch(e){}
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
@@ -1601,7 +1619,7 @@ function spawnDuct(){
   DUCT.x=Math.cos(a)*r;DUCT.z=Math.sin(a)*r;DUCT.vx=(Math.random()-0.5)*0.05;DUCT.vz=(Math.random()-0.5)*0.05;
   DUCT.t0=Date.now()*0.001;DUCT.life=35+Math.random()*20;DUCT.active=true;DUCT.engaged=false;DUCT.wing.visible=false;
   DUCT.mesh.position.set(DUCT.x,0,DUCT.z);DUCT.mesh.visible=true;
-  ductStats.sightings++;persist();onUnlock('duct_sighting');
+  ductStats.sightings++;logDuct('sighting');persist();onUnlock('duct_sighting');
   radio('…is that a rubber duck? Tape on its back and everything. Get over there.','fly');
   sfx('quack');
 }
@@ -1953,6 +1971,7 @@ function castLine(){
   if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
   if(_castInFlight)return false;
+  if(!tutorialSeen.cast&&showTutorial('cast'))return false;  // first cast shows the tutorial first
   // Don't start a cast right on top of a beacon — the proximity trigger would open the mission and
   // cancel the cast anyway. Tell the player to back off the marker.
   if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
@@ -1990,6 +2009,8 @@ function landFish(fish,spot){
   runCatches.push(fish);
   if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
   if(fish.gator)onUnlock('gator_wrangler');
+  // Persist the biggest single catch ever (by score value) — surfaced in the Codex + trophy peek.
+  if(!bestFish||fish.s>(bestFish.s||0)){bestFish={n:fish.n,e:fish.e,r:fish.r,s:fish.s,date:new Date().toISOString().slice(0,10)};persist()}
   sfx(fish.r==='legendary'?'legendary':'catch');
   // Per-hero catch chatter — picks the right voice key by rarity / type so the operative reacts in
   // their own voice. Falls back to the legacy generic line if a voice key is missing.
@@ -2106,8 +2127,9 @@ const DUCT_ESCAPES=[
 ];
 function openDuctChase(){
   if(!DUCT.active)return;
+  if(!tutorialSeen.duct&&showTutorial('duct'))return;  // first Duct encounter shows the tutorial first
   DUCT.engaged=true;const esc=DUCT_ESCAPES[Math.floor(Math.random()*DUCT_ESCAPES.length)];
-  ductStats.attempts++;persist();
+  ductStats.attempts++;logDuct('attempt');persist();
   if(ductStats.attempts>=10)onUnlock('duct_ten_attempts');
   if(ductStats.attempts>=25)onUnlock('duct_25_attempts');
   const p=$('duct-prompt');if(p)p.style.display='none';
@@ -2187,7 +2209,7 @@ function openDuctChase(){
   const stop=()=>{over=true;clearInterval(tick);document.removeEventListener('keydown',keyH);document.removeEventListener('keyup',keyH)};
   function endDuct(e,peakPct){
     stop();
-    if(peakPct>=60){ductStats.nearCatches++;onUnlock('duct_near_miss')}
+    if(peakPct>=60){ductStats.nearCatches++;logDuct('near');onUnlock('duct_near_miss')}
     if(ductStats.nearCatches>=3)onUnlock('duct_three_near');
     // Non-persistent toast variant when the chase ended very close — uses the same queue as
     // achievements so it doesn't clobber a real unlock toast fired in the same frame.
@@ -2501,6 +2523,28 @@ function showAchToast(a){
   t.style.display='block';t.style.opacity='1';
   clearTimeout(showAchToast._t);showAchToast._t=setTimeout(()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0')t.style.display='none'},400)},3800);
 }
+// === ONE-TIME TUTORIAL OVERLAY ===
+// Shown the first time a player encounters a key system (cast / Duct chase). Dismissible, persists
+// the seen flag so it never reappears. Reuses the #mini overlay (transparent backdrop) for layout.
+const TUTORIALS={
+  cast:{title:'How to Fish',body:'Press <b style="color:#fbcf3b">F</b> when you\'re stopped to cast. During the fight, <b style="color:#fbcf3b">hold SPACE</b> to reel — keep the tension cursor in the green band. Tap <b style="color:#fbcf3b">B</b> on the gold bobber peak for a bonus.'},
+  duct:{title:'Duct in Sight',body:'Press <b style="color:#fbcf3b">F</b> to engage Duct. He\'s <b style="color:#fbcf3b">never been caught</b>. Get as close as you can — the bobber rhythm + a <b style="color:#ffd23f">Duct Tape Lure</b> from the tackle bench widen your peak window.'},
+  forage:{title:'Foraging',body:'Beach the boat at a shore camp (press <b style="color:#fbcf3b">G</b> when slow + close). Each camp has 1-2 mini-games for bait. Stock the pantry to equip + bias your catch rolls.'}
+};
+function showTutorial(kind){
+  if(tutorialSeen[kind])return false;
+  const t=TUTORIALS[kind];if(!t)return false;
+  tutorialSeen[kind]=true;persist();
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return false;
+  miniActive=true;_peekOpen=true;S.on=false;
+  card.innerHTML=`<div class="m-kicker" style="color:#fb923c">First Time · ${t.title}</div>
+    <div class="m-title">${t.title}</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">${t.body}</div>
+    <div style="margin-top:10px;font:10px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase">Settings · Controls tab has the full keymap</div>
+    <button class="btn bp" onclick="DS.closePeek()" style="margin-top:14px;background:linear-gradient(135deg,#fb923c,#9a3a10)">Got it</button>`;
+  el.style.display='flex';
+  return true;
+}
 
 // === HULL-DAMAGE VISUAL FEEDBACK ===
 // Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
@@ -2628,7 +2672,14 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(!frozen&&Math.abs(spd)>0.03){if(keys.ArrowLeft||keys.KeyA||tch.rX>0.1)aV+=bt.tu*wxP*hullP*(keys.ArrowLeft||keys.KeyA?1:tch.rX);if(keys.ArrowRight||keys.KeyD||tch.rX<-0.1)aV-=bt.tu*wxP*hullP*(keys.ArrowRight||keys.KeyD?1:Math.abs(tch.rX))}
     aV*=0.88;bMesh.rotation.y+=aV;
     const dir=_vDir.set(0,0,-1).applyAxisAngle(_yAxis,bMesh.rotation.y);prev.copy(bMesh.position);
-    bMesh.position.addScaledVector(dir,spd);bMesh.position.y=0.3+Math.sin(t*2.2)*0.2+Math.sin(t*1.3+0.5)*0.1;bMesh.rotation.z=-aV*2.5;bMesh.rotation.x=spd*0.05;
+    bMesh.position.addScaledVector(dir,spd);
+    // Per-hero idle bob personality — Reel is balanced (default), Lilly is the wide pontoon (slow,
+    // higher bob amplitude), Fly is the knife-bow speedboat (quicker, lower amplitude, tighter sway).
+    const hp=S.bc==='pontoon'?{bobA:0.28,bobF:1.6,sway:0.06}:S.bc==='speedboat'?{bobA:0.14,bobF:2.6,sway:0.10}:{bobA:0.20,bobF:2.2,sway:0.08};
+    const stillness=Math.max(0,1-Math.abs(spd)*5);  // 1 when fully stopped, 0 at speed → extra sway when docked
+    bMesh.position.y=0.3+Math.sin(t*hp.bobF)*hp.bobA+Math.sin(t*1.3+0.5)*0.1;
+    bMesh.rotation.z=-aV*2.5+Math.sin(t*0.8)*hp.sway*stillness;
+    bMesh.rotation.x=spd*0.05+Math.cos(t*0.7)*hp.sway*0.5*stillness;
     const wr=S.wx.wd*Math.PI/180;bMesh.position.x+=Math.sin(wr)*S.wx.ws*0.0008*bt.wx;bMesh.position.z+=Math.cos(wr)*S.wx.ws*0.0008*bt.wx;
     // Blackwater surge — only in THE SHALLOWS, every ~4-7s, shoves the boat sideways
     if(S.phase>=1&&t-S.lastSurge>4+(S.surgeRand||3)){S.lastSurge=t;S.surgeRand=Math.random()*3;const sa=Math.random()*Math.PI*2;bMesh.position.x+=Math.cos(sa)*2;bMesh.position.z+=Math.sin(sa)*2;$('ww').textContent='BLACKWATER SURGE';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='BLACKWATER SURGE')$('ww').style.display='none'},1400);radio(HERO[S.bc].voice.surge,'reel');wet.add(14);sfx('splash_big');_shake=Math.max(_shake,0.55)}
@@ -2972,6 +3023,25 @@ async function launchGame(){
 document.body.classList.add('mode-'+GAME_MODE);
 initEngine();wet.init();refreshTrophyPeek();applyGfx();
 {const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
+// First-load cinematic intro — 6-second title fade over the existing idle-cam sweep. Shown once
+// (gated by tutorialSeen.intro) so returning players don't sit through it. The idle camera is
+// already orbiting the lake whenever S.on is false, so we just layer a title card on top.
+if(GAME_MODE==='game'&&!tutorialSeen.intro){
+  tutorialSeen.intro=true;persist();
+  const el=document.createElement('div');el.id='intro-card';
+  el.style.cssText='position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;background:radial-gradient(ellipse at center,rgba(2,6,18,0.55) 0%,rgba(2,6,18,0.95) 100%);color:#fbcf3b;font-family:DM Sans,sans-serif;opacity:0;transition:opacity 0.8s ease-out;pointer-events:auto;cursor:pointer';
+  el.innerHTML=`
+    <div style="font:700 12px JetBrains Mono,monospace;letter-spacing:4px;color:#94a3b8;text-transform:uppercase;margin-bottom:12px">A Castor Bayou Story</div>
+    <div style="font:800 56px DM Sans,sans-serif;letter-spacing:1px;text-shadow:0 4px 30px rgba(0,0,0,0.7)">DockShield</div>
+    <div style="font:600 22px DM Sans,sans-serif;color:#fb923c;margin-top:6px;letter-spacing:6px;text-transform:uppercase">The Depth</div>
+    <div style="margin-top:36px;font:11px JetBrains Mono,monospace;color:#64748b;letter-spacing:1.5px">something is rising below the waterline</div>`;
+  document.body.appendChild(el);
+  // Fade in → hold → fade out → remove. Total ~6s; user can skip by clicking anywhere.
+  requestAnimationFrame(()=>{el.style.opacity='1'});
+  const fadeOut=()=>{el.style.opacity='0';setTimeout(()=>el.remove(),900)};
+  const t1=setTimeout(fadeOut,5200);
+  document.addEventListener('click',()=>{clearTimeout(t1);fadeOut()},{once:true,passive:true});
+}
 // Two-tap confirm — first press arms the button (turns solid red, label "TAP TO CONFIRM"),
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
@@ -3000,6 +3070,8 @@ function dockShop(shop){if(S.on){S.on=false;_shopResumeRun=true}const p=$('shop-
 function dockCamp(camp,mesh){
   if(S.on){S.on=false;_shopResumeRun=true}
   const p=$('forage-prompt');if(p)p.style.display='none';
+  // First forage: show the tutorial overlay instead of the picker — closing it reveals the picker.
+  if(!tutorialSeen.forage&&showTutorial('forage')){_shopResumeRun=true;return}
   sfx('win');radio('Beached at '+camp.n+'. Dig in.','self');
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
@@ -3104,10 +3176,19 @@ function openShop(shop){
         return `<div style="text-align:right;font:10px 'JetBrains Mono',monospace;line-height:1.4"><span style="color:${t.pct>0?'#10b981':'#94a3b8'};letter-spacing:1px;text-transform:uppercase">${t.name}${t.pct>0?` · -${(t.pct*100|0)}%`:''}</span>${nxt?`<br><span style="color:#64748b">Next: ${nxt.name} at ${nxt.at} spent (${nxt.at-loyaltySpent} to go)</span>`:''}</div>`;
       })()}
     </div>
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Bait Pantry · equip one for your next casts</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 4px">
+      <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Bait Pantry · equip one for your next casts</div>
+      <div style="display:flex;gap:3px">
+        ${['all','foraged','crafted'].map(t=>`<button class="pantry-tab" data-t="${t}" style="background:${_pantryTab===t?'rgba(251,207,59,0.2)':'rgba(3,7,18,0.5)'};border:1px solid ${_pantryTab===t?'#fbcf3b':'rgba(30,41,59,0.6)'};color:${_pantryTab===t?'#fbcf3b':'#94a3b8'};font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;padding:4px 8px;border-radius:4px;cursor:pointer">${t.toUpperCase()}</button>`).join('')}
+      </div>
+    </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
-      <button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>
-      ${Object.entries(BAIT_TYPES).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
+      ${_pantryTab!=='crafted'?`<button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>`:''}
+      ${Object.entries(BAIT_TYPES).filter(([k,bt])=>{
+        if(_pantryTab==='all')return true;
+        const isCrafted=bt.crafted||bt.isLure;
+        return _pantryTab==='crafted'?isCrafted:!isCrafted;
+      }).map(([k,bt])=>{const have=baitInv[k]||0;const eq=equippedBait===k;return `<button class="btn bait-equip" data-k="${k}" style="background:${eq?bt.c:'rgba(3,7,18,0.5)'};border:1px solid ${bt.c}55;color:${eq?'#02060f':bt.c};width:auto;padding:6px 10px;margin:0;font-size:11px"${have<=0?' disabled':''} title="${bt.desc}">${bt.e} ${bt.n} <span style="opacity:0.65">×${have}</span></button>`}).join('')}
     </div>
     ${(()=>{
       // Generic crafting block — renders one row per CRAFT_RECIPES entry the player has either
@@ -3135,6 +3216,7 @@ function openShop(shop){
   const reopen=()=>openShop(shop);
   card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
+  card.querySelectorAll('.pantry-tab').forEach(b=>b.onclick=()=>{_pantryTab=b.dataset.t;reopen()});
   card.querySelectorAll('.recipe-craft').forEach(b=>b.onclick=()=>{
     const r=CRAFT_RECIPES.find(x=>x.id===b.dataset.rid);if(!r)return;
     if(!Object.entries(r.in).every(([k,n])=>(baitInv[k]||0)>=n))return;
@@ -3151,11 +3233,29 @@ function openShop(shop){
 
 // Stubs — real bodies land in dedicated commits below. They render a placeholder card so the
 // buttons don't no-op in this commit while the bait-economy ships first.
+// Category buckets for the achievements UI — id prefix determines the category bin.
+// Anything not matched falls into 'misc'. Order here defines the render order.
+const ACH_CATEGORIES=[
+  {id:'fishing',name:'Fishing',col:'#10b981',ids:['first_catch','first_release','legendary_landed','gator_wrangler','bait_baron','codex_half','codex_full']},
+  {id:'duct',name:'Duct',col:'#ffd23f',ids:['duct_sighting','duct_near_miss','duct_ten_attempts','duct_25_attempts','duct_three_near','duct_lure_crafted']},
+  {id:'rescue',name:'Rescue',col:'#fb923c',ids:['five_missions','full_extraction','home_repaired','deep_dock','boss_clean','gator_king','storm_survivor']},
+  {id:'gear',name:'Gear & Boat',col:'#60d0ff',ids:['first_gear','fully_decked','first_upgrade','boat_maxed']},
+  {id:'forage',name:'Foraging & Craft',col:'#a47a52',ids:['first_forage','worm_farmer','pantry_stocked','first_craft']}
+];
 function openAchievements(){const card=$('mini-card'),el=$('mini');if(!card||!el)return;miniActive=true;_peekOpen=true;
-  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
   const all=Object.entries(ACH);
-  const rows=all.map(([id,a])=>{const u=achievements.has(id);return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(3,7,18,0.45);border-radius:8px;margin:4px 0;opacity:${u?1:0.45}"><div style="font-size:22px">${u?'🏅':'🔒'}</div><div><div style="font:700 12.5px 'DM Sans',sans-serif;color:${u?'#fbcf3b':'#94a3b8'}">${a.n}</div><div style="font-size:11px;color:#94a3b8;line-height:1.4">${a.d}</div></div></div>`}).join('');
-  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${rows}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  const got=[...achievements].map(id=>ACH[id]).filter(Boolean);
+  // Assign every entry to a category; ids that don't show up in any bucket fall into 'misc'.
+  const seen=new Set();
+  const cats=ACH_CATEGORIES.map(c=>({...c,rows:c.ids.filter(id=>ACH[id]).map(id=>{seen.add(id);return [id,ACH[id]]})}));
+  const misc=all.filter(([id])=>!seen.has(id));
+  if(misc.length)cats.push({id:'misc',name:'Misc',col:'#94a3b8',rows:misc});
+  const renderRow=([id,a])=>{const u=achievements.has(id);return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(3,7,18,0.45);border-radius:8px;margin:4px 0;opacity:${u?1:0.45}"><div style="font-size:22px">${u?'🏅':'🔒'}</div><div><div style="font:700 12.5px 'DM Sans',sans-serif;color:${u?'#fbcf3b':'#94a3b8'}">${a.n}</div><div style="font-size:11px;color:#94a3b8;line-height:1.4">${a.d}</div></div></div>`};
+  const catBlocks=cats.filter(c=>c.rows.length).map(c=>{
+    const unlocked=c.rows.filter(([id])=>achievements.has(id)).length;
+    return `<div style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:center;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;color:${c.col};margin-bottom:4px"><span>${c.name}</span><span style="color:#64748b;font-weight:400">${unlocked}/${c.rows.length}</span></div>${c.rows.map(renderRow).join('')}</div>`;
+  }).join('');
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Achievements</div><div class="m-title">${got.length} / ${all.length} unlocked.</div><div class="m-sub">Earned across all your sessions.</div>${catBlocks}<button class="btn bx" onclick="DS.closePeek()" style="margin-top:14px">Close</button>`;
   el.style.display='flex';
 }
 // Settings tab state — persists across reopens so the player isn't jolted back to the first tab.
@@ -3216,6 +3316,8 @@ function applyGfx(){
 
 // Codex search/filter state — persists across reopens like the settings tab does.
 let _codexQ='',_codexTier='all';
+// Bait pantry filter — All / Foraged (worm/cricket/frog/minnow/crayfish) / Crafted (BAIT_TYPES.crafted/isLure).
+let _pantryTab='all';
 function openCodex(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
@@ -3238,6 +3340,11 @@ function openCodex(){
     <div class="m-kicker" style="color:#60d0ff">Fish Codex</div>
     <div class="m-title">${caught} / ${total} species landed.</div>
     <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
+    ${bestFish?`<div style="display:flex;align-items:center;gap:10px;background:rgba(${bestFish.r==='legendary'?'255,210,63':bestFish.r==='rare'?'139,92,246':'16,185,129'},0.08);border:1px solid ${RARE_COLOR[bestFish.r]||'#475569'}55;border-radius:8px;padding:8px 12px;margin:8px 0">
+      <div style="font-size:22px">${bestFish.e||'🏆'}</div>
+      <div style="flex:1;min-width:0"><div style="font:9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase">Trophy · biggest ever</div>
+      <div style="color:${RARE_COLOR[bestFish.r]||'#e8edf5'};font-weight:600;font-size:13px">${bestFish.n} <span style="color:#fde68a">+${bestFish.s}</span> <span style="color:#64748b;font-size:10px">· ${bestFish.date||''}</span></div></div>
+    </div>`:''}
     <div style="display:flex;gap:6px;margin:10px 0 4px;align-items:center">
       <input id="cdx-q" type="text" placeholder="Search species…" value="${_codexQ}" style="flex:1;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.25);color:#e8edf5;border-radius:6px;padding:7px 10px;font:12px 'DM Sans',sans-serif">
       ${_codexQ?'<button id="cdx-clear" title="Clear search" style="background:rgba(3,7,18,0.5);border:1px solid rgba(30,41,59,0.5);color:#94a3b8;border-radius:6px;padding:5px 10px;cursor:pointer">✕</button>':''}
@@ -3252,10 +3359,28 @@ function openCodex(){
     </div>
     ${allEmpty?`<div style="text-align:center;padding:24px;color:#64748b;font:12px 'DM Sans',sans-serif">No species match the current filter.</div>`:`${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}`}
     <div style="margin:12px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#ffd23f;text-transform:uppercase">??? · The Impossible</div>
-    <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
+    <div style="display:flex;align-items:flex-start;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
       <div style="font-size:26px;filter:grayscale(0.3)">🦆</div>
-      <div><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
-      <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div></div>
+      <div style="flex:1;min-width:0"><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
+      <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div>
+      ${(()=>{
+        // 14-day sparkline. Each day = 3 stacked thin bars (sightings/attempts/near-catches),
+        // height proportional to that day's count vs the period max. Lore: "the pier keeps notes."
+        const today=new Date();const days=[];for(let i=13;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.toISOString().slice(0,10))}
+        const entries=days.map(d=>ductLog[d]||{s:0,a:0,n:0});
+        const max=Math.max(1,...entries.map(e=>Math.max(e.s,e.a,e.n)));
+        if(max<=1&&Object.keys(ductLog).length===0)return '';  // hide chart until there's data
+        return `<div style="margin-top:8px;font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px;text-transform:uppercase">Pier's Notes · last 14 days</div>
+          <div style="display:flex;align-items:flex-end;gap:1px;height:34px;padding:2px 0;border-bottom:1px solid rgba(251,207,59,0.2)">
+            ${entries.map(e=>`<div title="${days[entries.indexOf(e)]} · sightings ${e.s} · attempts ${e.a} · near ${e.n}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%">
+              ${e.n>0?`<div style="height:${(e.n/max)*30}px;background:#10b981"></div>`:''}
+              ${e.a>0?`<div style="height:${(e.a/max)*30}px;background:#fbcf3b"></div>`:''}
+              ${e.s>0?`<div style="height:${(e.s/max)*30}px;background:rgba(251,207,59,0.4)"></div>`:''}
+            </div>`).join('')}
+          </div>
+          <div style="display:flex;gap:10px;margin-top:3px;font:9px 'JetBrains Mono',monospace;color:#64748b"><span><span style="display:inline-block;width:8px;height:8px;background:rgba(251,207,59,0.4)"></span> sighting</span><span><span style="display:inline-block;width:8px;height:8px;background:#fbcf3b"></span> attempt</span><span><span style="display:inline-block;width:8px;height:8px;background:#10b981"></span> near</span></div>`;
+      })()}
+      </div>
     </div>
     ${(()=>{
       // Duct Tape Lure — Codex entry. Locked until crafted at least once.

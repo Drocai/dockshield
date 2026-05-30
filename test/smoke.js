@@ -31,7 +31,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     p.on('console',m=>{if(m.type()==='error')errs.push('CE: '+m.text())});
     // Backward-compat: seed a save_v1 blob WITHOUT the polish-v2 fields (audioVol/shakeMul).
     // After load, those fields should default in cleanly without throwing.
-    await p.addInitScript(()=>{try{localStorage.setItem('dockshield_save_v1',JSON.stringify({bait:100,best:200,muted:false}))}catch(e){}});
+    // Seed a save_v1 missing the polish-v2 fields, but with all tutorial flags set so the smoke
+    // doesn't get interrupted by first-time overlays. Lets us still assert backward-compat below.
+    await p.addInitScript(()=>{try{localStorage.setItem('dockshield_save_v1',JSON.stringify({bait:100,best:200,muted:false,tutorialSeen:{cast:true,duct:true,forage:true,intro:true}}))}catch(e){}});
     await p.goto(`http://127.0.0.1:${PORT}/?qa=1`,{waitUntil:'load',timeout:20000});
     await p.waitForFunction(()=>typeof DS!=='undefined',{timeout:10000});
     await sleep(1200);
@@ -236,8 +238,35 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await sleep(300);
     const tierShown=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return /Drifter|Regular|Local|Old Salt/.test(h)});
     if(!tierShown)fail('Loyalty tier name missing from shop UI');
+    // 19. Pantry tabs (All / Foraged / Crafted) exist + clicking Crafted filters the list.
+    const pantryTabs=await p.evaluate(()=>document.querySelectorAll('.pantry-tab').length);
+    if(pantryTabs<3)fail('Pantry tabs missing — expected 3, got '+pantryTabs);
+    await p.evaluate(()=>document.querySelector('.pantry-tab[data-t="crafted"]').click());await sleep(200);
+    const craftedFilter=await p.evaluate(()=>!document.getElementById('mini-card').innerHTML.includes('Bare hook'));
+    if(!craftedFilter)fail('Pantry crafted-tab did not hide the Bare hook button');
     await p.keyboard.press('Escape');await sleep(200);
-    console.log('· loyalty tier surfaced');
+    console.log('· loyalty tier + pantry tabs');
+
+    // 20. Achievements UI groups by category headers.
+    await p.evaluate(()=>DS.openAchievements());await sleep(300);
+    const achGrouped=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Fishing')&&h.includes('Duct')&&/Gear\s*(&amp;|&)\s*Boat/.test(h)});
+    if(!achGrouped)fail('Achievements UI missing category headers');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· achievements grouped by category');
+
+    // 21. Codex biggest-fish trophy + Duct sparkline render when data is present.
+    await p.evaluate(()=>{
+      // Seed a best fish + log a few Duct events so the chart has data.
+      DS.qaSpawnDuct();
+    });
+    await sleep(150);
+    await p.evaluate(()=>{DS.qaDuctEscape('slip');DS.qaDuctEscape('dive');});
+    await sleep(200);
+    await p.evaluate(()=>DS.openCodex());await sleep(300);
+    const ductChart=await p.evaluate(()=>document.getElementById('mini-card').innerHTML.includes("Pier's Notes"));
+    if(!ductChart)fail('Codex Duct sparkline missing');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· codex biggest-fish + duct chart');
 
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);

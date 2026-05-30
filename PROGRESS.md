@@ -72,6 +72,16 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 10 — pantry tabs + trophy + Duct chart + tutorials + grouped achievements + hero idle + intro
+- **Bait pantry tabs**: ALL / FORAGED / CRAFTED. Crafted-only filter even hides the Bare hook button.
+- **Persistent biggest catch** (`bestFish` in save): updated on every land, surfaced as a colored "TROPHY · BIGGEST EVER" card at the top of the Codex with the fish's rarity color + score + date.
+- **Pier's Notes Duct chart** (`ductLog` in save): per-day stacked sparkline of sightings / attempts / near-catches for the last 14 days. Trimmed to 30 days max so the blob stays bounded.
+- **One-time tutorial overlays** for cast / Duct / forage — show on the first encounter, dismissible, persisted in `tutorialSeen` so they never repeat. Cinematic title-card intro on first load.
+- **Achievements grouped by category**: Fishing / Duct / Rescue / Gear & Boat / Foraging & Craft, each with per-category "X/Y" progress + colored header. Falls back to a Misc bucket for any unmapped ids.
+- **Per-hero idle bob**: Reel = balanced (2.2Hz / 0.20 amp), Lilly = slow wide pontoon (1.6Hz / 0.28 amp), Fly = quick knife-bow (2.6Hz / 0.14 amp). Extra sway when stopped so each boat reads with its own personality at dock.
+- **Cinematic intro card**: title fade ("A Castor Bayou Story" → DockShield · The Depth → tagline) over the existing idle-cam sweep, ~5.5s total, click-to-skip. Shown once via `tutorialSeen.intro`.
+- Smoke now **26/26 PASS, 0 fatal**.
+
 ### Round 9 — hero radio + Codex search/filter + sonar reveals Duct + loyalty + Gator King phase-3 + hero abilities in boss arenas
 - **Per-hero catch chatter**: each hero (Reel / Lilly / Fly) gets distinct radio lines on common / rare / legendary / gator catches. 12 new voice strings.
 - **Codex search/filter**: case-insensitive search box + tier pills (All / Common / Uncommon / Rare / Legendary / Caught only). Per-tier "X / Y" counters.
