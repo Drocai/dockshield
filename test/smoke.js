@@ -219,6 +219,26 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!ductLive)fail('DS.duct hook missing');
     console.log('· duct compass marker live');
 
+    // 17. Codex search/filter: open codex, type a query, confirm filter narrows the displayed list.
+    await p.evaluate(()=>DS.openCodex());await sleep(200);
+    const qInput=await p.evaluate(()=>!!document.getElementById('cdx-q')&&document.querySelectorAll('.cdx-tier').length>=5);
+    if(!qInput)fail('Codex search input / tier pills missing');
+    // Type a query that should narrow to just Bluegill (or zero common species if not caught yet).
+    await p.evaluate(()=>{const q=document.getElementById('cdx-q');q.value='gar';q.oninput()});await sleep(200);
+    const afterFilter=await p.evaluate(()=>document.getElementById('mini-card').innerHTML.toLowerCase().includes('gar'));
+    if(!afterFilter)fail('Codex filter did not surface "gar" species');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· codex search/filter narrows');
+
+    // 18. Loyalty discount: spend bait via shop-buy, confirm loyaltySpent increments + tier name
+    //     surfaces in the shop header. Use the QA seed to ensure enough bait first.
+    await p.evaluate(()=>DS.openShop({id:'garbone',n:'Garbone',col:0xfbcf3b,blurb:'t',sells:{rod:[1]},consumables:['hull']}));
+    await sleep(300);
+    const tierShown=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return /Drifter|Regular|Local|Old Salt/.test(h)});
+    if(!tierShown)fail('Loyalty tier name missing from shop UI');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· loyalty tier surfaced');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});

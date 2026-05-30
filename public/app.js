@@ -17,6 +17,23 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Lifetime bait spent at any shop counts toward loyalty discount tiers:
+//   0     → 0% off, "Drifter"
+//   500   → 3% off, "Regular"
+//   2000  → 6% off, "Local"
+//   5000  → 10% off, "Old Salt"
+let loyaltySpent=0;
+const LOYALTY_TIERS=[
+  {at:0,    name:'Drifter',  pct:0},
+  {at:500,  name:'Regular',  pct:0.03},
+  {at:2000, name:'Local',    pct:0.06},
+  {at:5000, name:'Old Salt', pct:0.10}
+];
+function loyaltyTier(){let cur=LOYALTY_TIERS[0];for(const t of LOYALTY_TIERS)if(loyaltySpent>=t.at)cur=t;return cur}
+function loyaltyDiscount(cost){return Math.max(1,Math.round(cost*(1-loyaltyTier().pct)))}
+function loyaltyBuy(cost){const final=loyaltyDiscount(cost);bait-=final;loyaltySpent+=final;return final}
+// Shared price-label HTML — strikes through the original cost when a loyalty discount applies.
+function priceLabel(cost){const disc=loyaltyDiscount(cost);return disc<cost?`<s style="opacity:0.55;font-size:9px;margin-right:3px">${cost}</s>${disc} bait`:`${cost} bait`}
 // Duct the Rubber Ducky — the uncatchable legendary. Persisted lifetime stats only; he never
 // enters fishCatalog or the trophy case (canon: nobody has ever landed him).
 let ductStats={sightings:0,attempts:0,nearCatches:0};
@@ -135,7 +152,7 @@ function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
     (d.ach||[]).forEach(n=>achievements.add(n));
-    bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;
+    bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;loyaltySpent=d.loyalty||0;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
     if(d.duct)Object.assign(ductStats,d.duct);
@@ -149,7 +166,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,loyalty:loyaltySpent}))}catch(e){}
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
@@ -220,9 +237,9 @@ let runCatches=[];
 // Hero identity per boat — kit signature, voice palette, and HUD badge color.
 // Voice lines lean on the Character Bible: Reel = bold/quotable, Fly = dry/short, Lilly = country direct.
 const HERO={
-  regular:{id:'reel',n:'The Reel',role:'Rescue · Control',kit:'Casting rod grapnel + heavy reel winch',badge:'#ef4444',col:'#fca5a5',voice:{start:"Line's tight. Somebody's coming home.",surge:'Bayou Bay paid for a show — keep it together.',rescue:'You can bite the boat — you ain’t getting the people.',evidence:'Got something. Bag it.'}},
-  pontoon:{id:'lilly',n:'Lilly Loch',role:'Brawler · Traversal',kit:'Swamp strength + improvised dock-board shield',badge:'#10b981',col:'#a7f3d0',voice:{start:'Water already moved. We move with it.',surge:'Bless your heart, hold on.',rescue:'I got you. Easy, easy.',evidence:'Castor Bayou’s talking. We’re listening.'}},
-  speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We’ll read it back at the yard.'}}
+  regular:{id:'reel',n:'The Reel',role:'Rescue · Control',kit:'Casting rod grapnel + heavy reel winch',badge:'#ef4444',col:'#fca5a5',voice:{start:"Line's tight. Somebody's coming home.",surge:'Bayou Bay paid for a show — keep it together.',rescue:'You can bite the boat — you ain\'t getting the people.',evidence:'Got something. Bag it.',catchCommon:'Cleaner than I deserved. Keep working.',catchRare:'Heavy. Tournament heavy.',catchLegendary:'I felt that one in the rod butt. Folks at Garbone will want a look.',catchGator:'Hooked into a slab. Hands wide on the rod.'}},
+  pontoon:{id:'lilly',n:'Lilly Loch',role:'Brawler · Traversal',kit:'Swamp strength + improvised dock-board shield',badge:'#10b981',col:'#a7f3d0',voice:{start:'Water already moved. We move with it.',surge:'Bless your heart, hold on.',rescue:'I got you. Easy, easy.',evidence:'Castor Bayou\'s talking. We\'re listening.',catchCommon:'Pretty fish. Pretty water.',catchRare:'Look at that color. Bayou paints \'em right.',catchLegendary:'Mama\'d have a stroke if she saw this.',catchGator:'Bull on the line. Tail like a oar. Stay on the deck.'}},
+  speedboat:{id:'fly',n:'The Fly',role:'Recon · Trap',kit:'Fly-line tripwires + hook cams + sonar pings',badge:'#3b82f6',col:'#93c5fd',voice:{start:'That wake has no boat. Move careful.',surge:'Surge. Brace.',rescue:'Civilian out. Clean.',evidence:'Tag it. We\'ll read it back at the yard.',catchCommon:'Logged.',catchRare:'Rare specimen. Photographed. Sample bagged.',catchLegendary:'Legendary signature. Sonar read it three hundred meters out.',catchGator:'Apex on the line. Confirm hull integrity before you boat it.'}}
 };
 const TI={1:{n:'Preventative',p:49},2:{n:'Comprehensive',p:99},3:{n:'Premium',p:199}};
 let S={addr:'',email:'',bc:'pontoon',ti:2,lat:34.1751,lng:-83.996,on:false,score:0,t0:0,maxSpd:0,dist:0,near:0,lid:null,curl:null,played:false,phase:0,pc:0,hull:100,discount:0,outcome:'',civsSaved:0,civsTotal:0,evCollected:null,missionsCleared:0,wx:{ws:3,wd:180,g:0,c:'Clear',t:72,v:10000}};
@@ -410,24 +427,29 @@ const mini={
   },
   // === DOCK RESCUE: clicker repair — pier integrity is draining, tap to shore it up ===
   // === DEEP DOCK BOSS: three-phase encounter against the thing under the Deep Dock ===
-  // === GATOR KING: 2-phase mini-boss at East Rocks ===
-  // Phase 1 (LUNGES): a lunge bar fills; tap STRIKE when it's in the gold band. 5 clean hits win
-  //                   the phase. Misses bite for -15 hull. After 5 hits → phase 2.
-  // Phase 2 (DRAG): a tension band fight against a very stiff line. Win → +800 score + +60 bait
-  //                 + unlock 'gator_king'. Lose → escape (no score).
+  // === GATOR KING: 3-phase mini-boss at East Rocks ===
+  // Phase 1 (LUNGES): lunge bar; strike inside 45-55% gold band; 5 clean hits → phase 2.
+  // Phase 2 (DRAG):   stiff tension-band fight, progress to 100 → phase 3.
+  // Phase 3 (TAIL):   3 telegraphed tail-slap warnings; tap DODGE (Space) in the gold window of the
+  //                   warning bar to avoid hull damage; 3 dodges → win.
   openGatorKing(dp){
     miniActive=true;S.on=false;
     const card=$('mini-card'),el=$('mini');if(!card||!el){mini.finish(dp,0,'Lost the line.','self');return}
-    let phase=1,hits=0,need=5,playerHull=Math.round(S.hull),tension=0.3,progress=0,reeling=false,over=false,lungeT=null,lungeBar=0,lungeDir=1;
+    let phase=1,hits=0,need=5,playerHull=Math.round(S.hull),tension=0.3,progress=0,over=false,lungeT=null,lungeBar=0,lungeDir=1;
+    let dodges=0,dodgeNeed=3,slapT=null,slapBar=0,slapArmed=false;  // phase 3 state
+    // Lilly hero ability: damage resist trims gator strikes by 30% (10% baseline + 20% boss-arena).
+    // Fly hero ability: a 1-slot wider strike band in phase 1 (recon clinches the timing).
+    const heroResist=S.bc==='pontoon'?0.30:0;
+    const flyBand=S.bc==='speedboat'?3:0;  // wider strike window in phase 1
     const render=()=>{
       const hullCol=playerHull<30?'#ef4444':playerHull<60?'#f59e0b':'#10b981';
-      const phName=phase===1?'PHASE 1 · LUNGES':'PHASE 2 · DRAG';
+      const phName={1:'PHASE 1 · LUNGES',2:'PHASE 2 · DRAG',3:'PHASE 3 · TAIL'}[phase];
       let body='';
       if(phase===1){
         body=`<div class="sb"><div class="sr"><span class="sl">Hits</span><span class="sv y">${hits} / ${need}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
-          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b 38%,#10b981 50%,#f59e0b 62%,#ef4444 100%);overflow:hidden;margin:8px 0"><div id="gk-bar" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div></div>
+          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b ${38-flyBand}%,#10b981 50%,#f59e0b ${62+flyBand}%,#ef4444 100%);overflow:hidden;margin:8px 0"><div id="gk-bar" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#fff;box-shadow:0 0 8px #fff"></div></div>
           <button class="btn bp" id="gk-strike" style="background:linear-gradient(135deg,#4a8a32,#2a5018)">STRIKE (Space)</button>`;
-      }else{
+      }else if(phase===2){
         body=`<div class="m-sub" style="color:#94a3b8">Hold the line. Easy. He's tired.</div>
           <div style="position:relative;height:26px;border-radius:6px;background:linear-gradient(90deg,#10b981 0%,#10b981 65%,#f59e0b 85%,#ef4444 100%);overflow:hidden;margin:10px 0">
             <div id="gk-band" style="position:absolute;top:0;bottom:0;left:42%;width:16%;background:rgba(255,255,255,0.22);border-left:2px solid #fff;border-right:2px solid #fff"></div>
@@ -436,21 +458,26 @@ const mini={
           <div style="font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Landed</div>
           <div style="height:10px;border-radius:5px;background:rgba(3,7,18,0.5);overflow:hidden;margin:4px 0 10px"><div id="gk-prog" style="height:100%;width:0%;background:#4a8a32;transition:width 0.05s"></div></div>
           <button class="btn bp" id="gk-reel" style="background:linear-gradient(135deg,#4a8a32,#2a5018);user-select:none">HOLD TO REEL (Space)</button>`;
+      }else{
+        body=`<div class="m-sub" style="color:#fb923c">Tail's coming around. DODGE (Space) when the bar peaks <b>gold</b>.</div>
+          <div class="sb"><div class="sr"><span class="sl">Dodges</span><span class="sv y">${dodges} / ${dodgeNeed}</span></div><div class="sr"><span class="sl">Your Hull</span><span class="sv" style="color:${hullCol}">${playerHull}%</span></div></div>
+          <div style="position:relative;height:24px;border-radius:6px;background:linear-gradient(90deg,#1a1a2e 0%,#1a1a2e 40%,#fbcf3b 50%,#1a1a2e 60%,#1a1a2e 100%);overflow:hidden;margin:8px 0"><div id="gk-slap" style="position:absolute;top:0;bottom:0;left:0;width:3px;background:#ef4444;box-shadow:0 0 8px #ef4444"></div></div>
+          <button class="btn bp" id="gk-dodge" style="background:linear-gradient(135deg,#fb923c,#9a3a10)">DODGE (Space)</button>`;
       }
-      card.innerHTML=`<div class="m-kicker" style="color:#4a8a32">🐊 ${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Wait for the lunge.':'Bring him in.'}</div>${body}<button class="btn bx" id="gk-flee" style="margin-top:8px">Cut Line</button>`;
+      card.innerHTML=`<div class="m-kicker" style="color:#4a8a32">🐊 ${dp.userData.type.n} · ${phName}${heroResist>0?' <span style=color:#a7f3d0;font-size:9px>· Lilly resist active</span>':''}${flyBand>0?' <span style=color:#93c5fd;font-size:9px>· Fly recon active</span>':''}</div><div class="m-title">${phase===1?'Wait for the lunge.':phase===2?'Bring him in.':'Get out of the way.'}</div>${body}<button class="btn bx" id="gk-flee" style="margin-top:8px">Cut Line</button>`;
       if(phase===1)$('gk-strike').onclick=strike;
-      if(phase===2)$('gk-reel');
+      if(phase===3)$('gk-dodge').onclick=dodge;
       $('gk-flee').onclick=flee;
     };
-    // Phase 1 — lunge bar oscillates; strike when inside the 45-55% gold band.
+    // Phase 1 — lunge bar oscillates; strike when inside the 45-55% (±flyBand) gold band.
     const startLunges=()=>{lungeT=setInterval(()=>{
       lungeBar+=0.05*lungeDir;if(lungeBar>=1){lungeBar=1;lungeDir=-1}else if(lungeBar<=0){lungeBar=0;lungeDir=1}
       const b=$('gk-bar');if(b)b.style.left=(lungeBar*100)+'%';
     },40);mini.addTeardown(()=>clearInterval(lungeT))};
     const strike=()=>{
-      const pct=lungeBar*100;
-      if(pct>=45&&pct<=55){hits++;sfx('win');if(hits>=need){clearInterval(lungeT);phase=2;startReel();render();return}}
-      else{playerHull=Math.max(0,playerHull-15);S.hull=playerHull;sfx('hit');flashDamage(0.7);if(playerHull<=0){clearInterval(lungeT);lose();return}}
+      const pct=lungeBar*100,lo=38-flyBand,hi=62+flyBand;
+      if(pct>=45-flyBand&&pct<=55+flyBand){hits++;sfx('win');if(hits>=need){clearInterval(lungeT);phase=2;startReel();render();return}}
+      else{const dmg=Math.round(15*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.7);if(playerHull<=0){clearInterval(lungeT);lose();return}}
       render();
     };
     // Phase 2 — band fight.
@@ -465,21 +492,56 @@ const mini={
         progress+=inBand?1.0:-0.7;progress=Math.max(0,Math.min(100,progress));
         const tEl=$('gk-ten'),pEl=$('gk-prog');
         if(tEl)tEl.style.left=(tension*100)+'%';if(pEl)pEl.style.width=progress+'%';
-        if(progress>=100){over=true;clearInterval(tk);finishGK(true)}
+        if(progress>=100){clearInterval(tk);phase=3;startTailSlaps();render()}
       },50);
       mini.addTeardown(()=>clearInterval(tk));
+    };
+    // Phase 3 — tail-slap dodge. Bar sweeps across; tap DODGE in the gold window (45-55%).
+    // Lilly resist halves slap damage. Missing the window costs hull. 3 successful dodges → win.
+    const startTailSlaps=()=>{
+      const sweep=()=>{slapBar=0;slapArmed=true;const dir=Math.random()<0.5?1:-1;if(dir<0)slapBar=1;
+        slapT=setInterval(()=>{
+          slapBar+=0.012*dir;
+          if((dir>0&&slapBar>=1)||(dir<0&&slapBar<=0)){
+            // Missed entirely — slap connects.
+            clearInterval(slapT);slapArmed=false;
+            const dmg=Math.round(20*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.8);
+            if(playerHull<=0){lose();return}
+            setTimeout(sweep,800);render();
+          }
+          const b=$('gk-slap');if(b)b.style.left=(slapBar*100)+'%';
+        },40);
+        mini.addTeardown(()=>clearInterval(slapT));
+      };
+      sweep();
+    };
+    const dodge=()=>{
+      if(!slapArmed||phase!==3)return;
+      const pct=slapBar*100;
+      if(pct>=45&&pct<=55){
+        clearInterval(slapT);slapArmed=false;dodges++;sfx('win');
+        if(dodges>=dodgeNeed){finishGK(true);return}
+        setTimeout(()=>{render();startTailSlaps()},700);
+      }else{
+        // Mistimed swat — half damage of a clean miss.
+        const dmg=Math.round(10*(1-heroResist));playerHull=Math.max(0,playerHull-dmg);S.hull=playerHull;sfx('hit');flashDamage(0.5);
+        if(playerHull<=0){clearInterval(slapT);lose();return}
+      }
+      render();
     };
     let keysSpace=false;
     const keyHandler=e=>{
       if(e.code==='Space'){e.preventDefault();
         if(phase===1&&e.type==='keydown')strike();
-        if(phase===2)keysSpace=(e.type==='keydown');
+        else if(phase===3&&e.type==='keydown')dodge();
+        else if(phase===2)keysSpace=(e.type==='keydown');
       }
     };
     document.addEventListener('keydown',keyHandler);document.addEventListener('keyup',keyHandler);
     mini.addTeardown(()=>{document.removeEventListener('keydown',keyHandler);document.removeEventListener('keyup',keyHandler)});
     const flee=()=>{S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
     const finishGK=won=>{
+      over=true;
       if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
       else{mini.finish(dp,0,'He rolled and snapped the line. Gone again.','lilly')}
     };
@@ -494,7 +556,14 @@ const mini={
   openBoss(dp){
     miniActive=true;S.on=false;
     const card=$('mini-card'),el=$('mini');
-    let phase=1,hits=0,need=6,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
+    // Hero ability hooks for the Deep Dock arena:
+    //   The Fly:    -1 sonar hit needed in phase 1 (recon advantage), narrower phase-2 miss penalty
+    //   Lilly Loch: 30% damage resist on all phase damage (stacks with hull armor)
+    //   The Reel:   wider phase-3 release peak band (rod control reads the tension better)
+    const heroResist=S.bc==='pontoon'?0.30:0;
+    const heroFlyShell=S.bc==='speedboat'?1:0;
+    const heroReelPeak=S.bc==='regular'?0.06:0;  // widens peak band by ±6%
+    let phase=1,hits=0,need=6-heroFlyShell,playerHull=Math.round(S.hull),lureWindow=null,tension=0,won=null;
     // For the boss_clean achievement — track the lowest hull seen across the fight.
     let _bossHullMin=playerHull,_bossStartHull=playerHull;
     const _bossPhaseFlash=()=>{const gr=$('grade');if(!gr)return;const prev=gr.style.transition||'';gr.style.transition='opacity 0.2s ease-out';gr.style.opacity='0.4';setTimeout(()=>{gr.style.opacity='';gr.style.transition=prev},220)};
@@ -519,7 +588,8 @@ const mini={
           </div>
           <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE (tap B for tension nudge)</button>`;
       }
-      card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
+      const heroPill=heroResist>0?' <span style="color:#a7f3d0;font-size:9px">· Lilly resist active</span>':heroFlyShell>0?' <span style="color:#93c5fd;font-size:9px">· Fly recon active</span>':heroReelPeak>0?' <span style="color:#fca5a5;font-size:9px">· Reel rod-feel active</span>':'';
+      card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}${heroPill}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
       if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;_bossPhaseFlash();startLure()}render()};
       if(phase===2)$('m-b-strike').onclick=strike;
       if(phase===3)$('m-b-release').onclick=release;
@@ -534,7 +604,7 @@ const mini={
       clearInterval(lureWindow);
       // Gold band ~40-60%.
       if(pct>=38&&pct<=62){phase=3;tension=0;_bossPhaseFlash();startReel();render();return}
-      playerHull=Math.max(0,playerHull-25);S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.8);
+      playerHull=Math.max(0,playerHull-Math.round(25*(1-heroResist)));S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.8);
       if(playerHull<=0){lose();return}
       // Missed → back to phase 1, need one more hit
       phase=1;need=Math.min(8,need+1);render();
@@ -567,8 +637,9 @@ const mini={
     const release=()=>{
       clearInterval(lureWindow);
       // Peak band 78-92%.
-      if(tension>=0.78&&tension<=0.92){win();return}
-      playerHull=Math.max(0,playerHull-20);S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.6);
+      // The Reel widens the release peak band — easier to time the hit on phase 3.
+      if(tension>=0.78-heroReelPeak&&tension<=0.92+heroReelPeak){win();return}
+      playerHull=Math.max(0,playerHull-Math.round(20*(1-heroResist)));S.hull=playerHull;_bossHullMin=Math.min(_bossHullMin,playerHull);sfx('hit');flashDamage(0.6);
       if(playerHull<=0){lose();return}
       tension=0;phase=3;startReel();render();
     };
@@ -1473,6 +1544,9 @@ function drawMinimap(){
     const[dx,dz]=proj(DUCT.x,DUCT.z);
     const offRim=Math.hypot(DUCT.x*scl,DUCT.z*scl)>R-1;
     const pulse=0.6+Math.sin(now*4)*0.4;
+    // Sonar-reveal flash: for ~2s after a ping, paint a wider gold ring on Duct so the recon tool
+    // gets credit for "finding" him separately from the always-on compass marker.
+    if(S.lastPing&&now-S.lastPing<2){const age=now-S.lastPing;ctx.strokeStyle='#ffd23f';ctx.globalAlpha=Math.max(0,1-age/2)*0.9;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(dx,dz,4+age*6,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
     ctx.fillStyle='#ffd23f';ctx.globalAlpha=pulse;
     ctx.beginPath();ctx.arc(dx,dz,offRim?2.5:3,0,Math.PI*2);ctx.fill();
     if(offRim){
@@ -1765,6 +1839,9 @@ function fireSonar(){
   else if(S.sonarReady&&now<S.sonarReady)return false;
   else S.sonarReady=now+sonarCool;
   S.lastPing=now;sfx('ping');S.pingReveal=now+4+(eqUp('electronics').sonarBoost||0)*5;
+  // Duct sonar callout — if he's active and the player pings, the radio confirms the contact.
+  // Rate-limited via S.ductPingLast so spamming the ping doesn't spam the line.
+  if(DUCT.active&&(!S.ductPingLast||now-S.ductPingLast>8)){S.ductPingLast=now;radio('Sonar tagged something duck-shaped. Stay sharp.','fly')}
   const origin=bMesh.position.clone();origin.y=0.2;
   // Expanding ring on the water — reuse wake disposal pattern
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.4,0.6,32),new THREE.MeshBasicMaterial({color:0x60d0ff,transparent:true,opacity:0.85,side:THREE.DoubleSide}));
@@ -1914,6 +1991,12 @@ function landFish(fish,spot){
   if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
   if(fish.gator)onUnlock('gator_wrangler');
   sfx(fish.r==='legendary'?'legendary':'catch');
+  // Per-hero catch chatter — picks the right voice key by rarity / type so the operative reacts in
+  // their own voice. Falls back to the legacy generic line if a voice key is missing.
+  const v=HERO[S.bc].voice;
+  const key=fish.gator?'catchGator':fish.r==='legendary'?'catchLegendary':fish.r==='rare'?'catchRare':'catchCommon';
+  const heroId=HERO[S.bc].id;  // 'reel' | 'lilly' | 'fly' — matches radio who-tags
+  if(v[key])radio(v[key],heroId);
   showCatchDialog(fish,spot);
 }
 // === FISHING FIGHT ===
@@ -2972,14 +3055,14 @@ function renderBoatworksRows(){
   for(const slot of ['engine','lights','armor','electronics']){
     const cur=hu[slot]||0;
     for(let tier=1;tier<BOAT_UP[slot].length;tier++){
-      const it=BOAT_UP[slot][tier];const owned=cur>=tier,buyable=cur===tier-1&&bait>=it.cost;
+      const it=BOAT_UP[slot][tier];const cost=loyaltyDiscount(it.cost),owned=cur>=tier,buyable=cur===tier-1&&bait>=cost;
       // Cost preview: post-purchase bait balance + delta, as a native title tooltip on the button.
-      const tip=owned?'Already owned':`After: ${Math.max(0,bait-it.cost)} bait (${bait}−${it.cost})`;
+      const tip=owned?'Already owned':`After: ${Math.max(0,bait-cost)} bait (${bait}−${cost})`;
       const isBest=bestKey===slot+':'+tier;
       html+=`<div style="position:relative;display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5};${isBest?'box-shadow:0 0 0 1px rgba(251,207,59,0.55);':''}">
         ${isBest?`<span style="position:absolute;top:-6px;right:10px;background:#fbcf3b;color:#1a1a2e;font:700 8px 'JetBrains Mono',monospace;letter-spacing:1px;padding:2px 6px;border-radius:3px">BEST VALUE</span>`:''}
         <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slot}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
-        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" title="${tip}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" title="${tip}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=cost?priceLabel(it.cost):'—'}</button>
       </div>`;
     }
   }
@@ -2997,10 +3080,10 @@ function openShop(shop){
   if(shop&&shop.sells){
     for(const slot of Object.keys(shop.sells)){
       for(const tier of shop.sells[slot]){
-        const it=GEAR[slot][tier];const owned=gear[slot]>=tier;const buyable=gear[slot]===tier-1&&bait>=it.cost;
+        const it=GEAR[slot][tier];const cost=loyaltyDiscount(it.cost);const owned=gear[slot]>=tier;const buyable=gear[slot]===tier-1&&bait>=cost;
         gearHtml+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
           <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slotLabel[slot]}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
-          <button class="btn bp gear-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?titleCol:'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+          <button class="btn bp gear-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?titleCol:'#374151'}">${owned?'✓ OWNED':bait>=cost?priceLabel(it.cost):'—'}</button>
         </div>`;
       }
     }
@@ -3009,13 +3092,18 @@ function openShop(shop){
   const conRows=SHOP_ITEMS.filter(it=>conIds.includes(it.id)).map(it=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-left:3px solid ${it.c};border-radius:8px;margin:5px 0">
       <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;color:${it.c};font-size:12.5px">${it.n}</div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.desc}</div></div>
-      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:7px 13px;margin:0;background:${bait>=it.cost?it.c:'#374151'};font-size:11px">${bait>=it.cost?it.cost+' bait':'—'}</button>
+      <button class="btn bp shop-buy" data-id="${it.id}" style="width:auto;padding:7px 13px;margin:0;background:${bait>=loyaltyDiscount(it.cost)?it.c:'#374151'};font-size:11px">${bait>=loyaltyDiscount(it.cost)?priceLabel(it.cost):'—'}</button>
     </div>`).join('');
   card.innerHTML=`
     <div class="m-kicker" style="color:${titleCol}">${shop?'Bait Shop':'Tackle Shop'}</div>
     <div class="m-title" style="font-size:18px">${title}</div>
     ${shop?`<div class="m-sub" style="font-style:italic">"${shop.blurb}"</div>`:''}
-    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px"><span style="color:#94a3b8">Bait on hand</span><span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(3,7,18,0.5);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px;gap:10px">
+      <div><span style="color:#94a3b8">Bait on hand</span> <span style="color:#fbcf3b;font:700 14px 'JetBrains Mono',monospace">${bait}</span></div>
+      ${(()=>{const t=loyaltyTier();const nxt=LOYALTY_TIERS[LOYALTY_TIERS.indexOf(t)+1];
+        return `<div style="text-align:right;font:10px 'JetBrains Mono',monospace;line-height:1.4"><span style="color:${t.pct>0?'#10b981':'#94a3b8'};letter-spacing:1px;text-transform:uppercase">${t.name}${t.pct>0?` · -${(t.pct*100|0)}%`:''}</span>${nxt?`<br><span style="color:#64748b">Next: ${nxt.name} at ${nxt.at} spent (${nxt.at-loyaltySpent} to go)</span>`:''}</div>`;
+      })()}
+    </div>
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Bait Pantry · equip one for your next casts</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
       <button class="btn bait-equip" data-k="" style="background:${equippedBait===''?'#475569':'rgba(3,7,18,0.5)'};border:1px solid #475569;color:#cbd5e1;width:auto;padding:6px 10px;margin:0;font-size:11px">🪝 Bare hook</button>
@@ -3045,7 +3133,7 @@ function openShop(shop){
     ${conRows}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
   const reopen=()=>openShop(shop);
-  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<it.cost)return;bait-=it.cost;it.fn();persist();sfx('click');reopen()});
+  card.querySelectorAll('.shop-buy').forEach(b=>b.onclick=()=>{const it=SHOP_ITEMS.find(x=>x.id===b.dataset.id);if(!it||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);it.fn();persist();sfx('click');reopen()});
   card.querySelectorAll('.bait-equip').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k&&(baitInv[k]||0)<=0)return;equippedBait=k;persist();sfx('click');reopen()});
   card.querySelectorAll('.recipe-craft').forEach(b=>b.onclick=()=>{
     const r=CRAFT_RECIPES.find(x=>x.id===b.dataset.rid);if(!r)return;
@@ -3056,8 +3144,8 @@ function openShop(shop){
     pushAchToast({n:BAIT_TYPES[r.out].n.toUpperCase(),d:'Crafted at the tackle bench.'});
     reopen();
   });
-  card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<it.cost)return;bait-=it.cost;gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
-  card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<it.cost)return;bait-=it.cost;boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
+  card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
+  card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
   el.style.display='flex';
 }
 
@@ -3126,19 +3214,43 @@ function applyGfx(){
 }
 /* gfxQuality declaration + initial load moved to the persistence block at the top of the file. */
 
+// Codex search/filter state — persists across reopens like the settings tab does.
+let _codexQ='',_codexTier='all';
 function openCodex(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
   const caught=fishCatalog.size,total=FISH.length;
-  const byTier=r=>FISH.filter(f=>f.r===r);
+  // Filter pipeline — query (case-insensitive name match) + tier filter (all | per-rarity | caught-only).
+  const matches=f=>{
+    if(_codexTier!=='all'&&_codexTier!=='caught'&&f.r!==_codexTier)return false;
+    if(_codexTier==='caught'&&!fishCatalog.has(f.n))return false;
+    if(_codexQ&&!f.n.toLowerCase().includes(_codexQ.toLowerCase()))return false;
+    return true;
+  };
+  const tierPill=(id,label,c)=>`<button class="cdx-tier" data-t="${id}" style="background:${_codexTier===id?(c||'#60d0ff')+'33':'rgba(3,7,18,0.5)'};border:1px solid ${_codexTier===id?(c||'#60d0ff'):'rgba(30,41,59,0.5)'};color:${_codexTier===id?(c||'#60d0ff'):'#94a3b8'};font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:5px 10px;border-radius:5px;cursor:pointer">${label}</button>`;
+  const byTier=r=>FISH.filter(f=>f.r===r&&matches(f));
   const tierBlock=(label,r)=>{const list=byTier(r);if(!list.length)return '';
-    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label}</div>
+    return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label} <span style="color:#64748b">· ${list.filter(f=>fishCatalog.has(f.n)).length}/${list.length}</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?f.f:'Not yet caught'}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+  // If the filter zeros out a tier, hide the whole block (showing only matching rows).
+  const allEmpty=['common','uncommon','rare','legendary'].every(r=>byTier(r).length===0);
   card.innerHTML=`
     <div class="m-kicker" style="color:#60d0ff">Fish Codex</div>
     <div class="m-title">${caught} / ${total} species landed.</div>
     <div class="m-sub">Drive to a named spot and cast to fill the board. Rarer water holds rarer fish.</div>
-    ${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}
+    <div style="display:flex;gap:6px;margin:10px 0 4px;align-items:center">
+      <input id="cdx-q" type="text" placeholder="Search species…" value="${_codexQ}" style="flex:1;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.25);color:#e8edf5;border-radius:6px;padding:7px 10px;font:12px 'DM Sans',sans-serif">
+      ${_codexQ?'<button id="cdx-clear" title="Clear search" style="background:rgba(3,7,18,0.5);border:1px solid rgba(30,41,59,0.5);color:#94a3b8;border-radius:6px;padding:5px 10px;cursor:pointer">✕</button>':''}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+      ${tierPill('all','All')}
+      ${tierPill('common','Common',RARE_COLOR.common)}
+      ${tierPill('uncommon','Uncommon',RARE_COLOR.uncommon)}
+      ${tierPill('rare','Rare',RARE_COLOR.rare)}
+      ${tierPill('legendary','Legendary',RARE_COLOR.legendary)}
+      ${tierPill('caught','Caught only','#fb923c')}
+    </div>
+    ${allEmpty?`<div style="text-align:center;padding:24px;color:#64748b;font:12px 'DM Sans',sans-serif">No species match the current filter.</div>`:`${tierBlock('Common','common')}${tierBlock('Uncommon','uncommon')}${tierBlock('Rare','rare')}${tierBlock('Legendary','legendary')}`}
     <div style="margin:12px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#ffd23f;text-transform:uppercase">??? · The Impossible</div>
     <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.06);border:1px dashed rgba(255,210,63,0.35);border-radius:8px;padding:10px 12px">
       <div style="font-size:26px;filter:grayscale(0.3)">🦆</div>
@@ -3166,6 +3278,11 @@ function openCodex(){
         </div>`;
     })()}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  // Wire the search + tier pills. Each rebuild calls openCodex() so the panel re-renders with the
+  // new filter state without us re-querying scattered DOM nodes.
+  const qIn=$('cdx-q');if(qIn){qIn.oninput=()=>{_codexQ=qIn.value;openCodex();const q2=$('cdx-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}}}
+  const qClr=$('cdx-clear');if(qClr)qClr.onclick=()=>{_codexQ='';openCodex()};
+  card.querySelectorAll('.cdx-tier').forEach(b=>b.onclick=()=>{_codexTier=b.dataset.t;openCodex()});
   el.style.display='flex';
 }
 // Show the trophy peek button on s1 only if there's something to show.

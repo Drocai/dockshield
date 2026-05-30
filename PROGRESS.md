@@ -72,6 +72,15 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 9 — hero radio + Codex search/filter + sonar reveals Duct + loyalty + Gator King phase-3 + hero abilities in boss arenas
+- **Per-hero catch chatter**: each hero (Reel / Lilly / Fly) gets distinct radio lines on common / rare / legendary / gator catches. 12 new voice strings.
+- **Codex search/filter**: case-insensitive search box + tier pills (All / Common / Uncommon / Rare / Legendary / Caught only). Per-tier "X / Y" counters.
+- **Sonar reveals Duct**: a 2s gold ring pulse around Duct on the minimap after a ping + a rate-limited Fly radio cue ("Sonar tagged something duck-shaped").
+- **Loyalty discount tiers**: lifetime bait spent unlocks Drifter (0) → Regular (500, 3% off) → Local (2000, 6% off) → Old Salt (5000, 10% off). All shop / gear / Boatworks purchases route through `loyaltyBuy`; price labels show the strike-through original next to the discounted price.
+- **Gator King phase 3**: tail-slap dodge — a warning bar sweeps; tap DODGE (Space) in the gold window of the bar. 3 successful dodges → win. Lilly resist halves slap damage. Fly recon widens the phase-1 strike band.
+- **Hero abilities in Deep Dock boss**: Lilly = 30% damage resist on all phase damage; Fly = -1 sonar hit needed in phase 1; Reel = wider phase-3 release peak band. Surfaced as a tiny hero-active pill in the kicker.
+- Smoke now **24/24 PASS, 0 fatal** — adds Codex search, loyalty tier surface.
+
 ### Round 8 — Duct compass + camp ambient + settings tabs + 3 craft recipes + run summary
 - **Duct compass marker on the minimap**: a pulsing gold dot that sits at Duct's position, clamping to the rim with a directional arrow chevron when he's beyond the dial. Doesn't require sonar — Duct's always findable now.
 - **Per-camp ambient audio** (`campAudio`): each shore camp has a flavor sound (frog-pond bandpass, creek high-pass, crayfish-hole low rumble, worm-bed cricket-band) that fades up within 50u of the camp + fades out as you leave. Lazy-built on the shared AudioContext, mute-gated, stopped on photo/end/reset.
