@@ -72,6 +72,29 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 12 — hero identity overhaul + 3-stage fishing + mobile touch + golden hour + crayfish hole + boat horn + species log
+- **Hero identity overhaul**: full repaint per operative + UI tint.
+  - **The Reel** → red hull + white pinstripes + blue racing stripe + gold star emblems (tournament-flashy).
+  - **Lilly Loch** → muddy camo cabin + pink top stripe + lime-green inner-tube floats + daisy emblems.
+  - **The Fly** → matte black stealth hull + cyan-blue glowing tracer line + sonar mast (recon).
+  - `BT[cls].accents` palette drives every accent so a future hero can be added by editing one table.
+  - CSS `body.hero-reel|lilly|fly` tints the HUD values, mission ticker `<b>`, and operative pill text-shadow to match.
+- **3-stage fishing** (real-fishing feel):
+  - **Cast** (1.2s arc, was 2.5s) → bobber lands at the bow.
+  - **Wait** (random 2-7s, biased by rarity) → bobber sits idle-bobbing on the water.
+  - **NIBBLE** — bobber dips ~1.2s, radio whispers "BITE! Tap F." Hit the window → clean **hook set** + fight. Miss → fish steals the bait. Early strike → spooks the fish.
+  - `_bobberState` + `tickBobber(t)` drive an in-world bobber mesh; disposed cleanly on cancel/end/reset.
+- **Mobile touch UX**:
+  - Bigger joysticks (96px / 44px knobs, was 80/36).
+  - New buttons: **DOCK**, **FORAGE**, **BOBBER B**, **HORN** alongside PING + FISH/HOOK.
+  - `touchDock`/`touchForage`/`touchBobber`/`touchHorn` route to the right action by context (FISH/HOOK doubles as the hook-set if a bobber is in the water).
+- **Crayfish Hole** (East Rocks): brand-new flip-the-rocks clicker — most rocks empty, ~30% hide a crayfish, ~12% a minnow. Catch them in the 1.2s reveal window before they re-burrow. Rocks slowly re-roll so a patient player keeps having things to flip.
+- **Boat horn**: tap **E** away from a shop (or HORN on mobile) → two-pop horn + cheeky per-hero radio line. Rate-limited 1.2s.
+- **First-cast hint pip**: subtle "Press F to cast" pulses in the lower-center when stopped over castable water and `S._castedThisRun` is false.
+- **Golden-hour color flash**: amber `#grade` tint fires at sunrise and sunset (dayness crossing 0.12), edge-triggered so it pulses exactly once per crossing. Radio cue too.
+- **Achievement toast click-to-dismiss**: tap the toast to clear it early; the queue's next toast is armed instantly so impatient players catch up.
+- **Per-species first-land log** (`speciesLog` in save): every species records its first-catch date + spot + score. Codex pill tooltip now reads `species lore — First landed YYYY-MM-DD at Spot Name (+score)`.
+
 ### Round 11 — Boatworks tutorial + replay tutorials + minimap zoom + shop labels + trophy export + ach progress bars + music + audio sub-sliders
 - **Boatworks first-visit tutorial**: color-coded labels for the 4 slots (Engine/Lights/Armor/Electronics), BEST VALUE tip, dismissible. Added to the `TUTORIALS` table.
 - **Replay Tutorials button** in Settings → Controls — `DS.replayTutorials()` clears every seen flag except `intro` (so a reload won't re-fire the cinematic).

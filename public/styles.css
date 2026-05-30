@@ -103,6 +103,17 @@ input::placeholder{color:#334155}
   background:radial-gradient(ellipse 75% 70% at 50% 45%,rgba(120,160,180,0.10) 0%,transparent 55%,rgba(2,6,18,0.55) 100%),
             linear-gradient(180deg,rgba(2,6,18,0.35) 0%,transparent 14%,transparent 86%,rgba(2,6,18,0.4) 100%)}
 body.mode-game.playing #grade{display:block}
+/* Per-hero UI accent tint — colours the HUD pills, mission ticker, and the operative pill so the
+   selected character bleeds into the interface. Subtle by design; doesn't fight legibility. */
+body.hero-reel  #hud .val{color:#fca5a5}
+body.hero-lilly #hud .val{color:#f9a8d4}
+body.hero-fly   #hud .val{color:#93c5fd}
+body.hero-reel  #mq b{color:#fca5a5}
+body.hero-lilly #mq b{color:#f9a8d4}
+body.hero-fly   #mq b{color:#93c5fd}
+body.hero-reel  #h-hero{text-shadow:0 0 8px rgba(252,165,165,0.45)}
+body.hero-lilly #h-hero{text-shadow:0 0 8px rgba(249,168,212,0.45)}
+body.hero-fly   #h-hero{text-shadow:0 0 8px rgba(147,197,253,0.45)}
 /* Bait counter pulse — fires whenever bait changes (gain or spend). Class is added in JS, the
    CSS animation auto-restarts via void-offsetWidth so back-to-back changes still pulse. */
 @keyframes baitPopUp{0%{transform:scale(1.0);color:#fbcf3b}30%{transform:scale(1.4);color:#10b981}100%{transform:scale(1.0);color:#fbcf3b}}

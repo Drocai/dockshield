@@ -8,7 +8,14 @@ const DS=(()=>{
 // gated on the way in.
 const GAME_MODE=(window.__ENV__&&window.__ENV__.GAME_MODE)||'game';
 const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C,window.__ENV__);
-const BT={regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xb01818,wx:1},pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x4f6b2e,wx:.7},speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x12545c,wx:1.4}};
+// BT = boat tuning per hero. col=hull base, accents = secondary palette used by mkBoat for trim/
+// decals/emblems. Three distinct visual identities now: Reel runs red/blue/yellow tournament-flashy;
+// Lilly runs pink/lime/camo-muddy; Fly runs matte stealth black/navy.
+const BT={
+  regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xc91111,wx:1, accents:{primary:0xc91111,trim:0xffffff,stripe:0x1d6dff,emblem:0xfde047,glow:0xfca5a5,ui:'#fca5a5'}},
+  pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x7a5b32,wx:.7, accents:{primary:0xec4899,trim:0x7a5b32,stripe:0x84cc16,emblem:0xfbcfe8,glow:0xf472b6,ui:'#f9a8d4',camo:true}},
+  speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x0c1424,wx:1.4, accents:{primary:0x0c1424,trim:0x1e293b,stripe:0x3b82f6,emblem:0x60a5fa,glow:0x60a5fa,ui:'#93c5fd'}}
+};
 // === PERSISTENCE ===
 // Trophy catalog, evidence case file, best score, and the mute pref persist to localStorage so the
 // Pokemon-style collection survives reloads, not just same-tab sessions. Guarded for private-mode
@@ -19,6 +26,9 @@ const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
 // Biggest single fish ever landed across all runs — surfaced in the Codex + trophy peek.
 let bestFish=null;
+// Per-species log of first-landing context: {n:'Bluegill': {date, spot, score}}. Lets the Codex
+// surface a tiny "first caught" detail line per species. Append-only — only set on first land.
+let speciesLog={};
 // Per-day Duct sighting/attempt log (lore: "the pier keeps notes"). Keyed by YYYY-MM-DD,
 // each entry is {s,a,n} for sightings/attempts/near-catches. logDuct() bumps + trims to ~30 days.
 let ductLog={};
@@ -174,6 +184,7 @@ function loadSave(){
     bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;loyaltySpent=d.loyalty||0;
     if(d.bestFish&&typeof d.bestFish==='object')bestFish=d.bestFish;
     if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
+    if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
     if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
@@ -192,7 +203,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,tutorialSeen}))}catch(e){}
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
@@ -312,6 +323,8 @@ let _mmZoom=1.0;
 let _isNight=false;
 // Offset (seconds) added to the day/night cycle clock — QA hook uses it to force a time of day.
 let _dayOffset=0;
+// Sun-arc edge-trigger state for golden-hour flash events (sunrise + sunset amber tint).
+let _lastDayness=null,_goldenFlashUntil=0;
 // Track the last-displayed bait value so the HUD can pulse on any change (up or down).
 let _lastBait=0;
 function pulseBait(delta){
@@ -1050,6 +1063,73 @@ const mini={
     draw();el.style.display='flex';
   },
 
+  // === FORAGE: CRAYFISH (flip rocks) ===
+  // Stony shore at East Rocks. Grid of rocks; click to flip — most are empty, ~30% hide a crayfish,
+  // small chance of a "bonus rock" (extra). Crayfish that escape re-burrow after 1.2s so timing
+  // matters. Yields baitInv.crayfish (+sometimes minnow as a bycatch).
+  openForageCrayfish(camp){
+    miniActive=true;S.on=false;_catchOpen=true;_catchBusy=false;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){miniActive=false;S.on=true;return}
+    const W=340,H=220,cols=7,rows=5,cell=42,off=24;
+    card.innerHTML=`<div class="m-kicker" style="color:#cf4040">Crayfish Hole · ${camp.userData.camp.n}</div>
+      <div class="m-title">Flip the rocks.</div>
+      <div class="m-sub">Most are empty. Some hide crayfish — tap them <b>before they re-burrow</b>.</div>
+      <canvas id="m-fc-cv" width="${W}" height="${H}" style="background:#1f1410;cursor:crosshair"></canvas>
+      <div class="sb"><div class="sr"><span class="sl">Crayfish</span><span class="sv y" id="m-fc-c">0</span></div><div class="sr"><span class="sl">Minnow</span><span class="sv g" id="m-fc-m">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fc-t">22</span></div></div>
+      <button class="btn bx" id="m-fc-q">Pack Up</button>`;
+    const cv=$('m-fc-cv'),ctx=cv.getContext('2d');
+    // Each rock can be flipped(false → true), then 'reveal'={none|cray|min} for ~1.2s, then re-buries.
+    const rocks=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const roll=Math.random();rocks.push({x:off+c*cell,y:off+r*cell,kind:roll<0.30?'cray':roll<0.42?'min':'none',flipped:false,revealUntil:0})}
+    let cray=0,caught=0,t=22;const G={alive:true};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#3a1e10','#1c0f08','rgba(200,120,80,0.06)');
+      // Faint shore-water suggestion at the bottom.
+      ctx.fillStyle='rgba(56,120,140,0.18)';ctx.fillRect(0,H-26,W,26);
+      const now=Date.now();
+      for(const k of rocks){
+        if(!k.flipped){
+          // Whole rock — grey/brown polygon.
+          ctx.fillStyle='#5a4030';ctx.beginPath();ctx.ellipse(k.x,k.y,16,12,0,0,Math.PI*2);ctx.fill();
+          ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1;ctx.stroke();
+        }else if(k.revealUntil>now){
+          // Flipped + revealing — show the dark pocket + the crayfish/minnow underneath.
+          ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.ellipse(k.x,k.y,15,10,0,0,Math.PI*2);ctx.fill();
+          if(k.kind==='cray'){ctx.fillStyle='#cf4040';ctx.beginPath();ctx.ellipse(k.x,k.y,9,6,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fbcf3b';ctx.beginPath();ctx.arc(k.x-3,k.y-1,1.5,0,Math.PI*2);ctx.arc(k.x+3,k.y-1,1.5,0,Math.PI*2);ctx.fill()}
+          else if(k.kind==='min'){ctx.fillStyle='#7ec8e3';ctx.beginPath();ctx.ellipse(k.x,k.y,7,4,0,0,Math.PI*2);ctx.fill()}
+        }else{
+          // Empty pocket — flipped but nothing left.
+          ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.ellipse(k.x,k.y,15,10,0,0,Math.PI*2);ctx.fill();
+        }
+      }
+    };
+    cv.onclick=e=>{
+      if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;
+      for(const k of rocks){
+        if(Math.hypot(k.x-mx,k.y-my)<16){
+          if(!k.flipped){
+            // First click: flip the rock, reveal whatever's under it for 1.2s.
+            k.flipped=true;k.revealUntil=Date.now()+1200;sfx('dig');
+            if(k.kind==='cray'||k.kind==='min')sfx('click');  // little chitter
+          }else if(k.revealUntil>Date.now()&&k.kind!=='none'){
+            // Catch it.
+            if(k.kind==='cray'){cray++;baitInv.crayfish=(baitInv.crayfish||0)+1;$('m-fc-c').textContent=cray;sfx('croak')}
+            else{caught++;baitInv.minnow=(baitInv.minnow||0)+1;$('m-fc-m').textContent=caught;sfx('net')}
+            k.kind='none';k.revealUntil=0;persist();
+          }
+          draw();return;
+        }
+      }
+    };
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fc-t').textContent=t;
+      // Slowly re-bury old flipped rocks so a patient player keeps having things to flip.
+      const now=Date.now();for(const k of rocks){if(k.flipped&&k.revealUntil<now-3000&&Math.random()<0.04){k.flipped=false;k.revealUntil=0;const roll=Math.random();k.kind=roll<0.30?'cray':roll<0.42?'min':'none'}}
+      if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${cray} crayfish${caught?', '+caught+' minnow':''}.`,cray*22+caught*5)}
+    },1000);
+    const rf=setInterval(()=>draw(),80);
+    $('m-fc-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',cray*22+caught*5)};
+    mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onclick=null});
+    draw();el.style.display='flex';
+  },
   // Forage finish: pantry-checked achievements, score bonus, clear overlay, resume run.
   finishForage(msg,bonus){
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
@@ -1176,7 +1256,10 @@ function initEngine(){
       if(DUCT.active&&!DUCT.engaged&&bMesh.position.distanceTo(DUCT.mesh.position)<14&&Math.abs(spd)<0.3)openDuctChase();
       else castLine();
     }
-    if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&_nearShop&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockShop(_nearShop.userData.shop)}
+    if(e.code==='KeyE'&&S.on&&GAME_MODE==='game'&&!miniActive&&!_peekOpen){e.preventDefault();
+      if(_nearShop&&Math.abs(spd)<0.25)dockShop(_nearShop.userData.shop);
+      else boatHorn();
+    }
     if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
@@ -1763,21 +1846,48 @@ function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT
   const caustics=new THREE.Mesh(new THREE.RingGeometry(3.2,5.2,32),new THREE.MeshBasicMaterial({color:0x6fc8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0.25,side:THREE.DoubleSide,depthWrite:false}));
   caustics.rotation.x=-Math.PI/2;caustics.position.y=-0.16;bMesh.add(caustics);bMesh.userData.caustics=caustics;
   // === Hero accent kit + upgrade-visible parts ===
-  // Hero accents pull from the boat color but layer kit on top so each operative reads at a glance.
+  // Each operative gets a wildly different boat skin so they read at a glance from across the lake.
   const up=boatUpgrades[cls]||{};
+  const ac=t.accents||{};
   if(cls==='regular'){
-    // The Reel: chrome trim strips + decal stripe + extra port spotlight
-    [[-1.2,1.05,1],[1.2,1.05,1]].forEach(([x,y,z])=>{const trim=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,3),new THREE.MeshStandardMaterial({color:0xe6e6e6,metalness:0.95,roughness:0.2}));trim.position.set(x,y,z);bMesh.add(trim)});
-    const decal=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.3),new THREE.MeshBasicMaterial({color:0xe8590c,transparent:true,opacity:0.95}));decal.position.set(0.81,1.55,-0.3);decal.rotation.y=Math.PI/2;bMesh.add(decal);
+    // The Reel: tournament boat — red hull with white pinstripes, blue racing stripe, gold star
+    // emblem on the cabin. Flashy, sponsored-looking.
+    // Twin pinstripes along the gunwale (white).
+    [[-1.2,1.05,1],[1.2,1.05,1]].forEach(([x,y,z])=>{const trim=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.04,3.4),new THREE.MeshStandardMaterial({color:ac.trim,metalness:0.4,roughness:0.4}));trim.position.set(x,y,z);bMesh.add(trim)});
+    // Blue racing stripe down the centre of the deck.
+    const stripe=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.02,4.2),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.35}));stripe.position.set(0,0.6,0.3);bMesh.add(stripe);
+    // Gold "★" emblem on the port side of the cabin.
+    const emblem=new THREE.Mesh(new THREE.CircleGeometry(0.22,5),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.95}));emblem.position.set(-0.81,1.55,-0.3);emblem.rotation.y=-Math.PI/2;bMesh.add(emblem);
+    const emblem2=emblem.clone();emblem2.position.x=0.81;emblem2.rotation.y=Math.PI/2;bMesh.add(emblem2);
+    // Red accent panel on the cabin roof.
+    const roofAccent=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.06,2),new THREE.MeshStandardMaterial({color:ac.primary,emissive:ac.primary,emissiveIntensity:0.18}));roofAccent.position.set(0,1.88,-0.3);bMesh.add(roofAccent);
   }else if(cls==='pontoon'){
-    // Lilly: wood plank texture on the cabin, inner-tube floats on the gunwale
-    const planks=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.22),new THREE.MeshStandardMaterial({color:0x9a6a32,roughness:0.95,emissive:0x1a0e02,emissiveIntensity:0.2}));planks.position.set(0,1.4,-0.3);bMesh.add(planks);
-    [[-1.3,0.6,0.5],[1.3,0.6,0.5],[-1.3,0.6,-1.4],[1.3,0.6,-1.4]].forEach(([x,y,z])=>{const tube=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.1,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0x2a1410,emissiveIntensity:0.3}));tube.rotation.x=Math.PI/2;tube.position.set(x,y,z);bMesh.add(tube)});
+    // Lilly: camo + pink. Muddy olive base with a pink stripe and lime accents; flower emblem on
+    // the cabin. The wide pontoon body still reads as her hull, the trim now reads as personality.
+    // Camo paint: 3 muddy patches randomly tossed on the cabin.
+    const cabinCamo=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.22),new THREE.MeshStandardMaterial({color:ac.trim,roughness:0.95}));cabinCamo.position.set(0,1.4,-0.3);bMesh.add(cabinCamo);
+    [[0.4,1.5,-0.2,0.5],[-0.5,1.3,0.3,0.4],[0.2,1.7,-1.0,0.35]].forEach(([x,y,z,r])=>{const patch=new THREE.Mesh(new THREE.CircleGeometry(r,8),new THREE.MeshStandardMaterial({color:0x44551c,roughness:0.95}));patch.position.set(x,y,z);patch.rotation.y=Math.random()*Math.PI;bMesh.add(patch)});
+    // Pink top stripe.
+    const pinkStripe=new THREE.Mesh(new THREE.BoxGeometry(1.66,0.08,2.26),new THREE.MeshStandardMaterial({color:ac.primary,emissive:ac.primary,emissiveIntensity:0.45}));pinkStripe.position.set(0,1.9,-0.3);bMesh.add(pinkStripe);
+    // Lime green inner-tube floats (her trademark).
+    [[-1.3,0.6,0.5],[1.3,0.6,0.5],[-1.3,0.6,-1.4],[1.3,0.6,-1.4]].forEach(([x,y,z])=>{const tube=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.1,8,16),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.35}));tube.rotation.x=Math.PI/2;tube.position.set(x,y,z);bMesh.add(tube)});
+    // Daisy/flower emblem on each cabin side.
+    [-0.81,0.81].forEach(x=>{
+      const petal=new THREE.Mesh(new THREE.CircleGeometry(0.22,8),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.9}));petal.position.set(x,1.55,-0.3);petal.rotation.y=x<0?-Math.PI/2:Math.PI/2;bMesh.add(petal);
+      const core=new THREE.Mesh(new THREE.CircleGeometry(0.07,8),new THREE.MeshBasicMaterial({color:ac.stripe}));core.position.set(x,1.55,-0.3);core.position.x+=x<0?-0.01:0.01;core.rotation.y=x<0?-Math.PI/2:Math.PI/2;bMesh.add(core);
+    });
   }else if(cls==='speedboat'){
-    // Fly: matte stealth panels + sonar mast on the cabin
-    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.24),new THREE.MeshStandardMaterial({color:0x1a2330,roughness:0.85,metalness:0.4}));panel.position.set(0,1.4,-0.3);bMesh.add(panel);
+    // Fly: matte stealth boat — black hull, navy panels, glowing blue sonar mast + bow tracer line.
+    // Quiet, tactical, slightly menacing.
+    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.62,0.92,2.24),new THREE.MeshStandardMaterial({color:ac.trim,roughness:0.85,metalness:0.4}));panel.position.set(0,1.4,-0.3);bMesh.add(panel);
     const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,2.2,6),new THREE.MeshStandardMaterial({color:0x2a3a4a,metalness:0.8}));mast.position.set(0,2.6,-0.3);bMesh.add(mast);
-    const dish=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,4,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x3b82f6,emissive:0x102a44,emissiveIntensity:0.5,side:THREE.DoubleSide}));dish.position.set(0,3.7,-0.3);dish.rotation.x=Math.PI;bMesh.add(dish);
+    const dish=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,4,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:0x102a44,emissiveIntensity:0.5,side:THREE.DoubleSide}));dish.position.set(0,3.7,-0.3);dish.rotation.x=Math.PI;bMesh.add(dish);
+    // Bow tracer line — thin glowing blue strip down the centre of the deck.
+    const tracer=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.04,4.5),new THREE.MeshStandardMaterial({color:ac.stripe,emissive:ac.stripe,emissiveIntensity:0.9}));tracer.position.set(0,0.6,0.5);bMesh.add(tracer);
+    // Blue arrow/wing emblem on each cabin side.
+    [-0.81,0.81].forEach(x=>{
+      const arrow=new THREE.Mesh(new THREE.CircleGeometry(0.18,3),new THREE.MeshBasicMaterial({color:ac.emblem,transparent:true,opacity:0.95}));arrow.position.set(x,1.55,-0.3);arrow.rotation.y=x<0?-Math.PI/2:Math.PI/2;arrow.rotation.z=Math.PI/2;bMesh.add(arrow);
+    });
   }
   // ENGINE: upgrade tier scales the motor block + tint
   if((up.engine||0)>=1){const engBig=new THREE.Mesh(new THREE.BoxGeometry(0.9,1.5,1.1),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.85,roughness:0.25}));engBig.position.set(0,0.5,-3.1);bMesh.add(engBig)}
@@ -1989,53 +2099,129 @@ function radio(text,who='self'){if(!text)return;_radioQ.push({text,who});if(_rad
 // 2.5s cast animation, then a weighted fish roll biased by which named spot the boat is in.
 // Players can keep the catch (+score, +trophy) or release (+small bonus). Persistent fishCatalog.
 let _castInFlight=false,_castAnim=null,_castRing=null,_catchOpen=false,_catchBusy=false,_wxTimer=null;
+// In-world bobber mesh + state for the wait-for-bite phase. Only one bobber lives at a time.
+let _bobberMesh=null,_bobberState=null;  // {phase:'wait'|'nibble',spot,fish,t0,nibbleAt,nibbleEnd,bobBase}
+function disposeBobber(){if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}_bobberState=null}
 function cancelCast(){
-  // Hard-stop any in-flight cast: clear the animation interval and dispose the ring mesh.
+  // Hard-stop any in-flight cast: clear the animation interval, dispose the ring + bobber.
   if(_castAnim){clearInterval(_castAnim);_castAnim=null}
   if(_castRing){scene.remove(_castRing);_castRing.geometry.dispose();_castRing.material.dispose();_castRing=null}
+  disposeBobber();
   _castInFlight=false;
 }
 function castLine(){
   if(!S.on||GAME_MODE!=='game'||miniActive||_catchOpen)return false;
   if(Math.abs(spd)>0.15){radio('Boat needs to be stopped to cast.','self');return false}
+  // If a bobber is already in the water, F means "set the hook" — funnels through the nibble path.
+  if(_bobberState){tryHookSet();return true}
   if(_castInFlight)return false;
-  if(!tutorialSeen.cast&&showTutorial('cast'))return false;  // first cast shows the tutorial first
-  // Don't start a cast right on top of a beacon — the proximity trigger would open the mission and
-  // cancel the cast anyway. Tell the player to back off the marker.
+  if(!tutorialSeen.cast&&showTutorial('cast'))return false;
   if(dropPoints.some(d=>d.userData.active&&!d.userData.qa&&bMesh.position.distanceTo(d.position)<7)){radio('Too close to a beacon to fish. Pull off it first.','self');return false}
-  _castInFlight=true;
+  _castInFlight=true;S._castedThisRun=true;
   const spot=fishingSpot(bMesh.position);
-  radio(spot?`Casting in ${spot.n}. Something’s rolling on it.`:'Line in the water.','self');sfx('cast');
-  // Visual: shrinking ring on the water at the boat's bow. Disposes when cast resolves.
+  radio(spot?`Casting in ${spot.n}. Something\'s rolling on it.`:'Line in the water.','self');sfx('cast');
+  // Visual: cast ring on the water at the boat's bow + the bobber arcs out.
   const ringMesh=new THREE.Mesh(new THREE.RingGeometry(1,1.2,24),new THREE.MeshBasicMaterial({color:0xfbcf3b,transparent:true,opacity:0.7,side:THREE.DoubleSide}));
   ringMesh.rotation.x=-Math.PI/2;ringMesh.position.copy(bMesh.position);ringMesh.position.y=0.12;
-  // Offset ahead of the bow
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);ringMesh.position.add(fwd);
   scene.add(ringMesh);_castRing=ringMesh;
+  // Roll the fish at cast time so the wait window can be tuned to its rarity.
+  const fish=rollFish(spot);
   const t0=Date.now();
+  // Shorter cast animation (1.2s) — the bobber lands faster so the player gets back into the loop.
   _castAnim=setInterval(()=>{
-    // If the run ended while the line was out, bail without popping a dialog over the result screen.
     if(!S.on){cancelCast();return}
-    const age=(Date.now()-t0)/2500;
-    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;_castInFlight=false;resolveCast(spot);return}
+    const age=(Date.now()-t0)/1200;
+    if(age>=1){clearInterval(_castAnim);_castAnim=null;scene.remove(ringMesh);ringMesh.geometry.dispose();ringMesh.material.dispose();_castRing=null;startBobberWait(spot,fish);return}
     const sc=1+age*4;ringMesh.scale.set(sc,sc,sc);ringMesh.material.opacity=0.7*(1-age);
   },50);
 }
+// === BOBBER WAIT + NIBBLE PHASE ===
+// After the cast animation, a yellow bobber sits on the water in front of the bow. A "nibble"
+// event fires after a random delay (2-7s, biased shorter for common fish, longer for legendary).
+// During the ~1.2s nibble window the bobber dips, a high-pitched cue plays, and the radio whispers
+// "Bite!" — if the player taps F or SPACE in that window, the fight starts. Miss it, and the fish
+// steals the bait (consumes equipped bait, no fight). Early-strike before nibble spooks the fish.
+function startBobberWait(spot,fish){
+  const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);
+  const bp=bMesh.position.clone().add(fwd);bp.y=0.25;
+  splash(bp,8,0xcfe8ff,0.8);
+  // Build the bobber — small red-and-white sphere with a tiny antenna.
+  const grp=new THREE.Group();
+  const lo=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,Math.PI/2,Math.PI/2),new THREE.MeshStandardMaterial({color:0xef4444,emissive:0x661010,emissiveIntensity:0.4,roughness:0.5}));lo.position.y=-0.05;grp.add(lo);
+  const hi=new THREE.Mesh(new THREE.SphereGeometry(0.18,10,8,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x444444,emissiveIntensity:0.2,roughness:0.5}));hi.position.y=0.05;grp.add(hi);
+  const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.45,5),new THREE.MeshStandardMaterial({color:0xffd23f,emissive:0xffd23f,emissiveIntensity:0.7}));ant.position.y=0.32;grp.add(ant);
+  grp.position.copy(bp);scene.add(grp);_bobberMesh=grp;
+  // Wait time biases toward shorter for commons / minnow bait, longer for rare/legendary.
+  const rar=fish.r==='legendary'?1.5:fish.r==='rare'?1.2:fish.r==='uncommon'?0.9:0.7;
+  const wait=(1500+Math.random()*3500)*rar;
+  _bobberState={phase:'wait',spot,fish,t0:Date.now(),nibbleAt:Date.now()+wait,nibbleEnd:0,bobBase:bp.y,grp};
+  // Prompt the player so they know what's happening.
+  const p=$('cast-prompt');if(p){p.style.display='block';p.innerHTML='🎣 <b>Line in the water</b> — watch the bobber. <b>F</b> to set the hook when it dips.'}
+  _castInFlight=false;
+}
+// Per-frame bobber drive. Cheap; only ticks while _bobberState exists.
+function tickBobber(t){
+  if(!_bobberState||!_bobberMesh)return;
+  const s=_bobberState,now=Date.now();
+  // Idle bob — tiny vertical sine while waiting.
+  if(s.phase==='wait'){
+    _bobberMesh.position.y=s.bobBase+Math.sin(t*1.8)*0.04;
+    if(now>=s.nibbleAt){
+      // Nibble! Strong dip + audio cue + radio whisper. Player has ~1.2s to set the hook.
+      s.phase='nibble';s.nibbleEnd=now+1200;sfx('cast');sfx('ping');
+      radio('BITE! Tap F.','self');
+      const p=$('cast-prompt');if(p)p.innerHTML='⚠️ <b style="color:#ef4444">SET THE HOOK</b> — tap <b>F</b>!';
+    }
+  }else if(s.phase==='nibble'){
+    // Bobber dips dramatically — the underline of "set the hook".
+    _bobberMesh.position.y=s.bobBase-0.25-Math.abs(Math.sin(t*9))*0.15;
+    if(now>=s.nibbleEnd){
+      // Missed the window — fish takes the bait silently.
+      radio('Bait gone. He took it clean.','lilly');
+      // Consume the equipped bait as the cost of missing.
+      if(equippedBait&&baitInv[equippedBait])baitInv[equippedBait]--;
+      persist();const p=$('cast-prompt');if(p)p.style.display='none';
+      disposeBobber();
+    }
+  }
+}
+function tryHookSet(){
+  if(!_bobberState)return false;
+  const s=_bobberState;const p=$('cast-prompt');if(p)p.style.display='none';
+  if(s.phase==='wait'){
+    // Early strike — fish spooks; line comes back empty.
+    sfx('hit');radio('Yanked too early. Spooked it.','reel');
+    disposeBobber();return true;
+  }
+  // Nibble window — clean hook set! Big splash + go to fight.
+  sfx('cast');sfx('ping');const bp=_bobberMesh.position.clone();bp.y=0.2;
+  const fish=s.fish,spot=s.spot;
+  splash(bp,fish.fight>=2?22:12,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.5:1);wet.add(fish.fight>=2?12:8);
+  disposeBobber();
+  if(!fish.fight)landFish(fish,spot);else openFight(fish,spot);
+  return true;
+}
+// Legacy resolveCast — only the no-bobber path uses this now (e.g. an out-of-band call).
 function resolveCast(spot){
-  if(!S.on||miniActive)return;  // run ended or a mini-game opened during the cast — drop it silently
+  if(!S.on||miniActive)return;
   const fish=rollFish(spot);
-  // Bite splash at the bow where the line went out.
   const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);const bp=bMesh.position.clone().add(fwd);bp.y=0.2;
   splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);wet.add(fish.fight>=2?10:6);
   sfx('cast');
-  // No-fight species land immediately; anything with a fight goes through the tension minigame.
   if(!fish.fight){landFish(fish,spot)}
   else openFight(fish,spot);
 }
 // Logs the catalog + plays the catch sting + opens the keep/release dialog.
 function landFish(fish,spot){
   runCatches.push(fish);
-  if(!fishCatalog.has(fish.n)){fishCatalog.add(fish.n);persist();if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full')}
+  if(!fishCatalog.has(fish.n)){
+    fishCatalog.add(fish.n);
+    // First-ever landing — stamp date + spot + score for the Codex tooltip.
+    if(!speciesLog[fish.n])speciesLog[fish.n]={date:new Date().toISOString().slice(0,10),spot:spot?spot.n:'Open water',score:fish.s};
+    persist();
+    if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full');
+  }
   if(fish.gator)onUnlock('gator_wrangler');
   // Persist the biggest single catch ever (by score value) — surfaced in the Codex + trophy peek.
   if(!bestFish||fish.s>(bestFish.s||0)){bestFish={n:fish.n,e:fish.e,r:fish.r,s:fish.s,date:new Date().toISOString().slice(0,10)};persist()}
@@ -2586,9 +2772,11 @@ function onUnlock(id){
 }
 function showAchToast(a){
   const t=$('ach-toast');if(!t)return;
-  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div>`;
-  t.style.display='block';t.style.opacity='1';
-  clearTimeout(showAchToast._t);showAchToast._t=setTimeout(()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0')t.style.display='none'},400)},3800);
+  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div><div style="font-size:9px;color:#475569;margin-top:4px;letter-spacing:1px">tap to dismiss</div>`;
+  t.style.display='block';t.style.opacity='1';t.style.cursor='pointer';t.style.pointerEvents='auto';
+  const dismiss=()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0'){t.style.display='none';t.style.pointerEvents='none'}},400)};
+  t.onclick=()=>{clearTimeout(showAchToast._t);dismiss();if(_achDrainT){clearTimeout(_achDrainT);_achDrainT=setTimeout(_drainAch,400)}};
+  clearTimeout(showAchToast._t);showAchToast._t=setTimeout(dismiss,3800);
 }
 // === ONE-TIME TUTORIAL OVERLAY ===
 // Shown the first time a player encounters a key system (cast / Duct chase). Dismissible, persists
@@ -2668,6 +2856,22 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
+    // Golden-hour flash — when dayness crosses 0.12 (sunrise rising / sunset falling), fire a soft
+    // amber tint to the #grade overlay for ~3.5s. Edge-triggered via _lastDayness so it pulses
+    // exactly once per crossing.
+    if(typeof _lastDayness==='number'){
+      const rising=_lastDayness<0.12&&dayness>=0.12;
+      const setting=_lastDayness>0.12&&dayness<=0.12&&dayness>0;
+      if((rising||setting)&&!_goldenFlashUntil){
+        _goldenFlashUntil=Date.now()+3500;
+        const gr=$('grade');if(gr){gr.style.transition='opacity 0.6s ease-out';gr.style.background='radial-gradient(ellipse 75% 70% at 50% 45%,rgba(251,146,60,0.18) 0%,transparent 55%,rgba(2,6,18,0.55) 100%),linear-gradient(180deg,rgba(255,170,80,0.25) 0%,transparent 14%,transparent 86%,rgba(2,6,18,0.4) 100%)';gr.style.opacity='1'}
+        radio(rising?'Sun\'s up. Lake lights.':'Sundown. It gets quiet now.','self');
+      }
+    }
+    _lastDayness=dayness;
+    if(_goldenFlashUntil&&Date.now()>_goldenFlashUntil){
+      _goldenFlashUntil=0;const gr=$('grade');if(gr){gr.style.background='';gr.style.opacity=''}
+    }
     // Water glint: a streak on the water along the light's bearing in front of the camera. Warm
     // sun by day, cool moonlight by night — so the reflection always reads.
     if(scene._sunGlint){const gl=scene._sunGlint;const dx=Math.cos(ang);const ahead=cam?cam.position:bMesh.position;
@@ -2814,6 +3018,17 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
     engineAudio.update(spd);stormAudio.update();campAudio.update();music.update();
+    // Bobber wait/nibble tick — only does work if a bobber is in the water.
+    tickBobber(t);
+    // First-cast hint pip: subtle yellow nudge when the player is stopped over castable water and
+    // hasn't fished yet this session. Hides once they've made a cast or while a bobber is out.
+    const hint=$('cast-hint');if(hint){
+      const stopped=Math.abs(spd)<0.15;
+      const onWater=fishingSpot(bMesh.position)!==null;
+      const noBobber=!_bobberState&&!_catchOpen&&!miniActive;
+      if(stopped&&onWater&&noBobber&&!S._castedThisRun){hint.style.display='block';hint.textContent='Press F to cast'}
+      else hint.style.display='none';
+    }
   }else if(photoMode){
     // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
     photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
@@ -2886,7 +3101,7 @@ function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -3019,7 +3234,15 @@ function skipFromLoad(){$('td').classList.add('off');$('pft').classList.remove('
 function playFromTier(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
 function showTiers(){if(S.discount>0){$('td').classList.remove('off');$('pft').classList.add('off');paintDiscount()}else if(S.played){$('td').classList.add('off');$('pft').classList.remove('off');$('pft').textContent='Try Again — Earn Up To 15% Off'}else{$('td').classList.add('off');$('pft').classList.remove('off')}show('s3')}
 function replay(){startGame();if(GAME_MODE==='business')setTimeout(()=>{if(S.on)endGame(false)},90000)}
-function boat(c){S.bc=c;document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});mkBoat(c);const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}}
+function boat(c){
+  S.bc=c;
+  document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});
+  mkBoat(c);
+  const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}
+  // Tag the body with the hero class so CSS can tint HUD accents to match the operative.
+  document.body.classList.remove('hero-reel','hero-lilly','hero-fly');
+  document.body.classList.add('hero-'+(c==='regular'?'reel':c==='pontoon'?'lilly':'fly'));
+}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
   const d=S.discount||0;const price=Math.round(t.p*(1-d/100));
@@ -3089,6 +3312,9 @@ async function launchGame(){
 
 // Tag body with the active game mode so CSS can hide/show funnel UI without touching every site.
 document.body.classList.add('mode-'+GAME_MODE);
+// Apply a default hero tint so the s1 boat-picker chips have themed accents on first load. The
+// boat() call later overwrites this with the actual hero once a class is chosen.
+document.body.classList.add('hero-reel');
 initEngine();wet.init();refreshTrophyPeek();applyGfx();
 {const mb=$('mute-btn');if(mb)mb.textContent=muted?'🔇 Sound Off':'🔊 Sound On'}
 // First-load cinematic intro — 6-second title fade over the existing idle-cam sweep. Shown once
@@ -3148,7 +3374,7 @@ function dockCamp(camp,mesh){
     cricket: {n:'Swat Crickets',  c:'#8db347', e:'🦗', d:'Bugs run across the patch. Tap to swat.',     fn:'openForageBug'},
     frog:    {n:'Grab Frogs',     c:'#5fa75f', e:'🐸', d:'They pause, then hop. Catch the pause.',     fn:'openForageFrog'},
     minnow:  {n:'Net Minnows',    c:'#7ec8e3', e:'🐠', d:'Click + drag a net rectangle to scoop.',     fn:'openForageMinnow'},
-    crayfish:{n:'Net the Crayfish',c:'#cf4040',e:'🦞', d:'Drag-net rocky water. Rare crayfish drop.',  fn:'openForageMinnow'}  // shares the minnow board (with crayfish bias from the spawn pool)
+    crayfish:{n:'Flip the Rocks',  c:'#cf4040',e:'🦞', d:'Stony shore. Tap a flipped rock before they re-burrow.', fn:'openForageCrayfish'}
   };
   const rows=camp.games.map(k=>{const g=gameMeta[k];if(!g)return '';
     return `<button class="btn forage-row" data-fn="${g.fn}" style="width:100%;text-align:left;background:rgba(3,7,18,0.5);border:1px solid ${g.c}33;border-left:3px solid ${g.c};border-radius:8px;padding:10px 12px;margin:5px 0;color:#e8edf5">
@@ -3392,6 +3618,28 @@ function setMusicVol(v){_musicVol=Math.max(0,Math.min(1,v));persist()}
 function replayTutorials(){const intro=tutorialSeen.intro;tutorialSeen={};if(intro)tutorialSeen.intro=intro;persist()}
 // Render the player's biggest catch into a shareable PNG. Lays the trophy out on a 1200×630
 // open-graph-friendly card and triggers a browser download.
+// === MOBILE TOUCH GLUE ===
+// Bridge mobile buttons to the right action based on context — the same E/G/B/F keys on desktop.
+function touchDock(){if(_nearShop)dockShop(_nearShop.userData.shop);else if(_bobberState)tryHookSet();else sfx('click')}
+function touchForage(){if(_nearCamp)dockCamp(_nearCamp.userData.camp,_nearCamp);else sfx('click')}
+function touchBobber(){
+  // On mobile, BOBBER taps the rhythm bobber dot directly (Duct or fight). If neither is open,
+  // and we're in the wait/nibble window, treat it as a hook-set.
+  const dbob=document.getElementById('d-bob');if(dbob){dbob.click();return}
+  const fbob=document.getElementById('f-bob');if(fbob){fbob.click();return}
+  if(_bobberState)tryHookSet();
+}
+// === BOAT HORN ===
+// Honk when the player taps E away from a shop, or when this hook is called from the mobile button.
+let _hornLast=0;
+function boatHorn(){
+  const now=Date.now()*0.001;if(now-_hornLast<1.2)return;_hornLast=now;
+  sfx('catch');setTimeout(()=>sfx('hit'),140);  // two short pops fake a horn
+  // Cheeky radio variant per hero.
+  const lines={regular:'(toot)',pontoon:'HONK! Make way!',speedboat:'(short blip)'};
+  radio(lines[S.bc]||'(toot)',HERO[S.bc]?HERO[S.bc].id:'self');
+}
+function touchHorn(){boatHorn()}
 function exportTrophy(){
   if(!bestFish)return false;
   const W=1200,H=630;const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
@@ -3448,7 +3696,7 @@ function openCodex(){
   const byTier=r=>FISH.filter(f=>f.r===r&&matches(f));
   const tierBlock=(label,r)=>{const list=byTier(r);if(!list.length)return '';
     return `<div style="margin:8px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${RARE_COLOR[r]};text-transform:uppercase">${label} <span style="color:#64748b">· ${list.filter(f=>fishCatalog.has(f.n)).length}/${list.length}</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?f.f:'Not yet caught'}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${list.map(f=>{const got=fishCatalog.has(f.n);const sl=speciesLog[f.n];const tip=got?(sl?`${f.f}\n— First landed ${sl.date} at ${sl.spot} (+${sl.score})`:f.f):'Not yet caught';return `<span title="${tip}" style="background:rgba(8,18,38,0.6);border:1px solid ${got?RARE_COLOR[r]:'rgba(148,163,184,0.2)'};border-radius:6px;padding:4px 8px;color:${got?RARE_COLOR[r]:'#475569'};font:12px 'DM Sans',sans-serif">${got?f.e+' '+f.n:'🔒 ???'}</span>`}).join('')}</div>`};
   // If the filter zeros out a tier, hide the whole block (showing only matching rows).
   const allEmpty=['common','uncommon','rare','legendary'].every(r=>byTier(r).length===0);
   card.innerHTML=`
