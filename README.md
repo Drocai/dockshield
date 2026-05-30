@@ -76,12 +76,16 @@ your home dock (geocoded via `/api/geocode`).
 | Key | Action |
 | --- | --- |
 | **W A S D** | drive |
-| **F** | cast / engage Duct (when stopped) |
-| **E** | dock at a shop (slow + close) |
+| **F** | cast / set the hook on a nibble / engage Duct (when stopped) |
+| **B** | bobber-bounce tap (rhythm bonus during fights + Duct) |
+| **E** | dock at a shop (slow + close) — or boat horn when away from a shop |
 | **G** | forage at a shore camp (slow + close) |
 | **P** | photo mode |
+| **M** | toggle minimap zoom |
 | **Space** | reel / fight action |
 | **Esc** | close overlay |
+
+Mobile gets touch buttons for **PING / FISH/HOOK / DOCK / FORAGE / BOBBER B / HORN** alongside the throttle + steer joysticks.
 
 ---
 

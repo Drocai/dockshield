@@ -72,6 +72,17 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 13 — Phase V (research-driven): fishing feel + streak + catalysts + mobile polish
+Deep-research-informed pass: web-searched Dredge postmortem, Russian Fishing 4, Sea of Thieves, GTA V density principles, three.js r128 perf, mobile WebGL best practices (MDN/Apple HIG/Material 48dp). 5-critic adversarial plan pass + 3-finder bughunt review.
+
+- **Bobber pretell** (Dredge/RF4): 400ms `pretell` phase in `tickBobber` — bobber wobbles ±0.15 rad + mini-dips BEFORE the `nibble` F-window opens. Sells the strike instead of springing it. Cast-prompt repaints with "SOMETHING'S NIBBLING — wait for the dip…". Mistimed taps during pretell spook the fish (same as wait phase).
+- **`reelAudio`** — continuous sawtooth-through-lowpass that runs during `openFight`. Freq tracks `tension` 220→880Hz; gain `(0.02 + tension*0.07) * _audVol * _sfxVol`. Sharp creak `sfx('hit')` at tension≥0.85 (rate-limited 0.85s). Mirrors `stormAudio` lazy-build. Stopped in all 6 cleanup paths.
+- **Daily streak** (Plotline 2.3× DAU): `streak:{count,lastPlayed,max}` in `save_v1`; `localDayKey()` avoids UTC drift. Milestone toasts at 3/14/100; real `streak_7`/`streak_30` achievements with progress bars. New "Streaks" category. HUD pill on s1: 🔥 Day N at the Bayou · best M.
+- **Catalyst events** (Sea of Thieves "story seeds"): `catalyst.maybe(t)` ticker mirrors `storm.maybe(t)`. Every 60–120s, 1.2% roll fires one of 3 audio-only events: gator splash + Lilly radio, distant barge horn + Fly radio, waterbird call + Reel radio. Guarded against `miniActive|_catchOpen|_peekOpen|DUCT.active|_castInFlight|_bobberState`.
+- **Stump rendering**: shared `CylinderGeometry` + `MeshStandardMaterial` across all 70 stumps (variance via `mesh.scale`/rotation). Same for 12 debris boxes. Skipped full `InstancedMesh` — r128 `instanceColor` needs shader-chunk patch + collision code iterates `stumps[]`.
+- **Mobile polish**: removed `user-scalable=no` from viewport (WCAG + iOS-ignores it); `touch-action:none` on canvas + #touch zone; `#touch button { min-width/height:48px }` (Material 48dp / HIG 44pt); one-shot `_audioCtx.resume()` on `pointerdown/touchend/keydown` for iOS Safari; unified `_isMob` const (now matches iPhone/iPad too).
+- **7 QA hooks**: `qaForceNibble`, `qaAudioProbe`, `qaAdvanceDay`, `qaResetStreak`, `qaTriggerCatalyst`, `qaForceFight`, `qaStumpCount`. Smoke now **38/38 PASS, 0 fatal**.
+
 ### Round 12 — hero identity overhaul + 3-stage fishing + mobile touch + golden hour + crayfish hole + boat horn + species log
 - **Hero identity overhaul**: full repaint per operative + UI tint.
   - **The Reel** → red hull + white pinstripes + blue racing stripe + gold star emblems (tournament-flashy).
