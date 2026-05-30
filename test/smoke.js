@@ -107,8 +107,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!baitPulse)fail('bait pulse class not applied');
     console.log('· bait pulse class applied');
 
+    // 6. Night sky: force night, confirm starfield + moon meshes exist, screenshot it.
+    const nightOk=await p.evaluate(()=>DS.qaForceNight());
+    if(!nightOk)fail('night-sky meshes (stars/moon) missing');
+    await sleep(1200);
+    await p.screenshot({path:path.join(os.tmpdir(),'dockshield_night.png')}).catch(()=>{});
+    console.log('· night sky renders');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
-    await sleep(1500);
+    await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
   }finally{
     await b.close();srv.kill();

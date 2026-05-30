@@ -65,6 +65,13 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Economy**: bait-counter pulse (`#h-bait` CSS animation, green on gain, red on spend).
 - **QA hooks**: `DS.qaDuctEscape(kind)`, `DS.qaUnlock(ids)`, `DS.qaPulseBait(d)`, `DS.getSave()` — all gated on `?qa=1`.
 
+### Visual round 3 — night sky + water reflection
+- **Night sky**: 520-point starfield on a high dome + a soft-textured moon & halo, faded in by darkness (`nightAmt` from sun height); moon arcs opposite the sun.
+- **Moon-glint**: the water glint now switches from warm sun (day) to cool moonlight (night) instead of vanishing.
+- **Water reflection**: PMREM env map (tiny sky gradient) on the water material only — metalness water now mirrors a believable sky instead of black. Defensive `try/catch` so it no-ops on backends that can't build it.
+- **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
+- **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot). Smoke now asserts 12 checks incl. night-sky meshes exist.
+
 ---
 
 ## Conventions

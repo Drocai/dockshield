@@ -235,6 +235,8 @@ const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.
 let _frame=0;
 // Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
 let _isNight=false;
+// Offset (seconds) added to the day/night cycle clock — QA hook uses it to force a time of day.
+let _dayOffset=0;
 // Track the last-displayed bait value so the HUD can pulse on any change (up or down).
 let _lastBait=0;
 function pulseBait(delta){
@@ -810,6 +812,35 @@ function initEngine(){
     });
     const sky=new THREE.Mesh(skyGeo,skyMat);scene.add(sky);scene._sky=sky;
   }
+  // Soft radial sprite texture — a glowing disc with a feathered edge. Reused for the moon, its
+  // halo, and the star points so nothing renders as a hard square.
+  const _softTex=(()=>{
+    const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');
+    const g=x.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.35,'rgba(255,255,255,0.85)');
+    g.addColorStop(0.7,'rgba(255,255,255,0.18)');g.addColorStop(1,'rgba(255,255,255,0)');
+    x.fillStyle=g;x.fillRect(0,0,64,64);
+    const tx=new THREE.CanvasTexture(c);return tx;
+  })();
+  // Night sky — starfield (Points on a high dome) + a moon sprite. Hidden in daytime; faded in by
+  // the _isNight flag in loop(). Stars sit just inside the sky dome so fog doesn't eat them.
+  {
+    const N=520,pos=new Float32Array(N*3);
+    for(let i=0;i<N;i++){
+      // Upper hemisphere only — random points on a 460-radius dome.
+      const u=Math.random(),v=Math.random()*0.5;  // v<0.5 keeps them above the horizon
+      const th=u*Math.PI*2,ph=Math.acos(1-v*2*0.9);
+      pos[i*3]=Math.sin(ph)*Math.cos(th)*460;pos[i*3+1]=Math.abs(Math.cos(ph))*460+20;pos[i*3+2]=Math.sin(ph)*Math.sin(th)*460;
+    }
+    const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    const sm=new THREE.PointsMaterial({map:_softTex,color:0xcfe0ff,size:4,sizeAttenuation:false,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending});
+    const stars=new THREE.Points(sg,sm);stars.visible=false;scene.add(stars);scene._stars=stars;
+    // Moon — soft textured disc + a wider additive halo glow.
+    const moon=new THREE.Sprite(new THREE.SpriteMaterial({map:_softTex,color:0xeaf0ff,transparent:true,opacity:0,depthWrite:false}));
+    moon.scale.set(34,34,1);moon.visible=false;scene.add(moon);scene._moon=moon;
+    const moonHalo=new THREE.Sprite(new THREE.SpriteMaterial({map:_softTex,color:0x9fb8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0,depthWrite:false}));
+    moonHalo.scale.set(110,110,1);moonHalo.visible=false;scene.add(moonHalo);scene._moonHalo=moonHalo;
+  }
   cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);cam.position.set(0,15,30);cam.lookAt(0,0,0);
   ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
   ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.2;
@@ -831,13 +862,27 @@ function initEngine(){
   scene._sunDisc=sunDisc;scene._sunHalo=sunHalo;scene._sunGlow=sunGlow;
   // Water sun-glint — an additive sprite on the water plane along the sun's bearing. Cheap.
   // Updated in loop() with the sun arc; hidden at night via the _isNight flag.
-  const glintMat=new THREE.SpriteMaterial({color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.55,depthWrite:false});
+  const glintMat=new THREE.SpriteMaterial({map:_softTex,color:0xfff2c0,blending:THREE.AdditiveBlending,transparent:true,opacity:0.55,depthWrite:false});
   const sunGlint=new THREE.Sprite(glintMat);sunGlint.scale.set(60,18,1);sunGlint.position.set(0,0.12,-60);scene.add(sunGlint);scene._sunGlint=sunGlint;
 
   // Water — deeper blue-green, more reflective
   // Free-roam world: 1200×1200 water plane (was 800×800) so there's room to actually drive.
   waterGeo=new THREE.PlaneGeometry(1200,1200,96,96);
-  const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMapIntensity:1.2});
+  // Water reflection env — a tiny vertical sky gradient through PMREM so the metalness water
+  // mirrors a believable sky instead of reflecting black. Targeted to the water only (not
+  // scene.environment) so it doesn't over-brighten every other material. Defensive: no-ops if the
+  // GL context can't build it (e.g. some headless backends).
+  let _waterEnv=null;
+  try{
+    const ec=document.createElement('canvas');ec.width=16;ec.height=64;const ex=ec.getContext('2d');
+    const eg=ex.createLinearGradient(0,0,0,64);
+    eg.addColorStop(0,'#3b6280');eg.addColorStop(0.45,'#1a3a55');eg.addColorStop(1,'#06121e');
+    ex.fillStyle=eg;ex.fillRect(0,0,16,64);
+    const et=new THREE.CanvasTexture(ec);et.mapping=THREE.EquirectangularReflectionMapping;
+    const pmrem=new THREE.PMREMGenerator(ren);_waterEnv=pmrem.fromEquirectangular(et).texture;
+    et.dispose();pmrem.dispose();
+  }catch(e){_waterEnv=null}
+  const wM=new THREE.MeshStandardMaterial({color:0x0b3038,roughness:0.15,metalness:0.75,transparent:true,opacity:0.94,envMap:_waterEnv,envMapIntensity:1.2});
   waterOZ=new Float32Array(waterGeo.attributes.position.count);
   for(let i=0;i<waterGeo.attributes.position.count;i++)waterOZ[i]=waterGeo.attributes.position.getZ(i);
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
@@ -2034,27 +2079,35 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     const rim=sp>0.6?(sp-0.6)*0.7:0;
     f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05)}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
+  // _dayOffset lets the QA hook jump the cycle (e.g. force night for a screenshot) without waiting.
   if(scene._sunDisc&&scene._sun){
-    const cyc=(t%360)/360,ang=cyc*Math.PI*2;
+    const cyc=((t+_dayOffset)%360+360)%360/360,ang=cyc*Math.PI*2;
     const sunY=Math.sin(ang)*60+30;const sunX=Math.cos(ang)*120;
     scene._sunDisc.position.set(sunX,sunY,-280);if(scene._sunHalo)scene._sunHalo.position.copy(scene._sunDisc.position);if(scene._sunGlow)scene._sunGlow.position.copy(scene._sunDisc.position);
     // Cool when low (night-ish), warm at midday.
     const dayness=Math.max(0,Math.sin(ang));
     scene._sun.intensity=0.4+dayness*1.0;
-    // Water sun-glint: project sun direction onto the water plane in front of the camera.
-    // Opacity scales with dayness so it disappears at night, falls off at low sun angles.
+    // Water glint: a streak on the water along the light's bearing in front of the camera. Warm
+    // sun by day, cool moonlight by night — so the reflection always reads.
     if(scene._sunGlint){const gl=scene._sunGlint;const dx=Math.cos(ang);const ahead=cam?cam.position:bMesh.position;
       gl.position.set(ahead.x+dx*40,0.12,ahead.z-60+sunY*0.4);
-      gl.material.opacity=Math.max(0,dayness*0.6);gl.visible=dayness>0.05}
+      if(dayness>0.05){gl.material.color.setHex(0xfff2c0);gl.material.opacity=dayness*0.6;gl.visible=true}
+      else{gl.material.color.setHex(0xaec6ff);gl.material.opacity=0.22;gl.visible=true}}
     // Night hysteresis: flip on at sunY<25 (low sun), off at sunY>35 — prevents flicker at dusk.
     if(!_isNight&&sunY<25)_isNight=true;else if(_isNight&&sunY>35)_isNight=false;
+    // Night sky: fade stars + moon in/out with how dark it is. Moon arcs opposite the sun.
+    const nightAmt=Math.max(0,Math.min(1,(28-sunY)/40));  // 0 at high sun, ramps in as it sets
+    if(scene._stars){const on=nightAmt>0.02;scene._stars.visible=on;if(on)scene._stars.material.opacity=nightAmt*0.9*(0.85+Math.sin(t*1.5)*0.15)}
+    if(scene._moon){const on=nightAmt>0.02;const mx=-sunX,my=Math.max(40,-sunY+90);
+      [scene._moon,scene._moonHalo].forEach(s=>{if(s){s.visible=on;s.position.set(mx,my,-300)}});
+      if(on){scene._moon.material.opacity=nightAmt*0.95;if(scene._moonHalo)scene._moonHalo.material.opacity=nightAmt*0.35}}
     if(S.wx.c==='Clear'){scene.background.r=0.027+dayness*0.020;scene.background.g=0.082+dayness*0.030;scene.background.b=0.125+dayness*0.030;
       // Keep fog tracking the sky so the horizon doesn't read as a fixed band at night.
       if(scene.fog)scene.fog.color.lerp(scene.background,0.05)}
   }
   // Sky-dome gradient tracks dayness + weather tint. Top stays cooler than bottom band.
   if(scene._sky){
-    const cyc=(t%360)/360,ang=cyc*Math.PI*2,dayness=Math.max(0,Math.sin(ang));
+    const cyc=((t+_dayOffset)%360+360)%360/360,ang=cyc*Math.PI*2,dayness=Math.max(0,Math.sin(ang));
     const wxC=S.wx.c==='Rain'||S.wx.c==='Drizzle'?0:S.wx.c==='Clouds'||S.wx.c==='Overcast'?0.4:1;
     const u=scene._sky.material.uniforms;
     u.topColor.value.setRGB(0.02+dayness*0.04*wxC,0.05+dayness*0.06*wxC,0.10+dayness*0.10*wxC);
@@ -2693,6 +2746,13 @@ function qaUnlock(ids){
   ids.forEach(id=>{if(ACH[id])pushAchToast(ACH[id])});return true;
 }
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,getSave,mode:GAME_MODE};
+// QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
+// can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
+function qaForceNight(){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  const t=Date.now()*0.001;_dayOffset=(270-((t%360)))-0;  // land the cycle at 270° (sunY≈-30)
+  return !!(scene&&scene._stars&&scene._moon);
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,getSave,mode:GAME_MODE};
 })();
 
