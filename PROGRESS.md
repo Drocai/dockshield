@@ -72,6 +72,14 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 6+7 — Codex / forage backdrops / Boatworks polish / bobber-in-boss / thunder ambience
+- **Codex entries** for the Duct Tape Lure (locked until crafted) and Gator King (locked until defeated). Color-coded blocks with lore, live stats, and unlock state.
+- **Forage backdrops** for all 4 games via a shared `mini.paintForageBg(ctx,W,H,core,edge,grain)` helper — biome-specific palettes (worm dirt, bug meadow + grass tufts, frog marsh + lily pads, minnow water + current lines). No more flat color boxes.
+- **Boatworks cost preview**: every upgrade button now shows the post-purchase balance as a native title tooltip on hover, plus a gold "BEST VALUE" badge on the cheapest currently-buyable upgrade.
+- **Bobber-bounce in the boss arena's phase-3**: a small rhythm bar with tap-on-peak (`B`) gives a +2.5% tension nudge — lets the player hold the bar in the release sweet-spot longer instead of relying purely on auto-climb.
+- **Storm ambience** (`stormAudio`): low-pass-filtered noise loop that fades up during Rain/Drizzle and down when it clears. Mute-gated, built lazily on the shared AudioContext, stopped on photo/end/reset.
+- Smoke now **20/20 PASS, 0 fatal** — adds Gator King UI, Codex polish entries, and Boatworks cost preview assertions.
+
 ### Round 5 — Duct Tape Lure + bobber-bounce in regular fight + Gator King + lightning
 - **Duct Tape Lure** (`baitInv.ducttape`): craftable at any tackle shop from rare forage (3 crayfish + 4 frog + 6 minnow). Equipping it during a Duct fight widens the bobber peak window from 8% to 28%. Still doesn't catch him. Lore lands: "people swear by it, doesn't work." Achievement: `duct_lure_crafted`.
 - **Bobber-bounce in the regular fishing fight**: same rhythm mechanic as the Duct chase, optional, bonus progress on peak hits. Rod tier (`eqRod().control`) widens the peak window — gear gates the difficulty.

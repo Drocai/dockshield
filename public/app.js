@@ -268,6 +268,14 @@ const mini={
   // mini.finish() drains them in a single sweep, regardless of which exit path fires.
   _teardowns:[],
   addTeardown(fn){this._teardowns.push(fn)},
+  // Shared backdrop painter for forage canvas games — radial vignette + faint grain stippling so
+  // none of them read as flat color boxes. Each caller passes its biome's "core" + "edge" colors.
+  paintForageBg(ctx,W,H,core,edge,grain){
+    const g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,Math.max(W,H));
+    g.addColorStop(0,core);g.addColorStop(0.55,edge);g.addColorStop(1,'#0a0d0c');
+    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=grain;for(let i=0;i<70;i++)ctx.fillRect((i*97)%W,(i*131)%H,1,1);
+  },
   finish(dp,score,radioLine,who){
     // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
@@ -484,7 +492,12 @@ const mini={
       }else{
         body=`<div class="m-sub" style="color:#fbcf3b">Bar climbs as you reel. Release at peak — not too soon, not after the spike.</div>
           <div style="height:22px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin:8px 0"><div id="m-b-bar" style="height:100%;width:${tension*100}%;background:linear-gradient(90deg,#3b82f6,#10b981,#fbcf3b,#ef4444);transition:width 0.05s linear"></div></div>
-          <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE</button>`;
+          <div style="margin:6px 0 2px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between"><span>Bobber rhythm</span><span style="color:#fbcf3b">tap <b>B</b> on the peak · streak <span id="b-streak">0</span></span></div>
+          <div style="position:relative;height:16px;border-radius:6px;background:rgba(3,7,18,0.5);overflow:hidden;margin-bottom:8px">
+            <div id="b-peak" style="position:absolute;top:0;bottom:0;left:46%;width:8%;background:rgba(251,207,59,0.18);border-left:1px dashed rgba(251,207,59,0.6);border-right:1px dashed rgba(251,207,59,0.6)"></div>
+            <div id="b-bob" style="position:absolute;top:50%;left:0;width:11px;height:11px;margin:-5px 0 0 -5px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#fbcf3b 70%,#a06600);box-shadow:0 0 7px rgba(251,207,59,0.7)"></div>
+          </div>
+          <button class="btn bp" id="m-b-release" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 16px rgba(16,185,129,0.4)">RELEASE (tap B for tension nudge)</button>`;
       }
       card.innerHTML=`<div class="m-kicker" style="color:#9333ea">${dp.userData.type.n} · ${phName}</div><div class="m-title">${phase===1?'Crack the shell.':phase===2?'Catch the breach.':'Bring it up.'}</div>${body}<button class="btn bx" id="m-b-flee" style="margin-top:8px">Cut Line (-30 hull)</button>`;
       if(phase===1)$('m-b-ping').onclick=()=>{hits++;sfx('ping');if(hits>=need){phase=2;_bossPhaseFlash();startLure()}render()};
@@ -506,8 +519,29 @@ const mini={
       // Missed → back to phase 1, need one more hit
       phase=1;need=Math.min(8,need+1);render();
     };
+    // Phase-3 bobber-bounce: tap B on the peak window for a small tension nudge — gives the player
+    // a way to hold the bar in the release sweet-spot longer instead of hoping the climb rate hits 0.85.
+    let bobT=0,bobFreq=1.3+Math.random()*0.5,bobPhase=Math.random()*Math.PI*2,bossStreak=0;
+    const bobPos=()=>0.5+Math.sin(bobT*bobFreq+bobPhase)*0.45;
+    const bobInPeak=()=>{const p=bobPos();return p>=0.46&&p<=0.54};
+    const tapBoss=()=>{
+      if(phase!==3)return;
+      if(bobInPeak()){
+        bossStreak++;tension=Math.min(1,tension+0.025);
+        const bb=$('b-bob'),be=$('b-streak');if(bb){bb.style.filter='brightness(2)';setTimeout(()=>bb&&(bb.style.filter='none'),100)}if(be)be.textContent=bossStreak;
+        sfx('ping');bobFreq=1.0+Math.random()*0.9;bobPhase=Math.random()*Math.PI*2;
+      }else{
+        bossStreak=0;const be=$('b-streak');if(be)be.textContent=0;sfx('hit');
+        bobFreq=0.9+Math.random()*1.1;bobPhase=Math.random()*Math.PI*2;
+      }
+    };
     const startReel=()=>{
-      lureWindow=setInterval(()=>{tension=Math.min(1,tension+0.012);const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';if(tension>=1){clearInterval(lureWindow);phase=3;render()}},50);
+      lureWindow=setInterval(()=>{
+        tension=Math.min(1,tension+0.012);
+        const bar=$('m-b-bar');if(bar)bar.style.width=(tension*100)+'%';
+        bobT+=0.05;const bb=$('b-bob');if(bb)bb.style.left=(bobPos()*100)+'%';
+        if(tension>=1){clearInterval(lureWindow);phase=3;render()}
+      },50);
       mini.addTeardown(()=>clearInterval(lureWindow));
     };
     const release=()=>{
@@ -533,7 +567,10 @@ const mini={
     };
     const lose=()=>{_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
     // Spacebar fires the phase-1 ping
-    const keyHandler=e=>{if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}};
+    const keyHandler=e=>{
+      if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}
+      if(e.code==='KeyB'&&miniActive&&phase===3&&e.type==='keydown'){e.preventDefault();tapBoss()}
+    };
     document.addEventListener('keydown',keyHandler);
     mini.addTeardown(()=>document.removeEventListener('keydown',keyHandler));
     el.style.display='flex';render();
@@ -786,11 +823,7 @@ const mini={
     const clods=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)clods.push({x:off+c*cell,y:off+r*cell,r:Math.random()<0.05?0:1,t:0});
     let worms=0,crickets=0,t=22;const G={alive:true};
     const draw=()=>{
-      // Layered backdrop: radial vignette + grain stippling so it doesn't look like a flat brown box.
-      const g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,Math.max(W,H));
-      g.addColorStop(0,'#3a2812');g.addColorStop(0.55,'#2a1d0e');g.addColorStop(1,'#150c06');
-      ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
-      ctx.fillStyle='rgba(120,80,40,0.07)';for(let i=0;i<60;i++)ctx.fillRect((i*97)%W,(i*131)%H,1,1);
+      mini.paintForageBg(ctx,W,H,'#3a2812','#2a1d0e','rgba(120,80,40,0.07)');
       for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill();
         // Dug-out highlight ring so the player can read "this one's done"
         ctx.strokeStyle='rgba(120,80,40,0.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(c.x,c.y,16,0,Math.PI*2);ctx.stroke()}}
@@ -818,7 +851,13 @@ const mini={
     const cv=$('m-fb-cv'),ctx=cv.getContext('2d');
     const bugs=[];const G={alive:true};let crickets=0,t=22;
     const spawn=()=>{if(bugs.length>5)return;const fromLeft=Math.random()<0.5;bugs.push({x:fromLeft?-10:W+10,y:20+Math.random()*(H-40),vx:(fromLeft?1:-1)*(1.3+Math.random()*1.7),vy:(Math.random()-0.5)*0.3,life:1})};
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#3a5018','#1f2a14','rgba(180,200,80,0.05)');
+      // Tufts of grass — random vertical slashes at deterministic positions for an alive backdrop.
+      ctx.strokeStyle='rgba(140,170,80,0.25)';ctx.lineWidth=1;
+      for(let i=0;i<22;i++){const x=(i*47)%W,y=H-((i*61)%30)-2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+2,y-8-((i*3)%4));ctx.stroke()}
+      for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const b of bugs){if(b.life>0&&Math.hypot(b.x-mx,b.y-my)<14){b.life=0;crickets++;baitInv.cricket++;$('m-fb-c').textContent=crickets;sfx('swat');persist();break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fb-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);onUnlock('first_forage');mini.finishForage(`${crickets} crickets in the box.`,crickets*6)}},1000);
     const sp=setInterval(spawn,500);
@@ -842,7 +881,13 @@ const mini={
       <button class="btn bx" id="m-fg-q">Pack Up</button>`;
     const cv=$('m-fg-cv'),ctx=cv.getContext('2d');
     const frogs=[{x:W/2,y:H/2,still:0.7,t:0}];const G={alive:true};let caught=0,t=25;
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#2c4a28','#16241a','rgba(110,180,110,0.05)');
+      // Lily-pad blobs to read as a swamp surface, deterministic so the marsh looks lived-in.
+      ctx.fillStyle='rgba(60,110,60,0.55)';
+      for(let i=0;i<6;i++){const x=((i*113)%(W-40))+20,y=((i*191)%(H-40))+20;ctx.beginPath();ctx.ellipse(x,y,18,12,(i*0.5)%6,0,Math.PI*2);ctx.fill()}
+      for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}
+    };
     cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(let i=0;i<frogs.length;i++){const f=frogs[i];if(Math.hypot(f.x-mx,f.y-my)<16&&f.t>=f.still){caught++;baitInv.frog++;$('m-fg-f').textContent=caught;sfx('croak');persist();frogs.splice(i,1);if(frogs.length<2)frogs.push({x:30+Math.random()*(W-60),y:30+Math.random()*(H-60),still:0.5+Math.random()*0.5,t:0});break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fg-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} frogs.`,caught*12)}},1000);
     const rf=setInterval(()=>{if(!G.alive)return;for(const f of frogs){f.t+=0.06;if(f.t>f.still+0.6){f.x=30+Math.random()*(W-60);f.y=30+Math.random()*(H-60);f.t=0;f.still=0.5+Math.random()*0.5}}draw()},60);
@@ -867,7 +912,14 @@ const mini={
     const cv=$('m-fm-cv'),ctx=cv.getContext('2d');
     const m=[];const G={alive:true,drag:null};let caught=0,cray=0,t=22;
     for(let i=0;i<10;i++)m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'});
-    const draw=()=>{ctx.clearRect(0,0,W,H);for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}};
+    const draw=()=>{
+      mini.paintForageBg(ctx,W,H,'#0e3848','#06181f','rgba(126,200,227,0.06)');
+      // Faint horizontal current lines so the water reads as moving even when minnows pause.
+      ctx.strokeStyle='rgba(126,200,227,0.08)';ctx.lineWidth=1;
+      for(let i=0;i<8;i++){const y=(i*H/8+((Date.now()*0.02+i*40)%20));ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+      for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}
+      if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}
+    };
     const xy=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]};
     cv.onmousedown=e=>{if(!G.alive)return;const[x,y]=xy(e);G.drag={x0:x,y0:y,x1:x,y1:y}};
     cv.onmousemove=e=>{if(!G.drag)return;const[x,y]=xy(e);G.drag.x1=x;G.drag.y1=y};
@@ -2113,7 +2165,7 @@ function sfx(type){
   g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
-function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted)engineAudio.stop();else sfx('click')}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop()}else sfx('click')}
 
 // === CONTINUOUS ENGINE + AMBIENT AUDIO ===
 // A throaty motor whose pitch + volume track boat speed, plus a constant low water-lap bed. Built
@@ -2148,6 +2200,31 @@ const engineAudio={on:false,osc:null,sub:null,gain:null,lapGain:null,
     this.lapGain.gain.setTargetAtTime((0.012+a*0.02)*_audVol,now,0.2);
   },
   stop(){if(this.on&&_audioCtx){const now=_audioCtx.currentTime;this.gain.gain.setTargetAtTime(0,now,0.15);this.lapGain.gain.setTargetAtTime(0,now,0.2)}}
+};
+// Storm ambience — a low-pass-filtered noise loop that fades up in rain and down when it clears.
+// Adds depth without competing with the motor or lap. Built lazily, mute-gated, idempotent.
+const stormAudio={on:false,gain:null,src:null,
+  ensure(){
+    if(this.on||muted)return;
+    try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
+    const ctx=_audioCtx;
+    const buf=ctx.createBuffer(1,ctx.sampleRate*3,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*0.55;
+    const src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+    const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=180;lp.Q.value=0.7;
+    this.gain=ctx.createGain();this.gain.gain.value=0;
+    src.connect(lp);lp.connect(this.gain);this.gain.connect(ctx.destination);src.start();
+    this.src=src;this.on=true;
+  },
+  update(){
+    if(muted)return;
+    const raining=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
+    if(raining&&!this.on)this.ensure();
+    if(!this.on)return;
+    const target=raining?0.045*_audVol:0;
+    this.gain.gain.setTargetAtTime(target,_audioCtx.currentTime,0.5);
+  },
+  stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.2)}
 };
 // Screen-shake magnitude — bumped by surge/damage, decays each frame in the camera follow.
 let _shake=0;
@@ -2454,7 +2531,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
-    engineAudio.update(spd);
+    engineAudio.update(spd);stormAudio.update();
   }else if(photoMode){
     // Photo mode — free orbit around the boat. Arrows orbit/tilt, Z/X zoom. Boat is frozen.
     photoCam.yaw+=(keys.ArrowLeft?-0.025:0)+(keys.ArrowRight?0.025:0);
@@ -2462,7 +2539,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
     const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
-    engineAudio.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
+    engineAudio.stop();stormAudio.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -2527,7 +2604,7 @@ function startGame(){S.on=true;document.body.classList.add('playing');_lastBait=
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -2665,7 +2742,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
@@ -2794,14 +2871,27 @@ const SHOP_ITEMS=[
 // tier (one above what you own) as buyable; already-owned tiers show ✓ OWNED.
 function renderBoatworksRows(){
   const heroBoat=BT[S.bc].n;const hu=boatUpgrades[S.bc]||{};
-  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Boat Upgrades · ${heroBoat}</div>`;
+  // Identify the cheapest *buyable* next-tier slot for a "BEST VALUE" badge so the player has a
+  // tasteful nudge toward the next upgrade rather than staring at a wall of identical rows.
+  let bestCost=Infinity,bestKey=null;
+  for(const slot of ['engine','lights','armor','electronics']){
+    const cur=hu[slot]||0,tier=cur+1;
+    if(tier>=BOAT_UP[slot].length)continue;
+    const it=BOAT_UP[slot][tier];
+    if(bait>=it.cost&&it.cost<bestCost){bestCost=it.cost;bestKey=slot+':'+tier}
+  }
+  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Boat Upgrades · ${heroBoat} <span style="color:#475569">· hover for after-purchase balance</span></div>`;
   for(const slot of ['engine','lights','armor','electronics']){
     const cur=hu[slot]||0;
     for(let tier=1;tier<BOAT_UP[slot].length;tier++){
       const it=BOAT_UP[slot][tier];const owned=cur>=tier,buyable=cur===tier-1&&bait>=it.cost;
-      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5}">
+      // Cost preview: post-purchase bait balance + delta, as a native title tooltip on the button.
+      const tip=owned?'Already owned':`After: ${Math.max(0,bait-it.cost)} bait (${bait}−${it.cost})`;
+      const isBest=bestKey===slot+':'+tier;
+      html+=`<div style="position:relative;display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${owned||buyable?1:0.5};${isBest?'box-shadow:0 0 0 1px rgba(251,207,59,0.55);':''}">
+        ${isBest?`<span style="position:absolute;top:-6px;right:10px;background:#fbcf3b;color:#1a1a2e;font:700 8px 'JetBrains Mono',monospace;letter-spacing:1px;padding:2px 6px;border-radius:3px">BEST VALUE</span>`:''}
         <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${it.e} ${it.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${slot}</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${it.d}</div></div>
-        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
+        <button class="btn bp up-buy" data-slot="${slot}" data-tier="${tier}" title="${tip}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${owned?'#1f5f3a':buyable?'#f97316':'#374151'}">${owned?'✓ OWNED':bait>=it.cost?it.cost+' bait':'—'}</button>
       </div>`;
     }
   }
@@ -2945,6 +3035,26 @@ function openCodex(){
       <div><div style="font-weight:700;color:#ffd23f">Duct <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">uncatchable</span></div>
       <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">Rubber ducky. Duct tape on his back. Nobody has ever landed him — and you won't either.<br>Spotted <b style="color:#fde68a">${ductStats.sightings}</b> · Almost had him <b style="color:#fde68a">${ductStats.nearCatches}</b> · Attempts <b style="color:#fde68a">${ductStats.attempts}</b></div></div>
     </div>
+    ${(()=>{
+      // Duct Tape Lure — Codex entry. Locked until crafted at least once.
+      const crafted=achievements.has('duct_lure_crafted')||(baitInv.ducttape||0)>0;
+      return `<div style="margin:10px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${crafted?'#ffd23f':'#475569'};text-transform:uppercase">Craftable · The Lure</div>
+        <div style="display:flex;align-items:center;gap:10px;background:rgba(255,210,63,0.04);border:1px dashed rgba(255,210,63,${crafted?0.35:0.15});border-radius:8px;padding:10px 12px;opacity:${crafted?1:0.55}">
+          <div style="font-size:26px;${crafted?'':'filter:grayscale(1)'}">🦆</div>
+          <div><div style="font-weight:700;color:${crafted?'#ffd23f':'#64748b'}">${crafted?'Duct Tape Lure':'🔒 ???'}</div>
+          <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">${crafted?`A wad of tape on a hook. People at the pier swear it "almost" works. The bobber peak window opens up <b style="color:#fde68a">3.5×</b> wider during a Duct chase. He still doesn't land.<br>On hand: <b style="color:#fde68a">${baitInv.ducttape||0}</b>`:'Recipe is at the tackle shop. Forage the rare bait and you\'ll see it.'}</div></div>
+        </div>`;
+    })()}
+    ${(()=>{
+      // Gator King — Codex entry. Locked until first defeat.
+      const won=achievements.has('gator_king');
+      return `<div style="margin:10px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${won?'#4a8a32':'#475569'};text-transform:uppercase">Mini-Boss · East Rocks</div>
+        <div style="display:flex;align-items:center;gap:10px;background:rgba(74,138,50,0.06);border:1px dashed rgba(74,138,50,${won?0.45:0.15});border-radius:8px;padding:10px 12px;opacity:${won?1:0.6}">
+          <div style="font-size:26px;${won?'':'filter:grayscale(1)'}">🐊</div>
+          <div><div style="font-weight:700;color:${won?'#86c97c':'#64748b'}">${won?'Gator King':'🔒 ???'}</div>
+          <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">${won?'Took him at the Crayfish Hole. He stays put for the rest of the run, but he\'ll be back next time.':'Land every gator on the bayou. Then go to East Rocks.'}</div></div>
+        </div>`;
+    })()}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   el.style.display='flex';
 }
@@ -3007,7 +3117,9 @@ function qaDuctEscape(kind){
 function qaUnlock(ids){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
   if(!Array.isArray(ids))return false;
-  ids.forEach(id=>{if(ACH[id])pushAchToast(ACH[id])});return true;
+  // Real unlock path — adds to the persistent achievements Set + fires the toast through onUnlock.
+  // Falls back to a raw toast if the id isn't a registered achievement (so synthetic ids still flash).
+  ids.forEach(id=>{if(ACH[id]){onUnlock(id)}else{pushAchToast({n:id,d:'(qa)'})}});return true;
 }
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke

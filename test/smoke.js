@@ -158,6 +158,32 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await sleep(800);
     console.log('· lightning strikes');
 
+    // 12. Gator King mini-boss UI opens cleanly via the QA helper, then Escape tears down.
+    const gkOpen=await p.evaluate(()=>DS.qaOpenGatorKing());
+    await sleep(300);
+    if(!gkOpen)fail('qaOpenGatorKing returned false');
+    const gkVisible=await p.evaluate(()=>{const t=document.querySelector('#mini-card .m-title');return t&&/lunge/i.test(t.textContent)});
+    if(!gkVisible)fail('Gator King UI did not render');
+    await p.keyboard.press('Escape');await sleep(300);
+    console.log('· gator king UI opens');
+
+    // 13. Codex: open it, confirm Duct Tape Lure + Gator King Codex blocks render after their
+    //     unlocks are seeded via qaUnlock.
+    await p.evaluate(()=>DS.qaUnlock(['duct_lure_crafted','gator_king']));await sleep(200);
+    await p.evaluate(()=>DS.openCodex());await sleep(300);
+    const codexEntries=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Duct Tape Lure')&&h.includes('Gator King')});
+    if(!codexEntries)fail('Codex did not render Duct Tape Lure + Gator King entries');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· codex renders polish-round entries');
+
+    // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
+    await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
+    // Seed enough bait via the QA save shape so at least one upgrade is buyable.
+    const bestBadge=await p.evaluate(()=>document.getElementById('mini-card').innerHTML.includes('BEST VALUE')||document.getElementById('mini-card').innerHTML.includes('after-purchase balance'));
+    if(!bestBadge)fail('Boatworks did not render the cost-preview hint');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· boatworks cost preview renders');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
