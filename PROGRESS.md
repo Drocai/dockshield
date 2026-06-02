@@ -72,6 +72,14 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 16 — hero callout + run-best pill + wind arrow + auto-save dot + streak-reset friendliness
+- **Cinematic hero ID card** — flashes the operative's badge + name + ability after pick on s1 (~1.2s, click-to-skip). Reinforces hero identity right at run start.
+- **Run-best pill** — top-center "NEW BEST · 🐊 Bull gator +160" flash when a catch beats this run's prior best. Separate from `bestFish` (all-time persisted).
+- **Wind direction arrow** — small rotating glyph next to the weather pill that points where the wind is going (meteorological `wd + 180`).
+- **Auto-save indicator** — tiny green dot next to the HUD score, pulses opaque for 500ms on every `persist()` call.
+- **Streak-reset toast** — friendly "STREAK RESET · Your N-day streak broke. Welcome back." when a player returns after a gap with a streak ≥3 days, before the new streak starts counting up.
+- Smoke now **48/48 PASS, 0 fatal**.
+
 ### Round 15 — tab-pause + underwater fish silhouette + hook-set celebration + per-hero rod color + achievements share PNG
 - **Tab visibility pause** — `visibilitychange` listener silences engine/storm/music/reel/camp audio, stashes `S.on`, restores on visible. Critical baseline so the game doesn't bleed in a background tab.
 - **Underwater fish silhouette** — a soft dark ellipse circles the bobber during the wait phase (radius 1.8u), spirals in during pretell (radius 0.6u), vanishes on nibble. Sells "something is swimming around your line."

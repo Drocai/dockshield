@@ -208,6 +208,10 @@ function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
   try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,tutorialSeen}))}catch(e){}
+  // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
+  // isn't in the DOM yet (very-early bootstrap persist).
+  const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
+  if(dot){dot.style.opacity='1';clearTimeout(persist._dot);persist._dot=setTimeout(()=>{dot.style.opacity='0.25'},500)}
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
@@ -2306,6 +2310,9 @@ function landFish(fish,spot){
     if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full');
   }
   if(fish.gator)onUnlock('gator_wrangler');
+  // Track the biggest fish in THIS run and flash a "NEW BEST" pill when it changes. Separate from
+  // bestFish (all-time, persisted) and runCatches[] (chronological run log).
+  if(!S.runBest||fish.s>(S.runBest.s||0)){S.runBest={n:fish.n,e:fish.e,r:fish.r,s:fish.s};flashRunBest(S.runBest)}
   // Persist the biggest single catch ever (by score value) — surfaced in the Codex + trophy peek.
   if(!bestFish||fish.s>(bestFish.s||0)){bestFish={n:fish.n,e:fish.e,r:fish.r,s:fish.s,date:new Date().toISOString().slice(0,10)};persist()}
   sfx(fish.r==='legendary'?'legendary':'catch');
@@ -2923,6 +2930,15 @@ function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
   achievements.add(id);persist();pushAchToast(ACH[id]);sfx('win');
 }
+// Top-center "NEW BEST" pill — fires when S.runBest is replaced. Non-blocking, mute-friendly.
+function flashRunBest(f){
+  const pill=$('run-best');if(!pill)return;
+  const rcol=({legendary:'#ffd23f',rare:'#a78bfa',uncommon:'#3b82f6',common:'#10b981'})[f.r]||'#fb923c';
+  pill.style.borderColor=rcol;pill.style.color=rcol;
+  pill.innerHTML=`<span style="font-size:10px;letter-spacing:2px;color:#fbcf3b">NEW BEST</span> &nbsp; ${f.e} <b>${f.n}</b> <span style="color:#fde68a">+${f.s}</span>`;
+  pill.style.display='block';pill.style.opacity='1';
+  clearTimeout(flashRunBest._t);flashRunBest._t=setTimeout(()=>{pill.style.opacity='0';setTimeout(()=>{if(pill.style.opacity==='0')pill.style.display='none'},400)},2800);
+}
 function showAchToast(a){
   const t=$('ach-toast');if(!t)return;
   t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div><div style="font-size:9px;color:#475569;margin-top:4px;letter-spacing:1px">tap to dismiss</div>`;
@@ -3211,16 +3227,20 @@ function startGame(){
   // gap→reset. Fires non-persistent milestone toasts at 3/14/100; real ACH at 7 + 30.
   {const today=localDayKey(),yesterday=localDayKey(-1);
    if(streak.lastPlayed!==today){
+     // Detect a broken streak BEFORE we reset — friendly nudge so the player knows what happened.
+     const broken=streak.lastPlayed&&streak.lastPlayed!==yesterday&&(streak.count||0)>=3;
+     const wasCount=streak.count||0;
      if(streak.lastPlayed===yesterday)streak.count=(streak.count||0)+1;
      else streak.count=1;
      streak.lastPlayed=today;streak.max=Math.max(streak.max||0,streak.count);
      persist();
+     if(broken)pushAchToast({n:'STREAK RESET',d:`Your ${wasCount}-day streak broke. Welcome back.`});
      if(streak.count===3||streak.count===14||streak.count===100)pushAchToast({n:'STREAK!',d:streak.count+' days at the Bayou.'});
      if(streak.count>=7)onUnlock('streak_7');
      if(streak.count>=30)onUnlock('streak_30');
    }
   }
-  S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];
+  S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;_castedThisRun=false;
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -3366,7 +3386,12 @@ function paintDiscount(){
 }
 
 // === SERVICES ===
-async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;$('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;applyWeatherVisuals()}
+async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;
+  const wxText=$('wx-w-text');if(wxText)wxText.textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;else $('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;
+  // Wind arrow — rotate the down-arrow glyph to the wind's "to" bearing (meteorological wd is the
+  // direction the wind comes FROM, so rotate by wd+180 to point where it's going).
+  const wxArrow=$('wx-arrow');if(wxArrow)wxArrow.style.transform=`rotate(${(S.wx.wd||0)+180}deg)`;
+  applyWeatherVisuals()}
 async function geocode(a){try{const r=await fetch('/api/geocode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address:a})});if(r.ok){const d=await r.json();if(d.lat&&d.lng)return{lat:d.lat,lng:d.lng}}return null}catch(e){return null}}
 async function saveData(w){
   if(!C.SUPABASE_URL||!C.SUPABASE_ANON_KEY)return;
@@ -3410,6 +3435,21 @@ function boat(c){
   document.body.classList.remove('hero-reel','hero-lilly','hero-fly');
   document.body.classList.add('hero-'+(c==='regular'?'reel':c==='pontoon'?'lilly':'fly'));
 }
+// Full-screen hero ID card — flashes role + name + ability after the player picks an operative.
+// One-shot DOM element; click anywhere to skip; auto-fades after 1.2s.
+function showHeroCallout(h){
+  const el=document.createElement('div');
+  el.style.cssText='position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;background:radial-gradient(ellipse at center,rgba(2,6,18,0.7) 0%,rgba(2,6,18,0.95) 100%);color:'+h.badge+';font-family:DM Sans,sans-serif;opacity:0;transition:opacity 0.35s ease-out;pointer-events:auto;cursor:pointer';
+  el.innerHTML=`<div style="font:700 11px JetBrains Mono,monospace;letter-spacing:5px;color:#94a3b8;text-transform:uppercase;margin-bottom:10px">Operative · ${h.role}</div>
+    <div style="font:800 72px DM Sans,sans-serif;letter-spacing:2px;text-shadow:0 4px 30px ${h.badge}66">${h.n.toUpperCase()}</div>
+    <div style="margin-top:14px;font:600 16px JetBrains Mono,monospace;color:#fbcf3b;letter-spacing:3px;text-transform:uppercase">READY</div>
+    <div style="margin-top:28px;font:11px JetBrains Mono,monospace;color:#64748b;letter-spacing:1px">${h.kit||''}</div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>{el.style.opacity='1'});
+  const fade=()=>{el.style.opacity='0';setTimeout(()=>el.remove(),400)};
+  const t1=setTimeout(fade,1100);
+  el.addEventListener('click',()=>{clearTimeout(t1);fade()},{once:true,passive:true});
+}
 function tier(t){S.ti=t;document.querySelectorAll('.to').forEach(el=>el.classList.toggle('on',parseInt(el.dataset.t)===t))}
 async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textContent='Generating Plan';$('lm').textContent='Building quote...';
   const d=S.discount||0;const price=Math.round(t.p*(1-d/100));
@@ -3431,6 +3471,9 @@ function reset(){S.on=false;S.played=false;document.body.classList.remove('playi
 // they don't override the hero pick (player keeps the operative they selected).
 function beginRun(){
   if(!S.lore)S.lore={};
+  // Cinematic hero ID card — flashes the selected operative's badge for ~1.2s on top of the
+  // lore question card. Pure CSS, mute-respecting click-to-skip.
+  if(S.bc&&HERO[S.bc])showHeroCallout(HERO[S.bc]);
   // Capture optional home dock address — used in launchGame() to spawn a personal rescue
   // mission at a deterministic spot derived from the address text.
   const hd=$('f-home-addr');S.homeAddr=hd?hd.value.trim():'';

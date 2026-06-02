@@ -444,6 +444,41 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!setOk)fail('hook-set celebration path threw');
     console.log('· hook-set celebration fires');
 
+    // === Round 16 assertions ===
+
+    // 40. Wind arrow renders + rotates with S.wx.wd.
+    const windOk=await p.evaluate(()=>{
+      const a=document.getElementById('wx-arrow');return a&&a.style.transform.includes('rotate');
+    });
+    if(!windOk)fail('wind arrow not rotated by fetchWx');
+    console.log('· wind direction arrow renders');
+
+    // 41. Auto-save dot pulses on persist — fire persist via a side effect (qaPulseBait calls
+    // persist transitively in earlier tests; here we verify the dot exists in the DOM).
+    const dotExists=await p.evaluate(()=>!!document.getElementById('save-dot'));
+    if(!dotExists)fail('save-dot indicator missing from HUD');
+    console.log('· auto-save dot present');
+
+    // 42. Run-best pill flashes when landFish records a new best. We can't easily fire landFish
+    // headlessly (it expects a fish + spot), so verify the run-best pill DOM exists.
+    const rbExists=await p.evaluate(()=>!!document.getElementById('run-best'));
+    if(!rbExists)fail('#run-best pill missing');
+    console.log('· run-best pill DOM ready');
+
+    // 43. Hero callout fires when beginRun is called — verify the showHeroCallout helper exists +
+    // can build the DOM element without throwing.
+    const heroOk=await p.evaluate(()=>{
+      try{
+        const before=document.querySelectorAll('div[style*="z-index:55"]').length;
+        // Manually invoke beginRun — we are already in a run, so it won't restart; but the callout
+        // path runs as long as S.bc is set.
+        DS.beginRun();
+        return true;
+      }catch(e){return false}
+    });
+    if(!heroOk)fail('beginRun (hero callout) threw');
+    console.log('· hero callout invokes cleanly');
+
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
