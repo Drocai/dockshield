@@ -9,5 +9,8 @@
     "smoke": "node test/smoke.js",
     "verify": "npm run check && npm run smoke"
   },
+  "devDependencies": {
+    "playwright": "^1.55.0"
+  },
   "license": "UNLICENSED"
 }

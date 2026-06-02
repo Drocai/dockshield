@@ -91,7 +91,7 @@ Mobile gets touch buttons for **PING / FISH/HOOK / DOCK / FORAGE / BOBBER B / HO
 
 ## Develop
 
-No install required — it's static. Serve `public/` and open it:
+No install is required to run the static game. Serve `public/` and open it:
 
 ```bash
 python3 -m http.server 8765 --directory public
@@ -99,10 +99,12 @@ python3 -m http.server 8765 --directory public
 ```
 
 ### Verify changes
-The whole front end is hand-written and verified without a bundler:
+The front end is hand-written and verified without a bundler. The smoke suite requires Playwright and Chromium:
 
 ```bash
-node --check public/app.js          # syntax gate
+npm install
+npx playwright install chromium
+npm run verify
 ```
 
 Add `?qa=1` to the URL to expose headless debug hooks on `DS` for smoke tests
