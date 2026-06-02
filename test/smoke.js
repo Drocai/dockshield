@@ -8,7 +8,8 @@
 //
 // Exit code 0 = PASS, 1 = FAIL.
 
-const {spawn}=require('child_process');
+const fs=require('fs');
+const http=require('http');
 const path=require('path');
 const os=require('os');
 let chromium;
@@ -20,9 +21,16 @@ const ROOT=path.join(__dirname,'..','public');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 (async()=>{
-  const srv=spawn('python3',['-m','http.server',String(PORT),'--directory',ROOT],{stdio:'ignore'});
-  const fail=m=>{console.error('FAIL:',m);srv.kill();process.exit(1)};
-  await sleep(1500);
+  const srv=http.createServer((req,res)=>{
+    const urlPath=decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname);
+    const filePath=path.join(ROOT,urlPath==='/'?'index.html':urlPath);
+    fs.readFile(filePath,(err,data)=>{
+      if(err){res.writeHead(404);res.end('Not found');return}
+      res.writeHead(200);res.end(data);
+    });
+  });
+  await new Promise(resolve=>srv.listen(PORT,'127.0.0.1',resolve));
+  const fail=m=>{console.error('FAIL:',m);srv.close();process.exit(1)};
   const errs=[];
   const b=await chromium.launch({headless:true,args:['--use-gl=swiftshader','--enable-webgl','--ignore-certificate-errors']});
   try{
@@ -405,12 +413,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // the listener throws. We can't read S directly (IIFE-scoped) so the assertion is just "no throw".
     const pauseRes=await p.evaluate(()=>{
       try{
-        document.dispatchEvent(new Event('visibilitychange'));
-        document.dispatchEvent(new Event('visibilitychange'));
-        return {ok:true};
+        const paused=DS.qaSetTabHidden(true);
+        const resumed=DS.qaSetTabHidden(false);
+        return {ok:true,paused,resumed};
       }catch(e){return {ok:false,err:String(e)}}
     });
     if(!pauseRes.ok)fail('visibilitychange handler threw: '+(pauseRes.err||''));
+    if(!pauseRes.paused||pauseRes.paused.hidden!==true||pauseRes.paused.on!==false||pauseRes.paused.weatherTimer!==true)fail('hidden-tab pause state incorrect: '+JSON.stringify(pauseRes.paused));
+    if(!pauseRes.resumed||pauseRes.resumed.hidden!==false||pauseRes.resumed.on!==true||pauseRes.resumed.weatherTimer!==true)fail('hidden-tab resume state incorrect: '+JSON.stringify(pauseRes.resumed));
     console.log('· tab visibility pause/resume wires');
 
     // 38. exportAchievements() returns true when there are unlocks, false when empty.
@@ -438,7 +448,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
   }finally{
-    await b.close();srv.kill();
+    await b.close();srv.close();
   }
   const expected=['Failed to load resource','/api/config','/api/geocode','api.openweathermap.org','WebGL','GroupMarker','net::ERR'];
   const fatal=errs.filter(e=>!expected.some(x=>e.includes(x)));

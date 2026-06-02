@@ -2687,7 +2687,7 @@ const reelAudio={on:false,osc:null,gain:null,filt:null,
     this.on=true;
   },
   update(tension){
-    if(muted){this.stop();return}
+    if(muted||_tabHidden){this.stop();return}
     if(!Number.isFinite(tension))return;  // setTargetAtTime rejects non-finite values
     if(!this.on)this.ensure();
     if(!this.on)return;
@@ -3256,7 +3256,7 @@ function startGame(){
   // Free-roam weather drifts: refetch + re-apply visuals every 45s so a long session sees the
   // sky/wind/rain actually change instead of being frozen at the launch reading.
   if(_wxTimer)clearInterval(_wxTimer);
-  if(GAME_MODE==='game')_wxTimer=setInterval(()=>{if(S.on)fetchWx();else{clearInterval(_wxTimer);_wxTimer=null}},45000);
+  if(GAME_MODE==='game')_wxTimer=setInterval(()=>{if(S.on&&!_tabHidden)fetchWx()},45000);
   if(GAME_MODE==='business')setPh(0);
   else{
     // Free-roam: no phase arc, but the hazards that were gated on phase>=1 (cryptid, blackwater
@@ -3486,16 +3486,19 @@ initEngine();wet.init();refreshTrophyPeek();applyGfx();
 // Pause when the tab is hidden — silence all continuous audio so we don't bleed in a background
 // tab, and stash S.on so we can restore it on visibilitychange→visible. The RAF loop is left
 // running (a paused tab throttles RAF automatically) so the scene is ready when the user returns.
-let _hiddenSavedOn=null;
-document.addEventListener('visibilitychange',()=>{
-  if(document.hidden){
+let _hiddenSavedOn=null,_tabHidden=false;
+function setTabHidden(hidden){
+  if(_tabHidden===hidden)return;
+  _tabHidden=hidden;
+  if(hidden){
     _hiddenSavedOn=S.on;S.on=false;
     engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();
   }else{
     if(_hiddenSavedOn===true)S.on=true;_hiddenSavedOn=null;
     if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
   }
-});
+}
+document.addEventListener('visibilitychange',()=>setTabHidden(document.hidden));
 // iOS Safari requires AudioContext.resume() inside a user-gesture handler. sfx() already lazy-
 // creates the ctx, but it can land in a 'suspended' state. Wire a one-shot pointerdown/touchend/
 // keydown that resumes it the first time the user actually does anything. {once:true} per type.
@@ -4190,6 +4193,11 @@ function qaStumpCount(){
   if(!scene||!scene._sharedStumpGeo)return 0;
   let n=0;scene.traverse(o=>{if(o.geometry===scene._sharedStumpGeo)n++});return n;
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,getSave,mode:GAME_MODE};
+function qaSetTabHidden(hidden){
+  if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  setTabHidden(Boolean(hidden));
+  return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
+}
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
