@@ -32,6 +32,8 @@ let speciesLog={};
 // Daily streak — increments on first startGame() of a new calendar day if yesterday was played,
 // resets to 1 on a gap. {count,lastPlayed:'YYYY-MM-DD',max}. UTC date drift avoided via localDayKey.
 let streak={count:0,lastPlayed:'',max:0};
+// Player identity — handle for share PNGs, boat name shown in HUD operative pill. Both optional.
+let playerHandle='',boatName='';
 // Per-day Duct sighting/attempt log (lore: "the pier keeps notes"). Keyed by YYYY-MM-DD,
 // each entry is {s,a,n} for sightings/attempts/near-catches. logDuct() bumps + trims to ~30 days.
 let ductLog={};
@@ -189,6 +191,8 @@ function loadSave(){
     if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
     if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
     if(d.streak&&typeof d.streak==='object')Object.assign(streak,d.streak);
+    if(typeof d.playerHandle==='string')playerHandle=d.playerHandle.slice(0,24);
+    if(typeof d.boatName==='string')boatName=d.boatName.slice(0,24);
     if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
@@ -207,7 +211,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -337,6 +341,9 @@ let _isNight=false;
 function localDayKey(offsetDays){const d=new Date();if(offsetDays)d.setDate(d.getDate()+offsetDays);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 // Offset (seconds) added to the day/night cycle clock — QA hook uses it to force a time of day.
 let _dayOffset=0;
+// Fight-mode flags — music.update reads them to switch into the 'chase' palette during Deep Dock
+// boss or Gator King fights. The Duct chase already exposes DUCT.engaged for the same purpose.
+let _bossActive=false,_gkActive=false;
 // Sun-arc edge-trigger state for golden-hour flash events (sunrise + sunset amber tint).
 let _lastDayness=null,_goldenFlashUntil=0;
 // Track the last-displayed bait value so the HUD can pulse on any change (up or down).
@@ -488,8 +495,8 @@ const mini={
   // Phase 3 (TAIL):   3 telegraphed tail-slap warnings; tap DODGE (Space) in the gold window of the
   //                   warning bar to avoid hull damage; 3 dodges → win.
   openGatorKing(dp){
-    miniActive=true;S.on=false;
-    const card=$('mini-card'),el=$('mini');if(!card||!el){mini.finish(dp,0,'Lost the line.','self');return}
+    miniActive=true;S.on=false;_gkActive=true;
+    const card=$('mini-card'),el=$('mini');if(!card||!el){_gkActive=false;mini.finish(dp,0,'Lost the line.','self');return}
     let phase=1,hits=0,need=5,playerHull=Math.round(S.hull),tension=0.3,progress=0,over=false,lungeT=null,lungeBar=0,lungeDir=1;
     let dodges=0,dodgeNeed=3,slapT=null,slapBar=0,slapArmed=false;  // phase 3 state
     // Lilly hero ability: damage resist trims gator strikes by 30% (10% baseline + 20% boss-arena).
@@ -597,6 +604,7 @@ const mini={
     const flee=()=>{S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
     const finishGK=won=>{
       over=true;
+      _gkActive=false;
       if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
       else{mini.finish(dp,0,'He rolled and snapped the line. Gone again.','lilly')}
     };
@@ -609,7 +617,7 @@ const mini={
   // Phase 3 (LINE): hold the harpoon line as it drags. A bar drifts; release at peak tension.
   // Win = +1500 score, +120 bait, unlock 'deep_dock', clears the special drop point. Lose = sink.
   openBoss(dp){
-    miniActive=true;S.on=false;
+    miniActive=true;S.on=false;_bossActive=true;
     const card=$('mini-card'),el=$('mini');
     // Hero ability hooks for the Deep Dock arena:
     //   The Fly:    -1 sonar hit needed in phase 1 (recon advantage), narrower phase-2 miss penalty
@@ -707,12 +715,13 @@ const mini={
       setTimeout(fn,600);
     };
     const win=()=>{
+      _bossActive=false;
       S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');
       // Clean run = boss never knocked the player below 50% of starting hull.
       if(_bossHullMin>=Math.max(50,_bossStartHull*0.5))onUnlock('boss_clean');
       _bossFinalBeat(()=>mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly'));
     };
-    const lose=()=>{_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
+    const lose=()=>{_bossActive=false;_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
     // Spacebar fires the phase-1 ping
     const keyHandler=e=>{
       if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}
@@ -1871,6 +1880,13 @@ function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT
   // Caustics shimmer — a wider additive ring that ripples under the boat. Cheap, big mood lift.
   const caustics=new THREE.Mesh(new THREE.RingGeometry(3.2,5.2,32),new THREE.MeshBasicMaterial({color:0x6fc8e8,blending:THREE.AdditiveBlending,transparent:true,opacity:0.25,side:THREE.DoubleSide,depthWrite:false}));
   caustics.rotation.x=-Math.PI/2;caustics.position.y=-0.16;bMesh.add(caustics);bMesh.userData.caustics=caustics;
+  // Hull-damage VFX layers — opacity driven from S.hull in the loop's foam-ring block.
+  //   smokeGlow: dark sprite over the motor, opacity ramps in below 25% hull
+  //   crackGlow: dim red emissive plane on the cabin, ramps in below 50% hull
+  const smokeGlow=new THREE.Sprite(new THREE.SpriteMaterial({color:0x1a1820,transparent:true,opacity:0,depthWrite:false}));
+  smokeGlow.scale.set(2.2,2.6,1);smokeGlow.position.set(0,1.5,-2.8);bMesh.add(smokeGlow);bMesh.userData.smokeGlow=smokeGlow;
+  const crackGlow=new THREE.Mesh(new THREE.PlaneGeometry(1.5,0.9),new THREE.MeshBasicMaterial({color:0xef4444,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));
+  crackGlow.position.set(0,1.4,-0.3);bMesh.add(crackGlow);bMesh.userData.crackGlow=crackGlow;
   // === Hero accent kit + upgrade-visible parts ===
   // Each operative gets a wildly different boat skin so they read at a glance from across the lake.
   const up=boatUpgrades[cls]||{};
@@ -2744,7 +2760,16 @@ const catalyst={lastTick:Date.now()*0.001,nextRand:0,
 // One soft ambient drone built from three detuned triangle oscillators (root + fifth + octave).
 // A slow LFO sweeps a lowpass filter so the texture breathes. Filter centre dips in foul weather
 // for a warmer-but-muffled feel; brightens on Clear. Mute + master + bus volume all gate it.
-const music={on:false,osc:[],gain:null,filt:null,lfo:null,
+// Three music modes — same 3 oscillators, retargeting frequency on context switch.
+//   explore : A minor (A2/E3/A3 → 110/165/220) — default open-water drone.
+//   chase   : C minor (C3/G3/Eb4 → 130/196/311) — fires on Duct/boss/Gator King start. Faster LFO.
+//   golden  : F major9 (F2/A3/E4  →  87/220/330) — fires during golden-hour flash. Warmer.
+const MUSIC_MODES={
+  explore:{freqs:[110,165,220],lfo:0.07,detune:[-5,3,-2],filtHi:1100,filtLo:550},
+  chase:  {freqs:[130,196,311],lfo:0.18,detune:[-8,5,-3], filtHi:1450,filtLo:700},
+  golden: {freqs:[87,220,330], lfo:0.04,detune:[-3,2,-1], filtHi:1300,filtLo:600}
+};
+const music={on:false,osc:[],gain:null,filt:null,lfo:null,mode:'explore',
   ensure(){
     if(this.on||muted)return;
     try{if(!_audioCtx)_audioCtx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return}
@@ -2752,29 +2777,44 @@ const music={on:false,osc:[],gain:null,filt:null,lfo:null,
     this.gain=ctx.createGain();this.gain.gain.value=0;
     this.filt=ctx.createBiquadFilter();this.filt.type='lowpass';this.filt.frequency.value=900;this.filt.Q.value=0.4;
     this.filt.connect(this.gain);this.gain.connect(ctx.destination);
+    const m=MUSIC_MODES[this.mode];
     // Slow LFO on the filter cutoff so the pad shimmers rather than sitting flat.
-    this.lfo=ctx.createOscillator();this.lfo.frequency.value=0.07;
+    this.lfo=ctx.createOscillator();this.lfo.frequency.value=m.lfo;
     const lfoGain=ctx.createGain();lfoGain.gain.value=180;
     this.lfo.connect(lfoGain);lfoGain.connect(this.filt.frequency);this.lfo.start();
-    // Three pad voices — A minor chord (A2 = 110, E3 = 165, A3 = 220) detuned for warmth.
-    [[110,-5],[165,3],[220,-2]].forEach(([f,detune])=>{
-      const o=ctx.createOscillator();o.type='triangle';o.frequency.value=f;o.detune.value=detune;
+    // Three pad voices retuned per mode + detuned for warmth.
+    m.freqs.forEach((f,i)=>{
+      const o=ctx.createOscillator();o.type='triangle';o.frequency.value=f;o.detune.value=m.detune[i]||0;
       const g=ctx.createGain();g.gain.value=0.33;
       o.connect(g);g.connect(this.filt);o.start();this.osc.push(o);
     });
     this.on=true;
+  },
+  setMode(name){
+    if(!MUSIC_MODES[name]||this.mode===name)return;
+    this.mode=name;
+    if(!this.on||!_audioCtx)return;
+    const now=_audioCtx.currentTime,m=MUSIC_MODES[name];
+    // Glide the existing oscillators to the new chord — no restart, no click.
+    this.osc.forEach((o,i)=>{o.frequency.setTargetAtTime(m.freqs[i]||110,now,0.4);o.detune.setTargetAtTime(m.detune[i]||0,now,0.4)});
+    if(this.lfo)this.lfo.frequency.setTargetAtTime(m.lfo,now,0.4);
   },
   update(){
     if(muted){this.stop();return}
     if(!this.on)this.ensure();
     if(!this.on)return;
     const now=_audioCtx.currentTime;
+    // Auto-pick the chase mode whenever a Duct chase / boss / Gator King fight is live.
+    if((DUCT&&DUCT.engaged)||_bossActive||_gkActive)this.setMode('chase');
+    else if(_goldenFlashUntil&&Date.now()<_goldenFlashUntil)this.setMode('golden');
+    else this.setMode('explore');
     // Music ducks slightly in heavy weather + when a fight overlay is up so it doesn't compete.
     const fightDuck=_catchOpen||miniActive?0.35:1;
     const target=0.035*_audVol*_musicVol*fightDuck;
     this.gain.gain.setTargetAtTime(target,now,1.5);
     // Foul-weather filter dip — warm, muffled.
-    const muffle=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle'||S.wx.c==='Overcast')?550:1100;
+    const m=MUSIC_MODES[this.mode];
+    const muffle=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle'||S.wx.c==='Overcast')?m.filtLo:m.filtHi;
     this.filt.frequency.setTargetAtTime(muffle,now,2.5);
   },
   stop(){if(this.on&&_audioCtx)this.gain.gain.setTargetAtTime(0,_audioCtx.currentTime,0.6)}
@@ -3015,7 +3055,14 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     f.material.opacity=Math.min(0.95,0.25+sp*0.5+rim+Math.sin(t*4)*0.05);
     // Caustics: a wider additive ring that ripples + rotates slowly under the boat.
     if(bMesh.userData.caustics){const c=bMesh.userData.caustics;const cs=1+sp*0.4+Math.sin(t*1.7)*0.05;
-      c.scale.set(cs,cs,cs);c.rotation.z=t*0.3;c.material.opacity=0.18+Math.sin(t*2.2)*0.08+sp*0.1}}
+      c.scale.set(cs,cs,cs);c.rotation.z=t*0.3;c.material.opacity=0.18+Math.sin(t*2.2)*0.08+sp*0.1}
+    // Hull damage VFX — crack glow below 50% pulses, smoke plume below 25% billows; spawns a wake
+    // particle every ~0.4s at <25% to read as a smoke trail behind the boat.
+    if(bMesh.userData.crackGlow){const h=S.hull||100;const crk=h<50?(50-h)/50*0.45:0;bMesh.userData.crackGlow.material.opacity=crk*(0.7+Math.sin(t*3)*0.3)}
+    if(bMesh.userData.smokeGlow){const h=S.hull||100;const smk=h<25?(25-h)/25*0.7:0;bMesh.userData.smokeGlow.material.opacity=smk*(0.75+Math.sin(t*1.5)*0.25);
+      // Smoke puff trail — push a fading dark wake particle every ~24 frames.
+      if(smk>0.05&&_frame%24===0){const ang=bMesh.rotation.y+Math.PI;const off=new THREE.Vector3(Math.sin(ang)*2.8,1.5,Math.cos(ang)*2.8);off.add(bMesh.position);const s=new THREE.Mesh(new THREE.SphereGeometry(0.45,8,6),new THREE.MeshBasicMaterial({color:0x1a1820,transparent:true,opacity:0.55*smk}));s.position.copy(off);s.userData={life:1,decay:0.018,vy:0.012,vx:(Math.random()-0.5)*0.02,vz:(Math.random()-0.5)*0.02};scene.add(s);wakes.push(s)}
+    }}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
   // _dayOffset lets the QA hook jump the cycle (e.g. force night for a screenshot) without waiting.
   if(scene._sunDisc&&scene._sun){
@@ -3430,7 +3477,7 @@ function boat(c){
   S.bc=c;
   document.querySelectorAll('.bo').forEach(el=>{el.classList.toggle('on',el.dataset.b===c);if(el.dataset.b===c){el.style.borderColor=HERO[c].badge;el.style.background=HERO[c].badge+'14'}else{el.style.borderColor='';el.style.background=''}});
   mkBoat(c);
-  const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase();hb.style.color=h.badge}
+  const hb=$('h-hero');if(hb){const h=HERO[c];hb.textContent=h.n.toUpperCase()+(boatName?' · '+boatName.toUpperCase():'');hb.style.color=h.badge}
   // Tag the body with the hero class so CSS can tint HUD accents to match the operative.
   document.body.classList.remove('hero-reel','hero-lilly','hero-fly');
   document.body.classList.add('hero-'+(c==='regular'?'reel':c==='pontoon'?'lilly':'fly'));
@@ -3850,6 +3897,9 @@ function setMusicVol(v){_musicVol=Math.max(0,Math.min(1,v));persist()}
 // Clear all tutorial-seen flags so the first-time overlays re-fire on the next encounter.
 // Intro is excluded — re-firing it on the next reload would surprise the player.
 function replayTutorials(){const intro=tutorialSeen.intro;tutorialSeen={};if(intro)tutorialSeen.intro=intro;persist()}
+// Identity setters — persist + update the HUD operative pill if a name is added mid-run.
+function setHandle(v){playerHandle=String(v||'').slice(0,24);persist()}
+function setBoatName(v){boatName=String(v||'').slice(0,24);persist();if(S.bc)boat(S.bc)}
 // Render the player's biggest catch into a shareable PNG. Lays the trophy out on a 1200×630
 // open-graph-friendly card and triggers a browser download.
 // === MOBILE TOUCH GLUE ===
@@ -3891,7 +3941,7 @@ function exportTrophy(){
   x.font='400 24px DM Sans, sans-serif';x.fillStyle='#94a3b8';x.fillText('biggest catch · '+(bestFish.date||''),W/2,538);
   // Rarity stripe.
   x.fillStyle=rcol;x.fillRect(W*0.3,576,W*0.4,4);
-  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,610);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE'+(playerHandle?' · '+playerHandle:''),W/2,610);
   // Trigger download.
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-trophy.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
@@ -3914,7 +3964,7 @@ function exportStreak(){
     x.font='400 22px DM Sans, sans-serif';x.fillStyle='#94a3b8';x.fillText('best streak · '+streak.max+' days',W/2,520);
   }
   x.fillStyle='#fb923c';x.fillRect(W*0.32,560,W*0.36,4);
-  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,608);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE'+(playerHandle?' · '+playerHandle:''),W/2,608);
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-streak.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
 }
@@ -3937,7 +3987,7 @@ function exportAchievements(){
   x.font='400 20px DM Sans, sans-serif';x.textAlign='left';
   recent.forEach((a,i)=>{x.fillStyle='#fbcf3b';x.fillText('★',W*0.18,475+i*28);x.fillStyle='#e8edf5';x.fillText(a.n,W*0.18+24,475+i*28)});
   x.textAlign='center';x.fillStyle='#fb923c';x.fillRect(W*0.32,560,W*0.36,4);
-  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE',W/2,608);
+  x.font='600 16px JetBrains Mono, monospace';x.fillStyle='#475569';x.fillText('CASTOR BAYOU · WE HOLD THE LINE'+(playerHandle?' · '+playerHandle:''),W/2,608);
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-achievements.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
 }
@@ -4073,6 +4123,9 @@ function refreshTrophyPeek(){
     if(streak.count>0){sp.style.display='block';sp.innerHTML=`🔥 Day ${streak.count} at the Bayou${streak.max>streak.count?` · best ${streak.max}`:''} <button onclick="DS.exportStreak();event.stopPropagation()" style="margin-left:6px;background:transparent;border:1px solid rgba(147,197,253,0.4);color:#93c5fd;padding:2px 8px;border-radius:4px;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;cursor:pointer">💾 SHARE</button>`}
     else sp.style.display='none';
   }
+  // Prefill the identity inputs from the persisted save so returning players see their handle.
+  const fh=$('f-handle');if(fh&&!fh.value&&playerHandle)fh.value=playerHandle;
+  const fb=$('f-boatname');if(fb&&!fb.value&&boatName)fb.value=boatName;
 }
 
 function endRun(){
@@ -4241,6 +4294,6 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

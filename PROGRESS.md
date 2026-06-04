@@ -72,6 +72,12 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Soft sprites**: shared radial-gradient `CanvasTexture` for the moon/halo/stars/glint so none render as hard squares.
 - **QA hook**: `DS.qaForceNight()` jumps the day/night clock to deep night (verifiable screenshot).
 
+### Round 17 — music variants + dynamic hull damage VFX + player handle / boat name
+- **Music variants** — same 3 pad oscillators retargeting frequency on context switch. `explore` (A minor, default) → `chase` (C minor, faster LFO, on Duct/boss/Gator King) → `golden` (F major9, warmer, on golden-hour flash). One `setMode()` glides freq + LFO with no restart click.
+- **Dynamic hull damage VFX** — emissive crack glow on the cabin pulses below 50% hull, dark smoke sprite over the motor below 25%, smoke-puff particles pushed into the wake every ~24 frames at low hull. Reuses the existing `wakes[]` lifecycle.
+- **Player handle + boat name** — `playerHandle` and `boatName` persisted in save_v1, surfaced as `🎣 Your Handle` / `Boat Name` inputs on s1. HUD operative pill shows `THE REEL · MONEY PIT`; all 3 share PNGs (trophy / streak / achievements) imprint the handle in the footer.
+- Smoke now **52/52 PASS, 0 fatal**.
+
 ### Round 16 — hero callout + run-best pill + wind arrow + auto-save dot + streak-reset friendliness
 - **Cinematic hero ID card** — flashes the operative's badge + name + ability after pick on s1 (~1.2s, click-to-skip). Reinforces hero identity right at run start.
 - **Run-best pill** — top-center "NEW BEST · 🐊 Bull gator +160" flash when a catch beats this run's prior best. Separate from `bestFish` (all-time persisted).
