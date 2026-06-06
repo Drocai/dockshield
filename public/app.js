@@ -329,7 +329,7 @@ let wps=[],wpI=0;
 // memory. Used wherever meshes are rebuilt/removed mid-run (boats, drop points, rain).
 function disposeTree(obj){if(!obj)return;obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose())}})}
 // Hoisted scratch vectors — reused each frame so loop()/tickDuct() don't allocate per frame.
-const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.Vector3(),_vDuct=new THREE.Vector3(),_vFwd=new THREE.Vector3();
+const _yAxis=new THREE.Vector3(0,1,0),_vDir=new THREE.Vector3(),_vCam=new THREE.Vector3(),_vDuct=new THREE.Vector3(),_vFwd=new THREE.Vector3(),_vTip=new THREE.Vector3();
 // Frame counter — lets the loop stagger expensive work (e.g. water normals) across frames.
 let _frame=0;
 // Minimap zoom — 1.0 = default (whole lake), 2.2 = zoomed in (dense areas). Toggled with M.
@@ -379,6 +379,9 @@ const mini={
     // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
     this._teardowns.splice(0).forEach(fn=>{try{fn()}catch(e){}});
     if(_fightCleanup){_fightCleanup();_fightCleanup=null}
+    // Belt-and-braces: clear the boss/GK music-mode flags so an Escape-out leaves music in explore
+    // mode even if the inner flee/win/lose branch missed clearing them. Cheap, idempotent.
+    if(dp&&dp.userData&&dp.userData.type){const k=dp.userData.type.k;if(k==='boss')_bossActive=false;if(k==='gator_king')_gkActive=false}
     if(score)S.score+=score;
     if(radioLine)radio(radioLine,who||'self');
     sfx(score>0?'win':'click');
@@ -601,7 +604,7 @@ const mini={
     };
     document.addEventListener('keydown',keyHandler);document.addEventListener('keyup',keyHandler);
     mini.addTeardown(()=>{document.removeEventListener('keydown',keyHandler);document.removeEventListener('keyup',keyHandler)});
-    const flee=()=>{S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
+    const flee=()=>{_gkActive=false;S.hull=Math.max(1,S.hull-20);mini.finish(dp,40,'Let him slide off. He stays the king.','fly')};
     const finishGK=won=>{
       over=true;
       _gkActive=false;
@@ -707,7 +710,7 @@ const mini={
       if(playerHull<=0){lose();return}
       tension=0;phase=3;startReel();render();
     };
-    const flee=()=>{S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
+    const flee=()=>{_bossActive=false;S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
     // Final-hit beat: a brief grade fade + splash cue, then resolve. No global time-scale —
     // the world keeps ticking normally so water/AI/fish-jumps don't desync.
     const _bossFinalBeat=fn=>{
@@ -1162,7 +1165,9 @@ const mini={
     radio(msg,'lilly');sfx('win');
     miniActive=false;S.on=true;_catchOpen=false;
     const el=$('mini');if(el){el.style.display='none';const c=$('mini-card');if(c)c.innerHTML=''}
-    const stocked=Object.values(BAIT_TYPES).every(k=>baitInv[Object.keys(BAIT_TYPES).find(key=>BAIT_TYPES[key].n===k.n)]>=5);
+    // Foraged-only (5 types) — must mirror the ACH.pantry_stocked.p() definition so the progress
+    // bar's 5/5 readout actually corresponds to the unlock condition.
+    const stocked=['worm','cricket','frog','minnow','crayfish'].every(t=>(baitInv[t]||0)>=5);
     if(stocked)onUnlock('pantry_stocked');
     if((baitInv.worm||0)>=50)onUnlock('worm_farmer');
   }
@@ -2146,7 +2151,10 @@ let _bobberMesh=null,_bobberState=null;  // {phase:'wait'|'nibble',spot,fish,t0,
 // Bobber + the fishing-line + underwater fish silhouette. All disposed together.
 let _bobberLine=null,_bobberFish=null,_bobberFishT0=0;
 function disposeBobber(){
-  if(_bobberMesh){scene.remove(_bobberMesh);if(_bobberMesh.geometry)_bobberMesh.geometry.dispose();if(_bobberMesh.material)_bobberMesh.material.dispose();_bobberMesh=null}
+  // _bobberMesh is a THREE.Group containing 3 child Meshes (body lo, hi, antenna) — Group.geometry
+  // and .material are undefined, so the old `if(_bobberMesh.geometry)` no-op'd and leaked all three
+  // child geometries+materials per cast. disposeTree traverses the group and disposes each child.
+  if(_bobberMesh){disposeTree(_bobberMesh);scene.remove(_bobberMesh);_bobberMesh=null}
   if(_bobberLine){scene.remove(_bobberLine);_bobberLine.geometry.dispose();_bobberLine.material.dispose();_bobberLine=null}
   if(_bobberFish){scene.remove(_bobberFish);_bobberFish.geometry.dispose();_bobberFish.material.dispose();_bobberFish=null}
   _bobberState=null;
@@ -2231,7 +2239,7 @@ function tickBobber(t){
   // the boat's idle bob + the bobber's nibble dip.
   if(_bobberLine&&bMesh){
     const p=_bobberLine.geometry.attributes.position;
-    const tipLocal=new THREE.Vector3(0.6,1.4,3.4).applyQuaternion(bMesh.quaternion).add(bMesh.position);
+    const tipLocal=_vTip.set(0.6,1.4,3.4).applyQuaternion(bMesh.quaternion).add(bMesh.position);
     p.setXYZ(0,tipLocal.x,tipLocal.y,tipLocal.z);
     p.setXYZ(1,_bobberMesh.position.x,_bobberMesh.position.y+0.32,_bobberMesh.position.z);
     p.needsUpdate=true;
@@ -2305,16 +2313,8 @@ function tryHookSet(){
   if(!fish.fight)landFish(fish,spot);else openFight(fish,spot);
   return true;
 }
-// Legacy resolveCast — only the no-bobber path uses this now (e.g. an out-of-band call).
-function resolveCast(spot){
-  if(!S.on||miniActive)return;
-  const fish=rollFish(spot);
-  const fwd=new THREE.Vector3(0,0,3).applyQuaternion(bMesh.quaternion);const bp=bMesh.position.clone().add(fwd);bp.y=0.2;
-  splash(bp,fish.fight>=2?20:10,fish.gator?0x9fd8b0:0xcfe8ff,fish.fight>=2?1.4:1);wet.add(fish.fight>=2?10:6);
-  sfx('cast');
-  if(!fish.fight){landFish(fish,spot)}
-  else openFight(fish,spot);
-}
+// resolveCast was removed in the R13 fishing refactor (3-stage cast→wait→nibble took over via
+// startBobberWait + tryHookSet). Last legacy reference was deleted in this audit pass.
 // Logs the catalog + plays the catch sting + opens the keep/release dialog.
 function landFish(fish,spot){
   runCatches.push(fish);
@@ -2572,7 +2572,11 @@ function runDuctEscapeAnim(kind){
     else if(kind==='fly'){m.position.y=s*9;m.rotation.y+=0.3}
     else if(kind==='slip'){m.position.y=-s*2;m.rotation.y+=0.4}
     else if(kind==='flop'){m.position.x=DUCT.x+Math.sin(s*20)*2}
-    else if(kind==='tape'){m.rotation.z=s*0.6;m.position.y=Math.sin(s*Math.PI)*0.3;m.material&&(m.material.emissiveIntensity=0.4*(1-s))}
+    else if(kind==='tape'){m.rotation.z=s*0.6;m.position.y=Math.sin(s*Math.PI)*0.3;
+      // m is a Group (no .material). Drive the body Mesh emissive directly so the "tape over the
+      // hook, going dark" visual actually fires. children[0] = body sphere by construction in mkDuct.
+      const body=m.children&&m.children[0];if(body&&body.material)body.material.emissiveIntensity=0.4*(1-s);
+    }
     else if(kind==='decoy'){m.position.x=DUCT.x-s*4;m.position.y=Math.sin(s*Math.PI)*1.5;if(decoyMesh){decoyMesh.position.x=DUCT.x+0.8+s*4;decoyMesh.position.y=Math.sin(s*Math.PI)*1.5;decoyMesh.rotation.y=s*2}}
     else{m.position.y=Math.sin(s*Math.PI)*2;DUCT.x-=1.0}
   },30);
@@ -2630,7 +2634,18 @@ function sfx(type){
   g.gain.setValueAtTime(0.0001,now);g.gain.linearRampToValueAtTime(peak,now+0.01);g.gain.exponentialRampToValueAtTime(0.0001,now+spec[2]);
   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+spec[2]+0.03);
 }
-function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted){engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop()}else sfx('click')}
+// Shared kill-switch for every continuous audio source. Called from mute toggle, photo mode camera
+// branch, endGame, reset, and the visibility-stash. Any new audio bus added later only needs to
+// add one .stop() call here rather than touching 5 sites.
+function stopAllAudio(){engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop()}
+// Centralized run-flag reset. Owns every "is some system mid-fight / mid-cutscene" flag so the
+// next system that adds one gets a single edit here instead of N (the auditor's "most concerning
+// trend"). Called from startGame; safe to call from endGame too for belt-and-braces cleanup.
+function resetRunFlags(){
+  _bossActive=false;_gkActive=false;_castInFlight=false;
+  S.bossSpawned=false;S.gatorKingSpawned=false;S.gatorKingDown=false;
+}
+function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted)stopAllAudio();else sfx('click')}
 
 // === CONTINUOUS ENGINE + AMBIENT AUDIO ===
 // A throaty motor whose pitch + volume track boat speed, plus a constant low water-lap bed. Built
@@ -3061,7 +3076,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(bMesh.userData.crackGlow){const h=S.hull||100;const crk=h<50?(50-h)/50*0.45:0;bMesh.userData.crackGlow.material.opacity=crk*(0.7+Math.sin(t*3)*0.3)}
     if(bMesh.userData.smokeGlow){const h=S.hull||100;const smk=h<25?(25-h)/25*0.7:0;bMesh.userData.smokeGlow.material.opacity=smk*(0.75+Math.sin(t*1.5)*0.25);
       // Smoke puff trail — push a fading dark wake particle every ~24 frames.
-      if(smk>0.05&&_frame%24===0){const ang=bMesh.rotation.y+Math.PI;const off=new THREE.Vector3(Math.sin(ang)*2.8,1.5,Math.cos(ang)*2.8);off.add(bMesh.position);const s=new THREE.Mesh(new THREE.SphereGeometry(0.45,8,6),new THREE.MeshBasicMaterial({color:0x1a1820,transparent:true,opacity:0.55*smk}));s.position.copy(off);s.userData={life:1,decay:0.018,vy:0.012,vx:(Math.random()-0.5)*0.02,vz:(Math.random()-0.5)*0.02};scene.add(s);wakes.push(s)}
+      // tickWakes overrides material.opacity each frame to `u.life * 0.4`, so we can't bake the smk
+      // factor into the initial opacity (it'd be clobbered immediately). Instead scale the puff's
+      // life by smk so a less-damaged hull spawns shorter-lived puffs.
+      if(smk>0.05&&_frame%24===0){const ang=bMesh.rotation.y+Math.PI;const off=new THREE.Vector3(Math.sin(ang)*2.8,1.5,Math.cos(ang)*2.8);off.add(bMesh.position);const s=new THREE.Mesh(new THREE.SphereGeometry(0.45,8,6),new THREE.MeshBasicMaterial({color:0x1a1820,transparent:true,opacity:0}));s.position.copy(off);s.userData={life:0.4+smk*0.6,decay:0.018,vy:0.012,vx:(Math.random()-0.5)*0.02,vz:(Math.random()-0.5)*0.02};scene.add(s);wakes.push(s)}
     }}
   // Day/night cycle — 6-minute loop. Sun position arcs, sun color warms/cools, sky tints.
   // _dayOffset lets the QA hook jump the cycle (e.g. force night for a screenshot) without waiting.
@@ -3252,7 +3270,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     photoCam.dist=Math.max(7,Math.min(70,photoCam.dist+(keys.KeyZ?-0.4:0)+(keys.KeyX?0.4:0)));
     const cp=Math.cos(photoCam.pitch),cx=bMesh.position.x+Math.sin(photoCam.yaw)*cp*photoCam.dist,cz=bMesh.position.z+Math.cos(photoCam.yaw)*cp*photoCam.dist,cy=bMesh.position.y+Math.sin(photoCam.pitch)*photoCam.dist+1.5;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
-    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
+    stopAllAudio();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
     // Cinematic idle — slow low-altitude sweep across the hazard zone
     const tt=t*0.08;
@@ -3287,7 +3305,7 @@ function startGame(){
      if(streak.count>=30)onUnlock('streak_30');
    }
   }
-  S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;_castedThisRun=false;
+  S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;S._castedThisRun=false;
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -3307,7 +3325,7 @@ function startGame(){
   $('h-civ').textContent='0/'+civs.length;$('h-ev').textContent='0/1';$('h-ev').style.color='#475569';
   // Bait pill mirrors the persistent balance and updates each frame in the loop.
   const hb=$('h-bait');if(hb)hb.textContent=bait;
-  S.bossSpawned=false;
+  resetRunFlags();
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
@@ -3335,7 +3353,7 @@ function startGame(){
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');stopAllAudio();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -3509,7 +3527,7 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');stopAllAudio();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
@@ -3582,7 +3600,7 @@ function setTabHidden(hidden){
   _tabHidden=hidden;
   if(hidden){
     _hiddenSavedOn=S.on;S.on=false;
-    engineAudio.stop();stormAudio.stop();campAudio.stopAll();music.stop();reelAudio.stop();
+    stopAllAudio();
   }else{
     if(_hiddenSavedOn===true)S.on=true;_hiddenSavedOn=null;
     if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
