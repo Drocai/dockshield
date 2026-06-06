@@ -46,8 +46,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.waitForFunction(()=>typeof DS!=='undefined',{timeout:10000});
     await sleep(1200);
 
-    // Enter a run as The Reel
-    await p.click('.bo[data-b="regular"]');await p.click('#begin-btn');await sleep(150);
+    // Enter a run as The Reel. The visible picker is the 3D marina (game mode hides the chip
+    // grid via CSS), so we go through the stable DS.boat() API instead of clicking the chip.
+    await p.evaluate(()=>DS.boat('regular'));await p.click('#begin-btn');await sleep(150);
     await p.click('#q-1 .q-opt[data-h="regular"]');await sleep(150);await p.click('#q-2 .q-opt[data-h="regular"]');
     await p.waitForFunction(()=>document.getElementById('hud').style.display==='flex',{timeout:15000});await sleep(900);
     console.log('· run started');
