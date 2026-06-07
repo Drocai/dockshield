@@ -26,6 +26,7 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 | #10 | **Phase IV-A — Duct + droplets + audio** | Duct the Rubber Ducky (uncatchable legendary, 5 escape archetypes, persisted sighting stats, locked codex entry); wet-screen droplet overlay; audio polish (quack/dig/croak/splash_big) |
 | #11 | **Phase IV-B — Foraging + bait inventory** | 4 shore camps; beach with **G** → worm-dig / bug-catch / frog-grab / minnow-net mini-games; typed bait pantry that biases the catch roll; equip via Tackle Shop |
 | #12 | **Phase IV-C — Boatworks + hero themes + abilities** | Castor Boatworks shop, per-hero boat upgrades (engine/lights/armor/electronics) with visible parts; hero accent kits (Reel chrome / Lilly flannel / Fly stealth); hero special abilities |
+| R20 | **Bayou Files + forage juice** | 5-chapter lore arc unlocked by progression milestones (launch / rescue / evidence / deep water / full extraction), redacted-until-earned, rendered in the Codex with an `Archivist` achievement; canvas particle layer on all 5 forage mini-games (dirt bursts, swat flash, catch ripples, net wake/sparkle) |
 
 ### Systems live now
 - **Entry**: hero pick → 2 lore questions → free-roam (optional home-dock address, real geocoded).
@@ -39,6 +40,7 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 - **Boat upgrades**: engine/lights/armor/electronics × 3 tiers per hero, visible parts on the hull.
 - **Meta** (persisted, `localStorage dockshield_save_v1`): Fish Codex, Trophy Board, best score, achievements, gear loadout, bait pantry, boat upgrades, mute, graphics quality.
 - **Camera/UX**: photo mode (P), mission-queue ticker, sonar reveal of civilians/evidence, achievement toasts, wet-screen droplets, two-tap END RUN.
+- **Lore**: the **Bayou Files** — a 5-chapter case file in the Codex that opens one chapter at a time as you hit story beats (first launch, first rescue, recovering evidence, facing the deep water, full extraction). Locked chapters read redacted; unlocking fires a `BAYOU FILE` toast. Collect all five for the `Archivist` achievement.
 
 ---
 
