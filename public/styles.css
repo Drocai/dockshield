@@ -9,6 +9,17 @@ canvas{display:block;position:fixed;inset:0;z-index:1;touch-action:none}
 #touch button{min-width:48px;min-height:48px}
 #overlay{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:16px;pointer-events:none}
 .card{background:rgba(8,18,38,0.85);backdrop-filter:blur(28px);border:1px solid rgba(251,146,60,0.1);border-radius:14px;padding:28px 24px;width:100%;max-width:460px;pointer-events:auto;box-shadow:0 24px 80px -12px rgba(0,0,0,0.7);max-height:92vh;overflow-y:auto}
+/* R19 — Marina-mode layout. In game mode, the s1 panel ducks to the right side so the dock
+   aerial view dominates the screen. Op-grid chips hide (the 3D boats + floating stat cards
+   become the picker). On mobile, s1 falls back to centered so it stays usable on small screens. */
+body.mode-game #overlay{justify-content:flex-end;align-items:flex-end;padding:18px}
+body.mode-game #s1{max-width:380px;background:rgba(8,18,38,0.92);padding:18px 18px 16px}
+body.mode-game #s1 #op-grid,body.mode-game #s1 #op-label{display:none}
+body.mode-game #s1 .logo{margin-bottom:10px}
+body.mode-game #s1 h2{font-size:17px}
+body.mode-game #s1 .sub{font-size:11.5px;margin-bottom:10px}
+.marina-tip{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:11;background:rgba(8,18,38,0.85);border:1px solid rgba(251,207,59,0.35);border-radius:18px;padding:7px 16px;font:600 11px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fde68a;pointer-events:none;text-transform:uppercase}
+@media (max-width: 720px){body.mode-game #overlay{justify-content:center;align-items:flex-end;padding:10px}body.mode-game #s1{max-width:none;padding:14px}.marina-tip{font-size:10px;padding:5px 12px}}
 .live-pill{display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);color:#10b981;font:700 8px 'JetBrains Mono',monospace;letter-spacing:1.2px;padding:2px 6px;border-radius:4px;vertical-align:middle;margin-left:4px}
 .live-pill .live-dot{width:5px;height:5px;border-radius:50%;background:#10b981;animation:livep 1.4s ease-in-out infinite}
 @keyframes livep{0%,100%{opacity:1;box-shadow:0 0 6px #10b981}50%{opacity:0.4;box-shadow:0 0 0 #10b981}}

@@ -11,10 +11,14 @@ const C={SUPABASE_URL:'',SUPABASE_ANON_KEY:''};if(window.__ENV__)Object.assign(C
 // BT = boat tuning per hero. col=hull base, accents = secondary palette used by mkBoat for trim/
 // decals/emblems. Three distinct visual identities now: Reel runs red/blue/yellow tournament-flashy;
 // Lilly runs pink/lime/camo-muddy; Fly runs matte stealth black/navy.
+// R19 handling tune: Lilly was unplayable-slow (couldn't reach a civ before hull failed). Bumped
+// her accel/top-speed/turning to ~75% of Reel's so the wide-stable feel still reads, but the boat
+// actually MOVES. Reel got a touch more turn snap; Fly's wind penalty eased so she's not a chore
+// in a 6kt breeze. The s1 picker stat bars were retuned to match.
 const BT={
-  regular:{n:'The Reel',ac:.018,dr:.984,tu:.045,mx:1.2,col:0xc91111,wx:1, accents:{primary:0xc91111,trim:0xffffff,stripe:0x1d6dff,emblem:0xfde047,glow:0xfca5a5,ui:'#fca5a5'}},
-  pontoon:{n:'Lilly Loch',ac:.012,dr:.988,tu:.03,mx:.8,col:0x7a5b32,wx:.7, accents:{primary:0xec4899,trim:0x7a5b32,stripe:0x84cc16,emblem:0xfbcfe8,glow:0xf472b6,ui:'#f9a8d4',camo:true}},
-  speedboat:{n:'The Fly',ac:.025,dr:.978,tu:.055,mx:1.8,col:0x0c1424,wx:1.4, accents:{primary:0x0c1424,trim:0x1e293b,stripe:0x3b82f6,emblem:0x60a5fa,glow:0x60a5fa,ui:'#93c5fd'}}
+  regular:{n:'The Reel',ac:.022,dr:.985,tu:.052,mx:1.35,col:0xc91111,wx:0.95, accents:{primary:0xc91111,trim:0xffffff,stripe:0x1d6dff,emblem:0xfde047,glow:0xfca5a5,ui:'#fca5a5'}},
+  pontoon:{n:'Lilly Loch',ac:.018,dr:.987,tu:.04,mx:1.05,col:0x7a5b32,wx:.78, accents:{primary:0xec4899,trim:0x7a5b32,stripe:0x84cc16,emblem:0xfbcfe8,glow:0xf472b6,ui:'#f9a8d4',camo:true}},
+  speedboat:{n:'The Fly',ac:.028,dr:.978,tu:.06,mx:1.9,col:0x0c1424,wx:1.15, accents:{primary:0x0c1424,trim:0x1e293b,stripe:0x3b82f6,emblem:0x60a5fa,glow:0x60a5fa,ui:'#93c5fd'}}
 };
 // === PERSISTENCE ===
 // Trophy catalog, evidence case file, best score, and the mute pref persist to localStorage so the
@@ -1273,7 +1277,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();mkCamps();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();mkCamps();mkMarinaPreview();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
@@ -1699,14 +1703,22 @@ function drawMinimap(){
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
   // drop points
   dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
-  // Sonar reveal: for ~4s after a ping, surviving civilians (orange) + uncollected evidence (gold)
-  // blip on the minimap so the ping is a real recon tool, not just a debris highlighter.
-  // Scout Flare buff: 30s sustained reveal overrides the ping window.
+  // R19 — Civilians are ALWAYS visible on the minimap as small orange beacons (was previously
+  // gated on sonar reveal, which made the rescue loop opaque — players couldn't find anyone
+  // without spending a ping). They pulse gently and ride at 60% alpha; sonar/scout flare bumps
+  // them to 100% + a faint outer ring so the recon tool still feels valuable.
   const flareLive=(buffs.scoutPing||0)>Date.now()*0.001;
-  if(flareLive||(S.pingReveal&&Date.now()*0.001<S.pingReveal)){
-    civs.forEach(c=>{if(c.userData.saved)return;const[cx,cz]=proj(c.position.x,c.position.z);ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(cx,cz,2,0,Math.PI*2);ctx.fill()});
-    if(evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
-  }
+  const sonarLive=(S.pingReveal&&Date.now()*0.001<S.pingReveal);
+  const reveal=flareLive||sonarLive;
+  const pulse=0.7+Math.sin(now*4)*0.3;
+  civs.forEach(c=>{if(c.userData.saved)return;
+    const[cx,cz]=proj(c.position.x,c.position.z);
+    ctx.fillStyle='#ff8c42';ctx.globalAlpha=reveal?1:0.6*pulse;
+    ctx.beginPath();ctx.arc(cx,cz,reveal?2.6:2,0,Math.PI*2);ctx.fill();
+    if(reveal){ctx.strokeStyle='#ff8c42';ctx.globalAlpha=0.5*pulse;ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,cz,5,0,Math.PI*2);ctx.stroke()}
+    ctx.globalAlpha=1;
+  });
+  if(reveal&&evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
   // Duct compass marker — a pulsing gold dot. If he's beyond the dial radius the proj() clamps to
   // the rim and we draw a small arrow chevron pointing outward so the player can chase the bearing.
   if(DUCT.active){
@@ -1812,12 +1824,24 @@ function mkCivs(){
   spots.forEach(([x,z])=>{
     const g=new THREE.Group();
     // Inner-tube ring + a small head/torso so it reads as a person clinging to a float
-    const tube=new THREE.Mesh(new THREE.TorusGeometry(0.55,0.18,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0xff6b35,emissiveIntensity:0.35,roughness:0.5}));tube.rotation.x=Math.PI/2;tube.position.y=0.2;g.add(tube);
+    const tube=new THREE.Mesh(new THREE.TorusGeometry(0.55,0.18,8,16),new THREE.MeshStandardMaterial({color:0xff6b35,emissive:0xff6b35,emissiveIntensity:0.55,roughness:0.5}));tube.rotation.x=Math.PI/2;tube.position.y=0.2;g.add(tube);
     const head=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,6),new THREE.MeshStandardMaterial({color:0xd4a373,roughness:0.7}));head.position.y=0.55;g.add(head);
     const torso=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.25),new THREE.MeshStandardMaterial({color:0x2a4d6e,roughness:0.6}));torso.position.y=0.3;g.add(torso);
     // Pulsing call-for-help ring on the water
-    const ring=new THREE.Mesh(new THREE.RingGeometry(0.9,1.1,18),new THREE.MeshBasicMaterial({color:0xff6b35,transparent:true,opacity:0.4,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.05;g.add(ring);
-    g.position.set(x,0,z);g.userData={saved:false,ring};scene.add(g);civs.push(g);
+    const ring=new THREE.Mesh(new THREE.RingGeometry(0.9,1.1,18),new THREE.MeshBasicMaterial({color:0xff6b35,transparent:true,opacity:0.55,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=0.05;g.add(ring);
+    // R19 — Help beam. A tall, additive orange column that's visible from clear across the lake
+    // so the player can actually FIND the civilian instead of pinballing through fog. Pulses on
+    // the same phase as the ring, scales down once the civ is within rescue range so it doesn't
+    // dominate the close-up. Cylinder open at top + bottom so the camera flying through doesn't
+    // clip it weirdly.
+    const beam=new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35,0.8,28,12,1,true),
+      new THREE.MeshBasicMaterial({color:0xff8c42,blending:THREE.AdditiveBlending,transparent:true,opacity:0.32,side:THREE.DoubleSide,depthWrite:false})
+    );beam.position.y=14;g.add(beam);
+    // Faint top capstone that fades the column out (no harsh edge against the sky).
+    const beamTop=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffb673,blending:THREE.AdditiveBlending,transparent:true,opacity:0.7,depthWrite:false}));
+    beamTop.scale.set(3,3,1);beamTop.position.y=28;g.add(beamTop);
+    g.position.set(x,0,z);g.userData={saved:false,ring,beam,beamTop};scene.add(g);civs.push(g);
   });
 }
 
@@ -2002,7 +2026,56 @@ function splash(pos,n=14,color=0xcfe8ff,power=1){
     scene.add(p);wakes.push(p);
   }
 }
-// Ambient fish jumps near fishing spots — a little fish mesh arcs out of the water and splashes back.
+// R19 — Marina dock preview. Three moored boats flanking the dock so the player picks their
+// operative by SEEING the boats from a slow aerial orbit, not just reading HTML chips. The
+// preview boats are real scenery (they stay moored after the run starts), and they serve as the
+// 3D hero picker on s1 — click the boat or its stat card to select.
+const PREVIEW_POS={
+  regular:  {x:-9,  z:-114, ry:Math.PI*0.05},
+  pontoon:  {x: 0,  z:-114, ry:Math.PI*0.00},
+  speedboat:{x: 9,  z:-114, ry:-Math.PI*0.05}
+};
+const previewBoats={};
+function mkPreviewBoatGeom(cls){
+  // Compact hero-themed mesh — same hull profile as the live boat so the silhouette reads, but
+  // the upgrade-attachable + damage-VFX layers are omitted (those would be misleading on
+  // moored display boats).
+  const t=BT[cls],prof=HULL_PROFILE[cls],ac=t.accents||{};
+  const g=new THREE.Group();
+  const hullGeo=new THREE.ExtrudeGeometry(makeHullShape(prof),{depth:prof.depth,bevelEnabled:true,bevelThickness:0.1,bevelSize:0.1,bevelSegments:2});
+  hullGeo.rotateX(-Math.PI/2);
+  const hull=new THREE.Mesh(hullGeo,new THREE.MeshStandardMaterial({color:t.col,roughness:0.32,metalness:0.18}));
+  hull.position.y=0.15;hull.castShadow=true;hull.receiveShadow=true;g.add(hull);
+  // Deck floor.
+  const deck=new THREE.Mesh(new THREE.BoxGeometry(prof.halfBeam*1.7,0.08,(prof.bowZ-prof.sternZ)*0.8),new THREE.MeshStandardMaterial({color:0x3a2a18,roughness:0.85}));deck.position.set(0,0.55,(prof.bowZ+prof.sternZ)/2-0.3);g.add(deck);
+  // Cabin painted with the hero's primary accent so the silhouette pops from the orbital cam.
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.9,2.2),new THREE.MeshStandardMaterial({color:ac.primary||0xf5f5f0,emissive:ac.primary||0,emissiveIntensity:0.15,roughness:0.6}));cab.position.set(0,1.4,-0.3);cab.castShadow=true;g.add(cab);
+  // Windshield.
+  const ws=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.6,0.08),new THREE.MeshStandardMaterial({color:0x88ddff,transparent:true,opacity:0.45,metalness:0.9,roughness:0.1}));ws.position.set(0,1.8,0.8);ws.rotation.x=-0.25;g.add(ws);
+  // Motor.
+  const motor=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.2,0.9),new THREE.MeshStandardMaterial({color:0x111118,metalness:0.7,roughness:0.3}));motor.position.set(0,0.2,-2.8);g.add(motor);
+  // Hero-color glow ring under the boat for the picker reads.
+  const ringMat=new THREE.MeshBasicMaterial({color:ac.glow||ac.primary||0xfff,transparent:true,opacity:0.0,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false});
+  const ring=new THREE.Mesh(new THREE.RingGeometry(3.2,4.2,32),ringMat);
+  ring.rotation.x=-Math.PI/2;ring.position.y=0.1;g.add(ring);
+  g.userData.ring=ring;
+  // Foam ring for "moored" anchor read.
+  const foam=new THREE.Mesh(new THREE.RingGeometry(2.4,3.2,28),new THREE.MeshBasicMaterial({color:0xeaf4f0,transparent:true,opacity:0.28,side:THREE.DoubleSide}));
+  foam.rotation.x=-Math.PI/2;foam.position.y=-0.08;g.add(foam);
+  return g;
+}
+function mkMarinaPreview(){
+  ['regular','pontoon','speedboat'].forEach(cls=>{
+    const p=PREVIEW_POS[cls];
+    const m=mkPreviewBoatGeom(cls);
+    m.position.set(p.x,0.3,p.z);
+    m.rotation.y=p.ry;
+    m.userData.previewCls=cls;
+    m.userData.basePos={x:p.x,z:p.z};
+    scene.add(m);
+    previewBoats[cls]=m;
+  });
+}
 let fishJumps=[];
 const jumpGeo=THREE.CapsuleGeometry?new THREE.CapsuleGeometry(0.18,0.5,3,6):new THREE.CylinderGeometry(0.18,0.1,0.7,6);
 function spawnFishJump(){
@@ -2882,20 +2955,50 @@ let _shake=0;
 // === WET-SCREEN DROPLET OVERLAY ===
 // Full-screen canvas2D layer above the WebGL scene, below the HUD. Droplets bead, drag down with a
 // streak, and fade. Disabled on Low graphics. Triggered from splash/surge/turn/rain/Duct events.
+// R19 — Droplet refresh. The old beads read flat (uniform circle + a single highlight pixel) and
+// blew into harsh shapes mid-streak. Now: every drop is a vertical ellipse (surface tension pulls
+// taller-than-wide), the bead has a dark rim + a soft body + a sharp specular highlight, and the
+// trailing streak narrows to a tapered tail with a faint white center line. Reads like glass.
 const wet={cv:null,ctx:null,drops:[],enabled:true,
   init(){this.cv=$('wet-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
   resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
-  add(n){if(!this.enabled||!this.cv)return;for(let i=0;i<n&&this.drops.length<90;i++){const r=2+Math.random()*6;this.drops.push({x:Math.random()*this.cv.width,y:Math.random()*this.cv.height*0.8,r,life:1,vy:0.2+Math.random()*0.6,streak:Math.random()<0.4?r*(4+Math.random()*8):0})}},
+  add(n){if(!this.enabled||!this.cv)return;for(let i=0;i<n&&this.drops.length<90;i++){const r=2+Math.random()*6;this.drops.push({x:Math.random()*this.cv.width,y:Math.random()*this.cv.height*0.8,r,life:1,vy:0.2+Math.random()*0.6,streak:Math.random()<0.4?r*(4+Math.random()*8):0,jx:(Math.random()-0.5)*0.4})}},
   tick(){if(!this.ctx||!this.cv)return;const c=this.ctx;c.clearRect(0,0,this.cv.width,this.cv.height);
-    for(let i=this.drops.length-1;i>=0;i--){const d=this.drops[i];d.life-=0.006;d.y+=d.vy;d.vy+=0.03;if(d.streak)d.streak*=0.99;
+    for(let i=this.drops.length-1;i>=0;i--){const d=this.drops[i];d.life-=0.006;d.y+=d.vy;d.vy+=0.03;d.x+=d.jx;d.jx*=0.96;if(d.streak)d.streak*=0.985;
       if(d.life<=0){this.drops.splice(i,1);continue}
-      const a=d.life*0.5;
-      // streak
-      if(d.streak){c.fillStyle='rgba(180,210,230,'+(a*0.25)+')';c.fillRect(d.x-d.r*0.25,d.y-d.streak,d.r*0.5,d.streak)}
-      // dome
-      c.beginPath();c.arc(d.x,d.y,d.r,0,Math.PI*2);c.fillStyle='rgba(150,190,215,'+(a*0.3)+')';c.fill();
-      // highlight
-      c.beginPath();c.arc(d.x-d.r*0.3,d.y-d.r*0.3,d.r*0.35,0,Math.PI*2);c.fillStyle='rgba(255,255,255,'+(a*0.6)+')';c.fill();
+      const a=d.life;                   // base alpha drive
+      const rx=d.r*0.82,ry=d.r*1.08;    // surface-tension squish: taller than wide
+      // Streak — tapered (narrower at the trailing tail). Two-pass: faint outer + a brighter
+      // 1px center line so the trail reads as moving water, not a flat block.
+      if(d.streak){
+        const sl=d.streak;
+        c.save();c.translate(d.x,d.y);
+        // outer trail
+        const g1=c.createLinearGradient(0,-sl,0,0);
+        g1.addColorStop(0,'rgba(190,220,235,0)');
+        g1.addColorStop(1,'rgba(170,205,225,'+(a*0.32)+')');
+        c.fillStyle=g1;
+        c.beginPath();c.moveTo(-rx*0.18,-sl);c.lineTo(rx*0.18,-sl);c.lineTo(rx*0.45,0);c.lineTo(-rx*0.45,0);c.closePath();c.fill();
+        // center sheen
+        c.fillStyle='rgba(255,255,255,'+(a*0.28)+')';c.fillRect(-0.5,-sl,1,sl);
+        c.restore();
+      }
+      // Bead — radial gradient. Dark rim (water absorbs light at the contact ring), cooler body,
+      // soft cyan center. Sharp specular highlight up-left fakes the photographer lamp.
+      c.save();c.translate(d.x,d.y);c.scale(rx,ry);
+      const g2=c.createRadialGradient(-0.25,-0.25,0,0,0,1);
+      g2.addColorStop(0,'rgba(220,235,245,'+(a*0.55)+')');
+      g2.addColorStop(0.55,'rgba(150,190,215,'+(a*0.45)+')');
+      g2.addColorStop(0.9,'rgba(75,110,140,'+(a*0.55)+')');
+      g2.addColorStop(1,'rgba(40,70,100,'+(a*0.7)+')');
+      c.fillStyle=g2;c.beginPath();c.arc(0,0,1,0,Math.PI*2);c.fill();
+      c.restore();
+      // Crisp specular pip — kept in pixel space (not scaled by the ellipse) for a hard edge.
+      c.beginPath();c.arc(d.x-d.r*0.32,d.y-d.r*0.38,d.r*0.22,0,Math.PI*2);
+      c.fillStyle='rgba(255,255,255,'+(a*0.85)+')';c.fill();
+      // Second tiny pip below the main highlight — subsurface scatter cue.
+      c.beginPath();c.arc(d.x+d.r*0.18,d.y+d.r*0.42,d.r*0.12,0,Math.PI*2);
+      c.fillStyle='rgba(255,255,255,'+(a*0.35)+')';c.fill();
     }
   }
 };
@@ -3035,6 +3138,114 @@ function flashDamage(intensity){
   el.style.opacity=Math.min(0.85,intensity).toFixed(2);
   _shake=Math.max(_shake,0.35+intensity*0.5);  // impacts kick the camera proportional to the hit
   clearTimeout(_dmgFade);_dmgFade=setTimeout(()=>{el.style.opacity='0'},220);
+}
+
+// R19 — Marina stat cards. Each preview boat gets an HTML card anchored to its screen-projected
+// position. Cards show name + role + speed/handling/stability bars + the hero ability. Clicking
+// a card calls boat(cls). Cards auto-hide once s1 is dismissed.
+const _vPrev=new THREE.Vector3();
+const MARINA_CARD={
+  regular:  {name:'THE REEL',     role:'Frontline',   spd:70,hnd:75,stb:65,kit:'Rescue +25% bait',col:'#fca5a5'},
+  pontoon:  {name:'LILLY LOCH',   role:'Steady Hand', spd:55,hnd:60,stb:95,kit:'+10% damage resist',col:'#f9a8d4'},
+  speedboat:{name:'THE FLY',      role:'Stealth',     spd:98,hnd:90,stb:30,kit:'Sonar 2s + 5% speed', col:'#93c5fd'}
+};
+function updateMarinaCards(){
+  if(!$('s1')||$('s1').classList.contains('off')){
+    ['regular','pontoon','speedboat'].forEach(cls=>{const el=document.getElementById('marina-card-'+cls);if(el)el.style.display='none'});
+    const tip=document.getElementById('marina-tip');if(tip)tip.style.display='none';
+    return;
+  }
+  // Marina tip ribbon — one-time appended; the CSS class handles styling.
+  let tip=document.getElementById('marina-tip');
+  if(!tip&&GAME_MODE==='game'){
+    tip=document.createElement('div');tip.id='marina-tip';tip.className='marina-tip';
+    tip.textContent='Walk the dock · Click a boat to take it out';
+    document.body.appendChild(tip);
+  }
+  if(tip)tip.style.display='block';
+  ['regular','pontoon','speedboat'].forEach(cls=>{
+    const m=previewBoats[cls];if(!m)return;
+    let el=document.getElementById('marina-card-'+cls);
+    if(!el){
+      const d=MARINA_CARD[cls];
+      el=document.createElement('div');el.id='marina-card-'+cls;
+      el.style.cssText='position:fixed;z-index:11;pointer-events:auto;cursor:pointer;background:rgba(8,18,38,0.92);border:1px solid '+d.col+'55;border-left:3px solid '+d.col+';border-radius:8px;padding:8px 12px;font:600 11px JetBrains Mono,monospace;color:#e8edf5;letter-spacing:0.5px;min-width:150px;transform:translate(-50%,0);transition:opacity 0.25s,border-color 0.25s,box-shadow 0.25s;box-shadow:0 6px 18px rgba(0,0,0,0.6);user-select:none';
+      el.innerHTML=`
+        <div style="color:${d.col};font:700 11px DM Sans,sans-serif;letter-spacing:2px">${d.name}</div>
+        <div style="color:#64748b;font-size:8.5px;letter-spacing:1.5px;text-transform:uppercase;margin-top:1px">${d.role}</div>
+        <div style="margin-top:5px;display:grid;grid-template-columns:24px 1fr;gap:3px 4px;font-size:8.5px;color:#94a3b8">
+          <span>SPD</span><span style="background:#1e293b;height:5px;border-radius:2px;overflow:hidden"><span style="display:block;height:100%;width:${d.spd}%;background:${d.col}"></span></span>
+          <span>HND</span><span style="background:#1e293b;height:5px;border-radius:2px;overflow:hidden"><span style="display:block;height:100%;width:${d.hnd}%;background:${d.col}"></span></span>
+          <span>STB</span><span style="background:#1e293b;height:5px;border-radius:2px;overflow:hidden"><span style="display:block;height:100%;width:${d.stb}%;background:${d.col}"></span></span>
+        </div>
+        <div style="margin-top:5px;font-size:9px;color:#fbcf3b">${d.kit}</div>`;
+      el.addEventListener('click',()=>{boat(cls);sfx('pop')});
+      document.body.appendChild(el);
+    }
+    _vPrev.copy(m.position).project(cam);
+    const W=innerWidth,H=innerHeight;
+    if(_vPrev.z>1||_vPrev.z<-1){el.style.display='none';return}
+    el.style.display='block';
+    const px=(_vPrev.x*0.5+0.5)*W;
+    const py=(-_vPrev.y*0.5+0.5)*H + 70;  // anchor below the boat
+    el.style.left=px+'px';el.style.top=py+'px';
+    const sel=cls===S.bc;
+    el.style.opacity=sel?'1':'0.78';
+    const d=MARINA_CARD[cls];
+    el.style.borderColor=sel?d.col:(d.col+'55');
+    el.style.boxShadow=sel?('0 0 22px '+d.col+'40, 0 4px 14px rgba(0,0,0,0.5)'):'0 4px 14px rgba(0,0,0,0.5)';
+  });
+}
+// R19 — Marina boat raycast click. While on s1, a click in 3D selects the corresponding hero.
+// Pointer events on the wet-canvas + the HUD canvas pass through (pointer-events:none on those
+// elements), so the click lands here.
+const _marinaRay=new THREE.Raycaster();
+const _marinaMouse=new THREE.Vector2();
+window.addEventListener('pointerdown',e=>{
+  if(!$('s1')||$('s1').classList.contains('off'))return;
+  if(e.target&&e.target.closest&&e.target.closest('#s1, #overlay'))return;  // let the card buttons handle their own clicks
+  _marinaMouse.x=(e.clientX/innerWidth)*2-1;
+  _marinaMouse.y=-(e.clientY/innerHeight)*2+1;
+  _marinaRay.setFromCamera(_marinaMouse,cam);
+  const targets=Object.values(previewBoats);
+  const hits=_marinaRay.intersectObjects(targets,true);
+  if(hits.length){
+    let o=hits[0].object;while(o&&!o.userData.previewCls)o=o.parent;
+    if(o&&o.userData.previewCls){boat(o.userData.previewCls);sfx('pop')}
+  }
+},{passive:true});
+
+// R19 — Off-screen rescue arrow. Projects the nearest unrescued civilian into NDC. If they're
+// behind the camera OR outside ~0.8 of the viewport, anchor a chevron at the screen edge along
+// the projected bearing. Distance label below the arrow. Cleanly hidden once the civ enters
+// camera frame at close range. Re-uses a single DOM node spawned on demand.
+const _vCivProj=new THREE.Vector3();
+function updateRescueArrow(civ,dist){
+  let el=document.getElementById('rescue-arrow');
+  if(!civ){if(el)el.style.display='none';return}
+  if(!el){
+    el=document.createElement('div');el.id='rescue-arrow';
+    el.style.cssText='position:fixed;z-index:14;pointer-events:none;font:700 11px JetBrains Mono,monospace;letter-spacing:1px;color:#ff8c42;text-shadow:0 0 8px rgba(255,140,66,0.6);text-align:center;line-height:1;transform-origin:center;transition:opacity 0.2s';
+    el.innerHTML='<div style="font-size:32px;line-height:1">▲</div><div id="rescue-arrow-d" style="margin-top:2px;font-size:10px">--</div>';
+    document.body.appendChild(el);
+  }
+  _vCivProj.copy(civ.position).project(cam);
+  const onScreen=_vCivProj.z>-1&&_vCivProj.z<1&&Math.abs(_vCivProj.x)<0.88&&Math.abs(_vCivProj.y)<0.85;
+  // Hide if the civ is right in front + close — the help beam covers it.
+  if(onScreen&&dist<35){el.style.display='none';return}
+  el.style.display='block';
+  // If the civ is behind the camera, flip the projected XY (project returns inverted values).
+  let nx=_vCivProj.x,ny=_vCivProj.y;
+  if(_vCivProj.z>1){nx=-nx;ny=-ny}
+  // Clamp to screen-edge ring (margin 60px).
+  const W=innerWidth,H=innerHeight,mx=60,my=60,cx=W/2,cy=H/2;
+  const ang=Math.atan2(-ny,nx);
+  const px=cx+Math.cos(ang)*(cx-mx);
+  const py=cy-Math.sin(ang)*(cy-my);
+  el.style.left=(px-22)+'px';el.style.top=(py-30)+'px';
+  el.style.transform='rotate('+(ang*180/Math.PI+90)+'deg)';
+  el.firstChild.nextSibling.textContent=dist.toFixed(0)+'m';
+  el.style.opacity=Math.max(0.4,Math.min(1,1-dist/180)).toFixed(2);
 }
 
 // === 3-PHASE MISSION ===
@@ -3224,10 +3435,19 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
       }
     }
     // Civilian pickups — must approach slowly. Too-fast pass-by flashes a warning and the civilian remains in danger.
+    let _nearestCiv=null,_nearestCivD=Infinity;
     for(const c of civs){if(c.userData.saved)continue;
       c.position.y=Math.sin(t*1.8+c.position.x)*0.12;
       if(c.userData.ring)c.userData.ring.material.opacity=0.3+Math.sin(t*3+c.position.x)*0.2;
       const dc=bMesh.position.distanceTo(c.position);
+      // Track nearest active civ for the off-screen direction arrow below.
+      if(dc<_nearestCivD){_nearestCivD=dc;_nearestCiv=c}
+      // Help-beam pulse — fades down close-up so it doesn't blind the player on approach.
+      if(c.userData.beam){
+        const closeup=Math.min(1,Math.max(0,(dc-6)/30));
+        c.userData.beam.material.opacity=(0.18+Math.sin(t*3+c.position.x)*0.14)*closeup;
+        if(c.userData.beamTop)c.userData.beamTop.material.opacity=(0.55+Math.sin(t*3.5+c.position.x)*0.35)*closeup;
+      }
       if(dc<3){
         if(Math.abs(spd)<0.4){
           // Reel's hero ability: +25% bait yield from civilian rescues (rounded to whole bait).
@@ -3240,6 +3460,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
         }
       }
     }
+    // R19 — Off-screen rescue arrow. If the nearest unrescued civ is behind the camera or beyond
+    // ~50u, paint a small directional chevron at the edge of the screen pointing toward them.
+    // Hides cleanly once they enter near range OR all civs are saved.
+    updateRescueArrow(_nearestCiv,_nearestCivD);
     spawnWake();tickWakes();tickRain();tickSonar();
     if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
@@ -3272,10 +3496,38 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     cam.position.set(cx,cy,cz);cam.lookAt(bMesh.position.x,bMesh.position.y+0.6,bMesh.position.z);
     stopAllAudio();if(Math.abs(cam.fov-60)>0.04){cam.fov+=(60-cam.fov)*0.1;cam.updateProjectionMatrix()}
   }else{
-    // Cinematic idle — slow low-altitude sweep across the hazard zone
-    const tt=t*0.08;
-    cam.position.x=Math.sin(tt)*55;cam.position.z=Math.cos(tt)*55-30;cam.position.y=6+Math.sin(t*0.25)*3;
-    cam.lookAt(Math.sin(tt+0.6)*20,2,-50);
+    // R19 — Marina aerial picker. While the player is on s1 (hero pick), the camera orbits
+    // slowly around the marina dock so all three boats are visible from changing angles. The
+    // selected operative's boat glows + has its stat card highlighted. Once the run starts the
+    // preview boats stay moored as scenery (the picked hero is the one that drives away).
+    const marinaActive=!$('s1').classList.contains('off');
+    if(marinaActive){
+      const tt=t*0.12;
+      const rad=22+Math.sin(t*0.18)*2;
+      cam.position.x=dockPos.x+Math.sin(tt)*rad;
+      cam.position.z=dockPos.z+Math.cos(tt)*rad+8;
+      cam.position.y=12+Math.sin(t*0.3)*1.4;
+      cam.lookAt(dockPos.x,1.5,dockPos.z-2);
+      // Idle bob on preview boats — feels alive even before pick.
+      Object.values(previewBoats).forEach(m=>{
+        const bp=m.userData.basePos;
+        m.position.y=0.3+Math.sin(t*1.4+bp.x)*0.08;
+        m.rotation.z=Math.sin(t*0.9+bp.x)*0.04;
+      });
+      // Highlight ring follows the chosen hero.
+      Object.entries(previewBoats).forEach(([cls,m])=>{
+        const sel=cls===S.bc;
+        if(m.userData.ring)m.userData.ring.material.opacity=sel?(0.35+Math.sin(t*4)*0.18):0;
+      });
+      // Update screen-anchored stat cards.
+      updateMarinaCards();
+    }else{
+      // Old hazard-zone sweep — kept as the photo-mode-style cinematic if anything else triggers
+      // the no-state branch (rare; effectively only the post-run summary).
+      const tt=t*0.08;
+      cam.position.x=Math.sin(tt)*55;cam.position.z=Math.cos(tt)*55-30;cam.position.y=6+Math.sin(t*0.25)*3;
+      cam.lookAt(Math.sin(tt+0.6)*20,2,-50);
+    }
     // One patrol boat drifts in the distance during idle so something is alive
     if(aiB[0]){const p=aiB[0];p.position.x=Math.sin(t*0.3)*70;p.position.z=-90+Math.cos(t*0.2)*20;p.position.y=0.3+Math.sin(t*1.5)*0.2;p.rotation.y=t*0.3+Math.PI*0.5}
   }
@@ -3326,6 +3578,12 @@ function startGame(){
   // Bait pill mirrors the persistent balance and updates each frame in the loop.
   const hb=$('h-bait');if(hb)hb.textContent=bait;
   resetRunFlags();
+  // R19 — Hide the picked preview boat (the active bMesh now takes that role). The other two
+  // operatives' boats stay moored at the marina as ambient scenery — the dock feels like a real
+  // home base instead of a launching pad.
+  Object.entries(previewBoats).forEach(([cls,m])=>{m.visible=cls!==S.bc});
+  // R19 — Sweep up any stray marina UI artifacts so the run starts on a clean HUD.
+  ['regular','pontoon','speedboat'].forEach(cls=>{const el=document.getElementById('marina-card-'+cls);if(el)el.style.display='none'});
   spd=0;aV=0;
   bMesh.position.set(0,0.3,25);bMesh.rotation.set(0,Math.PI,0);prev.copy(bMesh.position);
   cam.position.set(0, 6, 38);
@@ -3527,7 +3785,10 @@ async function quote(){const t=TI[S.ti];show('s2');setStep(1);$('lt').textConten
   const rsk=$('ok-risk');if(rsk){const parts=[];if(S.wx.ws>10)parts.push('high wind');if(S.wx.v<5000)parts.push('low visibility');if(S.outcome==='OVERRUN'||S.outcome==='CLOSE CALLS')parts.push('debris risk');rsk.textContent=parts.length?'Conditions on Castor Bayou: '+parts.join(' · '):'Castor Bayou is running clean today.'}
   show('s4')}
 function pay(){if(S.curl)window.open(S.curl,'_blank');else alert('Demo — Stripe activates with keys.')}
-function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');stopAllAudio();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);show('s1');
+function reset(){S.on=false;S.played=false;document.body.classList.remove('playing');stopAllAudio();if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}$('hud').style.display='none';$('wxb').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';if($('f-addr'))$('f-addr').value='';if($('f-email'))$('f-email').value='';aiB.forEach(a=>a.userData.on=false);
+  // R19 — Restore the picker so the player can swap operatives between runs.
+  Object.values(previewBoats).forEach(m=>{m.visible=true});
+  show('s1');
   // Reset game-mode question state so the entry flow starts fresh on each "New Run".
   if(GAME_MODE==='game'){$('op-grid').style.display='grid';$('op-label').style.display='block';$('begin-btn').style.display='block';$('q-1').style.display='none';$('q-2').style.display='none';const hd=$('home-dock-wrap');if(hd)hd.style.display='block';S.lore={};refreshTrophyPeek()}}
 
