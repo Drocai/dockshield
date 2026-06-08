@@ -49,6 +49,9 @@
 <div id="grade"></div>
 <!-- Hull-damage red flash overlay — opacity is driven from JS, pointer-events:none. -->
 <div id="dmg-flash"></div>
+<!-- Underwater cinematic veil — fires during Deep Dock boss. Murky-blue gradient + rising
+     bubbles + caustic shimmer. Sits just under the wet-cv (z-13) so droplets still read on top. -->
+<canvas id="underwater-cv" style="position:fixed;inset:0;z-index:12;pointer-events:none;display:none"></canvas>
 <!-- Wet-screen droplet overlay — canvas2D, above the THREE.js scene, below the HUD. -->
 <canvas id="wet-cv" style="position:fixed;inset:0;z-index:13;pointer-events:none"></canvas>
 <!-- Duct proximity prompt: appears top-center when Duct is in sight + you're slow. -->
