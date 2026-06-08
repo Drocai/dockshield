@@ -4,6 +4,19 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DockShield: The Depth — Rescue Operations</title>
 <meta name="description" content="DockShield: The Depth — run rescue operations in your local waterway. Something is rising below the waterline.">
+<script>
+// Self-hosted error capture — no SDK, no DSN, no account. Captures every JS error +
+// unhandled rejection into a localStorage ring buffer (last 50). Readable from any
+// session via DS.errors() / DS.errorsClear(). Goal: never be blindsided by a silent crash.
+(function(){
+  const KEY='dockshield_errors_v1',MAX=50;
+  const push=(rec)=>{try{const a=JSON.parse(localStorage.getItem(KEY)||'[]');a.push(rec);while(a.length>MAX)a.shift();localStorage.setItem(KEY,JSON.stringify(a))}catch(e){}};
+  const rec=(kind,msg,src,ln,col,stack)=>({t:new Date().toISOString(),k:kind,m:String(msg||'').slice(0,400),s:src||'',l:ln||0,c:col||0,st:String(stack||'').slice(0,1200),ua:navigator.userAgent.slice(0,120),url:location.pathname+location.search});
+  window.addEventListener('error',e=>{push(rec('error',e.message,e.filename,e.lineno,e.colno,e.error&&e.error.stack));console.error('[captured]',e.message)});
+  window.addEventListener('unhandledrejection',e=>{const r=e.reason||{};push(rec('reject',r.message||r,'',0,0,r.stack));console.error('[captured-rej]',r.message||r)});
+  window.__dsErrors={get:()=>{try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){return[]}},clear:()=>localStorage.removeItem(KEY)};
+})();
+</script>
 <link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#030712">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">

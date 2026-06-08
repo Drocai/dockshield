@@ -196,6 +196,22 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log('· codex renders polish-round entries');
 
+    // 13b. Bayou Files lore arc: a locked chapter reads redacted; after qaUnlockChapter the codex
+    //      renders the chapter title + body. Confirms the unlock path + persisted set + render.
+    await p.evaluate(()=>DS.openCodex());await sleep(150);
+    const loreLocked=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('The Bayou Files')&&h.includes('???')});
+    if(!loreLocked)fail('Bayou Files section missing or chapter not showing locked');
+    await p.keyboard.press('Escape');await sleep(120);
+    const loreUnlock=await p.evaluate(()=>DS.qaUnlockChapter('ch1'));
+    if(!loreUnlock)fail('qaUnlockChapter did not unlock ch1');
+    await p.evaluate(()=>DS.openCodex());await sleep(150);
+    const loreShown=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('The Water Came Back')&&h.includes('DOCKSHIELD doesn')});
+    if(!loreShown)fail('Codex did not render the unlocked Bayou File body');
+    const lorePersist=await p.evaluate(()=>{const b=DS.getSave().bayouFiles;return Array.isArray(b)&&b.includes('ch1')});
+    if(!lorePersist)fail('Bayou Files unlock did not persist to the save blob');
+    await p.keyboard.press('Escape');await sleep(150);
+    console.log('· bayou files lore arc unlocks + persists + renders');
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.

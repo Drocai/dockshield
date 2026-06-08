@@ -28,6 +28,9 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// Bayou Files — the 5-chapter lore arc. Holds the ids of chapters the player has unlocked by
+// hitting progression milestones (launch, first rescue, evidence, the deep water, full extraction).
+let bayouFiles=new Set();
 // Biggest single fish ever landed across all runs — surfaced in the Codex + trophy peek.
 let bestFish=null;
 // Per-species log of first-landing context: {n:'Bluegill': {date, spot, score}}. Lets the Codex
@@ -190,6 +193,7 @@ function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
     (d.ach||[]).forEach(n=>achievements.add(n));
+    (d.bayouFiles||[]).forEach(n=>bayouFiles.add(n));
     bestScore=d.best||0;muted=!!d.muted;bait=d.bait||0;loyaltySpent=d.loyalty||0;
     if(d.bestFish&&typeof d.bestFish==='object')bestFish=d.bestFish;
     if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
@@ -215,7 +219,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -378,6 +382,25 @@ const mini={
     g.addColorStop(0,core);g.addColorStop(0.55,edge);g.addColorStop(1,'#0a0d0c');
     ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
     ctx.fillStyle=grain;for(let i=0;i<70;i++)ctx.fillRect((i*97)%W,(i*131)%H,1,1);
+  },
+  // Shared forage particle layer. Each game keeps its own local array (GC'd on close — no timers).
+  //   fxBurst: a spray of falling specks (dirt/splash/squash). fxRing: an expanding shockwave.
+  //   fxStep: integrates + draws every particle, then trims the dead. Called at the end of draw().
+  fxBurst(arr,x,y,n,cols,opt){
+    opt=opt||{};const up=opt.up||0,spd=opt.spd||1.6,grav=opt.grav!=null?opt.grav:0.16;
+    for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=spd*(0.35+Math.random());
+      arr.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-up,life:0,max:opt.life||(16+Math.random()*16),
+        r:opt.r||(1+Math.random()*2.4),col:cols[(Math.random()*cols.length)|0],grav,ring:false})}
+  },
+  fxRing(arr,x,y,col,max,gr){arr.push({x,y,vx:0,vy:0,life:0,max:max||16,r:3,col,grav:0,ring:true,gr:gr||1.7})},
+  fxStep(ctx,arr){
+    for(let i=arr.length-1;i>=0;i--){const p=arr[i];p.life++;
+      if(p.life>=p.max){arr.splice(i,1);continue}
+      const k=1-p.life/p.max;
+      if(p.ring){ctx.strokeStyle=p.col;ctx.globalAlpha=k*0.85;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,p.r+p.life*p.gr,0,Math.PI*2);ctx.stroke();continue}
+      p.vy+=p.grav;p.x+=p.vx;p.y+=p.vy;
+      ctx.fillStyle=p.col;ctx.globalAlpha=k;ctx.beginPath();ctx.arc(p.x,p.y,p.r*k+0.4,0,Math.PI*2);ctx.fill()}
+    ctx.globalAlpha=1;
   },
   finish(dp,score,radioLine,who){
     // Drain per-mini-game teardown hooks first so listeners/timers don't outlive the overlay.
@@ -612,7 +635,7 @@ const mini={
     const finishGK=won=>{
       over=true;
       _gkActive=false;
-      if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
+      if(won){S.gatorKingDown=true;bait+=60;persist();onUnlock('gator_king');unlockChapter('ch4');mini.finish(dp,800,'Got him. The Crayfish Hole is yours.','reel')}
       else{mini.finish(dp,0,'He rolled and snapped the line. Gone again.','lilly')}
     };
     const lose=()=>finishGK(false);
@@ -723,7 +746,7 @@ const mini={
     };
     const win=()=>{
       _bossActive=false;
-      S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');
+      S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');unlockChapter('ch4');
       // Clean run = boss never knocked the player below 50% of starting hull.
       if(_bossHullMin>=Math.max(50,_bossStartHull*0.5))onUnlock('boss_clean');
       _bossFinalBeat(()=>mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly'));
@@ -984,16 +1007,17 @@ const mini={
       <button class="btn bx" id="m-fw-q">Pack Up</button>`;
     const cv=$('m-fw-cv'),ctx=cv.getContext('2d');
     const clods=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)clods.push({x:off+c*cell,y:off+r*cell,r:Math.random()<0.05?0:1,t:0});
-    let worms=0,crickets=0,t=22;const G={alive:true};
+    let worms=0,crickets=0,t=22;const G={alive:true};const fx=[];
     const draw=()=>{
       mini.paintForageBg(ctx,W,H,'#3a2812','#2a1d0e','rgba(120,80,40,0.07)');
       for(const c of clods){if(c.r>0){ctx.fillStyle=c.t>0?'#4a3422':'#7a5a3a';ctx.beginPath();ctx.arc(c.x,c.y,18,0,Math.PI*2);ctx.fill();ctx.fillStyle='#3a2818';for(let i=0;i<3;i++)ctx.fillRect(c.x-8+i*6+Math.sin(c.x+i)*3,c.y-4+i*4,3,2)}else{ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.arc(c.x,c.y,15,0,Math.PI*2);ctx.fill();
         // Dug-out highlight ring so the player can read "this one's done"
         ctx.strokeStyle='rgba(120,80,40,0.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(c.x,c.y,16,0,Math.PI*2);ctx.stroke()}}
+      mini.fxStep(ctx,fx);
     };
-    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const c of clods){if(c.r>0&&Math.hypot(c.x-mx,c.y-my)<20){c.r=0;c.t=0;sfx('dig');const roll=Math.random();if(roll<0.55){worms++;baitInv.worm++;$('m-fw-w').textContent=worms}else if(roll<0.7){crickets++;baitInv.cricket++;$('m-fw-c').textContent=crickets}draw();persist();break}}};
-    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fw-t').textContent=t;for(const c of clods){if(c.r===0){c.t++;if(c.t>10){c.r=1;c.t=0}}}draw();if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);const total=worms+crickets;onUnlock('first_forage');if(total>=8)onUnlock('worm_farmer');mini.finishForage(`${worms} worms${crickets?', '+crickets+' crickets':''}.`,worms*4+crickets*8)}},1000);
-    const rf=setInterval(()=>draw(),120);
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const c of clods){if(c.r>0&&Math.hypot(c.x-mx,c.y-my)<20){c.r=0;c.t=0;sfx('dig');mini.fxBurst(fx,c.x,c.y,9,['#5a3a1e','#3a2614','#6b4a2a','#7a5a3a'],{up:1.6,grav:0.22});const roll=Math.random();if(roll<0.55){worms++;baitInv.worm++;$('m-fw-w').textContent=worms;mini.fxBurst(fx,c.x,c.y,5,['#d98a8a','#c97a7a'],{up:2,grav:0.14,life:24})}else if(roll<0.7){crickets++;baitInv.cricket++;$('m-fw-c').textContent=crickets;mini.fxBurst(fx,c.x,c.y,5,['#cce06b','#a8c44a'],{up:2.4,grav:0.1})}draw();persist();break}}};
+    const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fw-t').textContent=t;for(const c of clods){if(c.r===0){c.t++;if(c.t>10){c.r=1;c.t=0}}}if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);const total=worms+crickets;onUnlock('first_forage');if(total>=8)onUnlock('worm_farmer');mini.finishForage(`${worms} worms${crickets?', '+crickets+' crickets':''}.`,worms*4+crickets*8)}},1000);
+    const rf=setInterval(()=>draw(),40);
     $('m-fw-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',worms*4+crickets*8)};
     mini.addTeardown(()=>{G.alive=false;clearInterval(tick);clearInterval(rf);cv.onclick=null});
     draw();el.style.display='flex';
@@ -1012,7 +1036,7 @@ const mini={
       <div class="sb"><div class="sr"><span class="sl">Crickets</span><span class="sv g" id="m-fb-c">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fb-t">22</span></div></div>
       <button class="btn bx" id="m-fb-q">Pack Up</button>`;
     const cv=$('m-fb-cv'),ctx=cv.getContext('2d');
-    const bugs=[];const G={alive:true};let crickets=0,t=22;
+    const bugs=[];const G={alive:true};let crickets=0,t=22;const fx=[];
     const spawn=()=>{if(bugs.length>5)return;const fromLeft=Math.random()<0.5;bugs.push({x:fromLeft?-10:W+10,y:20+Math.random()*(H-40),vx:(fromLeft?1:-1)*(1.3+Math.random()*1.7),vy:(Math.random()-0.5)*0.3,life:1})};
     const draw=()=>{
       mini.paintForageBg(ctx,W,H,'#3a5018','#1f2a14','rgba(180,200,80,0.05)');
@@ -1020,8 +1044,9 @@ const mini={
       ctx.strokeStyle='rgba(140,170,80,0.25)';ctx.lineWidth=1;
       for(let i=0;i<22;i++){const x=(i*47)%W,y=H-((i*61)%30)-2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+2,y-8-((i*3)%4));ctx.stroke()}
       for(const b of bugs){if(b.life<=0)continue;ctx.fillStyle='#cce06b';ctx.beginPath();ctx.ellipse(b.x,b.y,7,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#cce06b';ctx.lineWidth=1;for(let i=-1;i<=1;i+=2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+i*8,b.y-3);ctx.stroke()}}
+      mini.fxStep(ctx,fx);
     };
-    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const b of bugs){if(b.life>0&&Math.hypot(b.x-mx,b.y-my)<14){b.life=0;crickets++;baitInv.cricket++;$('m-fb-c').textContent=crickets;sfx('swat');persist();break}}};
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(const b of bugs){if(b.life>0&&Math.hypot(b.x-mx,b.y-my)<14){b.life=0;crickets++;baitInv.cricket++;$('m-fb-c').textContent=crickets;sfx('swat');mini.fxRing(fx,b.x,b.y,'#e8f59a',12,1.4);mini.fxBurst(fx,b.x,b.y,7,['#cce06b','#a8c44a','#8db347'],{spd:2.2,grav:0.18,life:18});persist();break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fb-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);clearInterval(sp);onUnlock('first_forage');mini.finishForage(`${crickets} crickets in the box.`,crickets*6)}},1000);
     const sp=setInterval(spawn,500);
     const rf=setInterval(()=>{if(!G.alive)return;for(let i=bugs.length-1;i>=0;i--){const b=bugs[i];if(b.life<=0&&Math.random()<0.4){bugs.splice(i,1);continue}b.x+=b.vx;b.y+=b.vy;if(b.x<-20||b.x>W+20)b.life=0}draw()},40);
@@ -1043,15 +1068,16 @@ const mini={
       <div class="sb"><div class="sr"><span class="sl">Frogs</span><span class="sv g" id="m-fg-f">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fg-t">25</span></div></div>
       <button class="btn bx" id="m-fg-q">Pack Up</button>`;
     const cv=$('m-fg-cv'),ctx=cv.getContext('2d');
-    const frogs=[{x:W/2,y:H/2,still:0.7,t:0}];const G={alive:true};let caught=0,t=25;
+    const frogs=[{x:W/2,y:H/2,still:0.7,t:0}];const G={alive:true};let caught=0,t=25;const fx=[];
     const draw=()=>{
       mini.paintForageBg(ctx,W,H,'#2c4a28','#16241a','rgba(110,180,110,0.05)');
       // Lily-pad blobs to read as a swamp surface, deterministic so the marsh looks lived-in.
       ctx.fillStyle='rgba(60,110,60,0.55)';
       for(let i=0;i<6;i++){const x=((i*113)%(W-40))+20,y=((i*191)%(H-40))+20;ctx.beginPath();ctx.ellipse(x,y,18,12,(i*0.5)%6,0,Math.PI*2);ctx.fill()}
       for(const f of frogs){const stillFrac=Math.min(1,f.t/f.still);ctx.fillStyle=stillFrac>=1?'#86c97c':'#5fa75f';ctx.beginPath();ctx.arc(f.x,f.y,12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111';ctx.beginPath();ctx.arc(f.x-4,f.y-4,2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(f.x+4,f.y-4,2,0,Math.PI*2);ctx.fill()}
+      mini.fxStep(ctx,fx);
     };
-    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(let i=0;i<frogs.length;i++){const f=frogs[i];if(Math.hypot(f.x-mx,f.y-my)<16&&f.t>=f.still){caught++;baitInv.frog++;$('m-fg-f').textContent=caught;sfx('croak');persist();frogs.splice(i,1);if(frogs.length<2)frogs.push({x:30+Math.random()*(W-60),y:30+Math.random()*(H-60),still:0.5+Math.random()*0.5,t:0});break}}};
+    cv.onclick=e=>{if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;for(let i=0;i<frogs.length;i++){const f=frogs[i];if(Math.hypot(f.x-mx,f.y-my)<16&&f.t>=f.still){caught++;baitInv.frog++;$('m-fg-f').textContent=caught;sfx('croak');mini.fxRing(fx,f.x,f.y,'rgba(150,210,255,0.9)',16,2.1);mini.fxBurst(fx,f.x,f.y,8,['#7ec8e3','#a8dff0','#5fa75f'],{spd:2,grav:0.2,life:20});persist();frogs.splice(i,1);if(frogs.length<2)frogs.push({x:30+Math.random()*(W-60),y:30+Math.random()*(H-60),still:0.5+Math.random()*0.5,t:0});break}}};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fg-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} frogs.`,caught*12)}},1000);
     const rf=setInterval(()=>{if(!G.alive)return;for(const f of frogs){f.t+=0.06;if(f.t>f.still+0.6){f.x=30+Math.random()*(W-60);f.y=30+Math.random()*(H-60);f.t=0;f.still=0.5+Math.random()*0.5}}draw()},60);
     $('m-fg-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',caught*12)};
@@ -1073,7 +1099,7 @@ const mini={
       <div class="sb"><div class="sr"><span class="sl">Minnows</span><span class="sv g" id="m-fm-m">0</span></div><div class="sr"><span class="sl">Crayfish</span><span class="sv y" id="m-fm-y">0</span></div><div class="sr"><span class="sl">Time</span><span class="sv b" id="m-fm-t">22</span></div></div>
       <button class="btn bx" id="m-fm-q">Pack Up</button>`;
     const cv=$('m-fm-cv'),ctx=cv.getContext('2d');
-    const m=[];const G={alive:true,drag:null};let caught=0,cray=0,t=22;
+    const m=[];const G={alive:true,drag:null};let caught=0,cray=0,t=22;const fx=[];
     for(let i=0;i<10;i++)m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'});
     const draw=()=>{
       mini.paintForageBg(ctx,W,H,'#0e3848','#06181f','rgba(126,200,227,0.06)');
@@ -1082,11 +1108,12 @@ const mini={
       for(let i=0;i<8;i++){const y=(i*H/8+((Date.now()*0.02+i*40)%20));ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
       for(const f of m){ctx.fillStyle=f.r==='cray'?'#cf4040':'#7ec8e3';ctx.beginPath();ctx.ellipse(f.x,f.y,f.r==='cray'?6:4,f.r==='cray'?4:2.5,Math.atan2(f.vy,f.vx),0,Math.PI*2);ctx.fill()}
       if(G.drag){ctx.strokeStyle='#fbcf3b';ctx.lineWidth=2;ctx.strokeRect(G.drag.x0,G.drag.y0,G.drag.x1-G.drag.x0,G.drag.y1-G.drag.y0)}
+      mini.fxStep(ctx,fx);
     };
     const xy=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]};
     cv.onmousedown=e=>{if(!G.alive)return;const[x,y]=xy(e);G.drag={x0:x,y0:y,x1:x,y1:y}};
     cv.onmousemove=e=>{if(!G.drag)return;const[x,y]=xy(e);G.drag.x1=x;G.drag.y1=y};
-    cv.onmouseup=()=>{if(!G.drag)return;const d=G.drag;const minX=Math.min(d.x0,d.x1),maxX=Math.max(d.x0,d.x1),minY=Math.min(d.y0,d.y1),maxY=Math.max(d.y0,d.y1);for(let i=m.length-1;i>=0;i--){const f=m[i];if(f.x>=minX&&f.x<=maxX&&f.y>=minY&&f.y<=maxY){if(f.r==='cray'){cray++;baitInv.crayfish++;$('m-fm-y').textContent=cray}else{caught++;baitInv.minnow++;$('m-fm-m').textContent=caught}m.splice(i,1);m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'})}}sfx('net');persist();G.drag=null};
+    cv.onmouseup=()=>{if(!G.drag)return;const d=G.drag;const minX=Math.min(d.x0,d.x1),maxX=Math.max(d.x0,d.x1),minY=Math.min(d.y0,d.y1),maxY=Math.max(d.y0,d.y1);let scooped=0;for(let i=m.length-1;i>=0;i--){const f=m[i];if(f.x>=minX&&f.x<=maxX&&f.y>=minY&&f.y<=maxY){if(f.r==='cray'){cray++;baitInv.crayfish++;$('m-fm-y').textContent=cray;mini.fxBurst(fx,f.x,f.y,6,['#cf4040','#e87070'],{spd:1.8,grav:0.12,life:18})}else{caught++;baitInv.minnow++;$('m-fm-m').textContent=caught}scooped++;mini.fxBurst(fx,f.x,f.y,5,['#a8dff0','#7ec8e3','#eaf6fb'],{spd:1.6,grav:0.1,up:0.6,life:16});m.splice(i,1);m.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-0.5)*2.5,vy:(Math.random()-0.5)*2.5,r:Math.random()<0.08?'cray':'min'})}}if(scooped){const cx=(minX+maxX)/2,cy=(minY+maxY)/2;mini.fxRing(fx,cx,cy,'rgba(251,207,59,0.8)',18,2.4)}sfx('net');persist();G.drag=null};
     const tick=setInterval(()=>{if(!G.alive)return;t--;$('m-fm-t').textContent=t;if(t<=0){G.alive=false;clearInterval(tick);clearInterval(rf);onUnlock('first_forage');mini.finishForage(`${caught} minnows${cray?', '+cray+' crayfish':''}.`,caught*5+cray*20)}},1000);
     const rf=setInterval(()=>{if(!G.alive)return;for(const f of m){f.x+=f.vx;f.y+=f.vy;if(f.x<0||f.x>W)f.vx=-f.vx;if(f.y<0||f.y>H)f.vy=-f.vy}draw()},40);
     $('m-fm-q').onclick=()=>{G.alive=false;clearInterval(tick);clearInterval(rf);mini.finishForage('Packed it in.',caught*5+cray*20)};
@@ -1111,7 +1138,7 @@ const mini={
     const cv=$('m-fc-cv'),ctx=cv.getContext('2d');
     // Each rock can be flipped(false → true), then 'reveal'={none|cray|min} for ~1.2s, then re-buries.
     const rocks=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const roll=Math.random();rocks.push({x:off+c*cell,y:off+r*cell,kind:roll<0.30?'cray':roll<0.42?'min':'none',flipped:false,revealUntil:0})}
-    let cray=0,caught=0,t=22;const G={alive:true};
+    let cray=0,caught=0,t=22;const G={alive:true};const fx=[];
     const draw=()=>{
       mini.paintForageBg(ctx,W,H,'#3a1e10','#1c0f08','rgba(200,120,80,0.06)');
       // Faint shore-water suggestion at the bottom.
@@ -1132,6 +1159,7 @@ const mini={
           ctx.fillStyle='#1a0e08';ctx.beginPath();ctx.ellipse(k.x,k.y,15,10,0,0,Math.PI*2);ctx.fill();
         }
       }
+      mini.fxStep(ctx,fx);
     };
     cv.onclick=e=>{
       if(!G.alive)return;const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;
@@ -1140,11 +1168,12 @@ const mini={
           if(!k.flipped){
             // First click: flip the rock, reveal whatever's under it for 1.2s.
             k.flipped=true;k.revealUntil=Date.now()+1200;sfx('dig');
+            mini.fxBurst(fx,k.x,k.y,8,['#5a4030','#6b4a2a','#3a2614','#7a5a3a'],{up:1.4,grav:0.24});
             if(k.kind==='cray'||k.kind==='min')sfx('click');  // little chitter
           }else if(k.revealUntil>Date.now()&&k.kind!=='none'){
             // Catch it.
-            if(k.kind==='cray'){cray++;baitInv.crayfish=(baitInv.crayfish||0)+1;$('m-fc-c').textContent=cray;sfx('croak')}
-            else{caught++;baitInv.minnow=(baitInv.minnow||0)+1;$('m-fc-m').textContent=caught;sfx('net')}
+            if(k.kind==='cray'){cray++;baitInv.crayfish=(baitInv.crayfish||0)+1;$('m-fc-c').textContent=cray;sfx('croak');mini.fxRing(fx,k.x,k.y,'rgba(207,64,64,0.85)',14,1.8);mini.fxBurst(fx,k.x,k.y,7,['#cf4040','#e87070','#fbcf3b'],{spd:2,grav:0.16,life:20})}
+            else{caught++;baitInv.minnow=(baitInv.minnow||0)+1;$('m-fc-m').textContent=caught;sfx('net');mini.fxBurst(fx,k.x,k.y,5,['#7ec8e3','#a8dff0'],{spd:1.6,grav:0.12,life:16})}
             k.kind='none';k.revealUntil=0;persist();
           }
           draw();return;
@@ -3037,7 +3066,32 @@ const storm={lastStrike:0,minGap:8,nextRand:5,
 // === ACHIEVEMENT TRIGGER ===
 // Centralized unlock hook. Real definitions + toast UI land in the achievements commit; this stub
 // keeps callsites stable. ACH map declared near here so every check route through this fn.
+// === BAYOU FILES — 5-chapter lore arc ===
+// Each chapter is a redacted case file until its progression milestone is met. Rendered as a
+// section in the Codex. Unlocking fires a dedicated toast (kicker 'BAYOU FILE') + win sting.
+// Unlock sites are wired at the matching gameplay moments: ch1 on launch, ch2 on first rescue,
+// ch3 on recovering evidence, ch4 in the deep water (boss / Gator King), ch5 on full extraction.
+const BAYOU_FILES=[
+  {id:'ch1',n:'I · The Water Came Back',icon:'🌊',hint:'Unlocks on your first launch.',
+   body:'They sold the last big flood as a hundred-year event. Castor Bayou has had four. The water here doesn’t so much rise as remember where it used to be — and come back for it. You took the dock contract because the pay was good and the orientation packet was thin. Three pages. The fourth was missing. DOCKSHIELD doesn’t put the fourth page in writing.'},
+  {id:'ch2',n:'II · The Ones Who Stayed',icon:'🛟',hint:'Unlocks when you pull a civilian out of the water.',
+   body:'Most folks evacuate. Some don’t — can’t, won’t, or stopped believing the siren the fourth time it cried wolf. The ones still on the water when the surge hits aren’t tourists. They’re the people who’ve watched the bayou take a little more every year and decided to stay anyway. You pulled one out today. They didn’t thank you. They just looked back at the water like they’d left something in it.'},
+  {id:'ch3',n:'III · The Flooded Chapel',icon:'⛪',hint:'Unlocks when you recover a piece of evidence.',
+   body:'Half-sunk at the north bend, the Flooded Chapel predates every map the county will admit to. The pews face the water, not the altar. In the case file you recovered: tide tables going back further than tide tables should, each flood circled, each circle in a different hand. Somebody has been keeping count of the water for a very long time. The last entry isn’t a date. It’s a question mark.'},
+  {id:'ch4',n:'IV · Something Under The Dock',icon:'🐊',hint:'Unlocks when you face what lives in the deep water.',
+   body:'Every working boat on Castor Bayou has felt it — the pull that isn’t current, the line that goes slack a half-second before it should. The Gator King is real and the gators are real, but they’re not what makes the old hands keep a hand on the throttle. There’s deeper water under the Deep Dock than the charts allow for. You went down there. Something looked back. You came up. Not everyone does.'},
+  {id:'ch5',n:'V · The Depth Remembers',icon:'🌀',hint:'Unlocks when you get every civilian out in one run.',
+   body:'You got everyone out. Every civilian off the water before the surge closed over the bayou like a held breath. That’s not nothing. The Depth keeps a tally — of every dock that held, every person pulled back from the edge, every run that ended with the boat tied up and the lights still on. It remembers the ones who saved people. It remembers the rest, too. Castor Bayou will flood again. It always does. But it’ll remember you were here, and which kind you were.'}
+];
+function unlockChapter(id){
+  if(bayouFiles.has(id))return;
+  const ch=BAYOU_FILES.find(c=>c.id===id);if(!ch)return;
+  bayouFiles.add(id);persist();
+  pushAchToast({k:'BAYOU FILE',n:ch.n,d:'A new chapter opens in the case file.'});sfx('win');
+  if(BAYOU_FILES.every(c=>bayouFiles.has(c.id)))onUnlock('archivist');
+}
 const ACH={
+  archivist:{n:'The Archivist',d:'Unlocked all five Bayou Files.',p:()=>({cur:bayouFiles.size,max:BAYOU_FILES.length})},
   first_catch:{n:'First Cast',d:'Landed your first fish.'},
   first_release:{n:'Steward',d:'Released a fish back into Castor Bayou.'},
   legendary_landed:{n:'Castor Legend',d:'Landed a legendary species.'},
@@ -3099,7 +3153,7 @@ function flashRunBest(f){
 }
 function showAchToast(a){
   const t=$('ach-toast');if(!t)return;
-  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">ACHIEVEMENT</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div><div style="font-size:9px;color:#475569;margin-top:4px;letter-spacing:1px">tap to dismiss</div>`;
+  t.innerHTML=`<div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b">${a.k||'ACHIEVEMENT'}</div><div style="font:700 14px 'DM Sans',sans-serif;margin-top:2px">${a.n}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.d}</div><div style="font-size:9px;color:#475569;margin-top:4px;letter-spacing:1px">tap to dismiss</div>`;
   t.style.display='block';t.style.opacity='1';t.style.cursor='pointer';t.style.pointerEvents='auto';
   const dismiss=()=>{t.style.opacity='0';setTimeout(()=>{if(t.style.opacity==='0'){t.style.display='none';t.style.pointerEvents='none'}},400)};
   t.onclick=()=>{clearTimeout(showAchToast._t);dismiss();if(_achDrainT){clearTimeout(_achDrainT);_achDrainT=setTimeout(_drainAch,400)}};
@@ -3428,7 +3482,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
         // Prefer evidence the player hasn't seen yet so the catalog actually grows.
         const fresh=EV.filter(e=>!evidenceCatalog.has(e.n));
         S.evCollected=(fresh.length?fresh:EV)[Math.floor(Math.random()*((fresh.length?fresh:EV).length))];
-        evidenceCatalog.add(S.evCollected.n);persist();S.score+=75;
+        evidenceCatalog.add(S.evCollected.n);persist();S.score+=75;unlockChapter('ch3');
         $('h-ev').textContent='1/1';$('h-ev').style.color='#fbcf3b';
         $('ww').textContent='EVIDENCE COLLECTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='EVIDENCE COLLECTED')$('ww').style.display='none'},1400);
         radio(HERO[S.bc].voice.evidence);
@@ -3455,6 +3509,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
           $('h-civ').textContent=S.civsSaved+'/'+S.civsTotal;
           $('ww').textContent='CIVILIAN EXTRACTED';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='CIVILIAN EXTRACTED')$('ww').style.display='none'},1400);
           if(S.civsSaved===1)radio(HERO[S.bc].voice.rescue);
+          unlockChapter('ch2');
         }else if(dc<2.2&&$('ww').textContent!=='TOO FAST FOR PICKUP'){
           $('ww').textContent='TOO FAST FOR PICKUP';$('ww').style.display='block';setTimeout(()=>{if($('ww').textContent==='TOO FAST FOR PICKUP')$('ww').style.display='none'},1200);
         }
@@ -3558,6 +3613,7 @@ function startGame(){
    }
   }
   S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;S._castedThisRun=false;
+  unlockChapter('ch1');  // first launch opens the case file
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -3643,7 +3699,7 @@ function endGame(won){S.on=false;S.played=true;document.body.classList.remove('p
   }
   // Outcome upgrade: full civilian extraction
   if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal&&rl==='CLEAN EXTRACTION'){rl='FULL EXTRACTION';rm='Every civilian out. Dock secured. Castor Bayou will remember this run for a long time.'}
-  if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal)onUnlock('full_extraction');
+  if(won&&S.civsTotal>0&&S.civsSaved===S.civsTotal){onUnlock('full_extraction');unlockChapter('ch5')}
   const rcv=$('r-civ');if(rcv){rcv.textContent=S.civsSaved+'/'+S.civsTotal;rcv.className='sv '+(S.civsSaved===S.civsTotal?'g':S.civsSaved>0?'y':'r')}
   // Evidence reveal — show flavor line only if collected; otherwise hide the block
   const evWrap=$('r-ev-wrap'),evName=$('r-ev-name'),evLine=$('r-ev-line');
@@ -4386,6 +4442,23 @@ function openCodex(){
           <div style="font-size:10.5px;color:#94a3b8;line-height:1.5">${won?'Took him at the Crayfish Hole. He stays put for the rest of the run, but he\'ll be back next time.':'Land every gator on the bayou. Then go to East Rocks.'}</div></div>
         </div>`;
     })()}
+    ${(()=>{
+      // === BAYOU FILES — the lore arc ===
+      // Unlocked chapters render their full body; locked ones show the title struck through with a
+      // redacted bar + the hint for how to unlock. Mirrors the rest of the inline-scroll codex.
+      const got=bayouFiles.size,tot=BAYOU_FILES.length;
+      return `<div style="margin:14px 0 2px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#7dd3fc;text-transform:uppercase">The Bayou Files <span style="color:#64748b">· ${got}/${tot} recovered</span></div>
+        <div style="font-size:10.5px;color:#64748b;line-height:1.5;margin-bottom:6px;font-style:italic">A case file assembled one run at a time. Each chapter opens when the water shows you something.</div>
+        ${BAYOU_FILES.map(c=>{const open=bayouFiles.has(c.id);
+          return `<div style="background:rgba(8,18,38,${open?0.6:0.4});border:1px ${open?'solid':'dashed'} rgba(125,211,252,${open?0.35:0.14});border-radius:8px;padding:10px 12px;margin:6px 0;opacity:${open?1:0.7}">
+            <div style="display:flex;align-items:center;gap:9px">
+              <div style="font-size:20px;${open?'':'filter:grayscale(1)'}">${open?c.icon:'🔒'}</div>
+              <div style="font-weight:700;font-size:12.5px;color:${open?'#7dd3fc':'#64748b'}">${open?c.n:c.n.split(' · ')[0]+' · ???'}</div>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-top:7px">${open?c.body:`<span style="color:#475569;font-style:italic">${c.hint}</span>`}</div>
+          </div>`;
+        }).join('')}`;
+    })()}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   // Wire the search + tier pills. Each rebuild calls openCodex() so the panel re-renders with the
   // new filter state without us re-querying scattered DOM nodes.
@@ -4467,6 +4540,7 @@ function qaUnlock(ids){
   // Falls back to a raw toast if the id isn't a registered achievement (so synthetic ids still flash).
   ids.forEach(id=>{if(ACH[id]){onUnlock(id)}else{pushAchToast({n:id,d:'(qa)'})}});return true;
 }
+function qaUnlockChapter(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;unlockChapter(id);return bayouFiles.has(id)}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
 // can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
@@ -4573,6 +4647,7 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},qaDuctEscape,qaUnlock,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
