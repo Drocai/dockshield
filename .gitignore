@@ -31,3 +31,6 @@ Thumbs.db
 /tmp/*.png
 *.smoke.js
 test.html
+
+# Claude Code — per-user local settings (project-level config in .claude/settings.json IS tracked)
+.claude/settings.local.json
