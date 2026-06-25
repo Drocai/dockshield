@@ -648,6 +648,8 @@ const mini={
   // Win = +1500 score, +120 bait, unlock 'deep_dock', clears the special drop point. Lose = sink.
   openBoss(dp){
     miniActive=true;S.on=false;_bossActive=true;
+    underwater.enable();  // fire the cinematic veil — bubbles, caustic, deep-blue grade
+    mini.addTeardown(()=>underwater.disable());  // belt-and-braces: any exit path drains it
     const card=$('mini-card'),el=$('mini');
     // Hero ability hooks for the Deep Dock arena:
     //   The Fly:    -1 sonar hit needed in phase 1 (recon advantage), narrower phase-2 miss penalty
@@ -737,7 +739,7 @@ const mini={
       if(playerHull<=0){lose();return}
       tension=0;phase=3;startReel();render();
     };
-    const flee=()=>{_bossActive=false;S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
+    const flee=()=>{_bossActive=false;underwater.disable();S.hull=Math.max(1,S.hull-30);mini.finish(dp,80,'Cut the line. It’s still down there. Bigger now.','fly')};
     // Final-hit beat: a brief grade fade + splash cue, then resolve. No global time-scale —
     // the world keeps ticking normally so water/AI/fish-jumps don't desync.
     const _bossFinalBeat=fn=>{
@@ -745,13 +747,13 @@ const mini={
       setTimeout(fn,600);
     };
     const win=()=>{
-      _bossActive=false;
+      _bossActive=false;underwater.disable();
       S.hull=Math.min(100,Math.max(1,playerHull));bait+=120;persist();onUnlock('deep_dock');unlockChapter('ch4');
       // Clean run = boss never knocked the player below 50% of starting hull.
       if(_bossHullMin>=Math.max(50,_bossStartHull*0.5))onUnlock('boss_clean');
       _bossFinalBeat(()=>mini.finish(dp,1500,'The Depth went still. The water remembers what you did down there.','lilly'));
     };
-    const lose=()=>{_bossActive=false;_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
+    const lose=()=>{_bossActive=false;underwater.disable();_bossFinalBeat(()=>{mini.finish(dp,0,'It pulled the hull under. Castor Bayou keeps another secret.','reel');S.hull=0})};
     // Spacebar fires the phase-1 ping
     const keyHandler=e=>{
       if(e.code==='Space'&&miniActive&&phase===1){e.preventDefault();const b=$('m-b-ping');if(b)b.click()}
@@ -2746,6 +2748,7 @@ function stopAllAudio(){engineAudio.stop();stormAudio.stop();campAudio.stopAll()
 function resetRunFlags(){
   _bossActive=false;_gkActive=false;_castInFlight=false;
   S.bossSpawned=false;S.gatorKingSpawned=false;S.gatorKingDown=false;
+  if(typeof underwater!=='undefined'&&underwater&&underwater.enabled)underwater.disable();
 }
 function toggleMute(){muted=!muted;persist();const b=$('mute-btn');if(b)b.textContent=muted?'🔇 Sound Off':'🔊 Sound On';if(muted)stopAllAudio();else sfx('click')}
 
@@ -2988,6 +2991,40 @@ let _shake=0;
 // blew into harsh shapes mid-streak. Now: every drop is a vertical ellipse (surface tension pulls
 // taller-than-wide), the bead has a dark rim + a soft body + a sharp specular highlight, and the
 // trailing streak narrows to a tapered tail with a faint white center line. Reads like glass.
+// Underwater cinematic — fires while the Deep Dock boss fight is live. Murky-blue gradient
+// veil + caustic shimmer + rising bubble particles. Pure canvas2D, runs in its own RAF loop
+// (separate from the main game loop) so it survives even if the world loop is paused for the
+// fight overlay. Activated by `underwater.enable()` in openBoss; disabled in win/lose/flee
+// plus mini.addTeardown as belt-and-braces.
+const underwater={cv:null,ctx:null,bubbles:[],enabled:false,_raf:null,_t0:0,
+  init(){this.cv=$('underwater-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
+  resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
+  spawn(yStart){const W=this.cv.width,H=this.cv.height;this.bubbles.push({x:Math.random()*W,y:yStart!=null?yStart:H+10,r:2+Math.random()*5,vy:0.4+Math.random()*1.2,wob:Math.random()*Math.PI*2,wf:0.04+Math.random()*0.06})},
+  enable(){if(this.enabled||!this.cv)return;this.enabled=true;this.cv.style.display='block';this.bubbles.length=0;
+    for(let i=0;i<25;i++)this.spawn(Math.random()*this.cv.height);
+    this._t0=performance.now();const step=()=>{if(!this.enabled)return;this.tick();this._raf=requestAnimationFrame(step)};this._raf=requestAnimationFrame(step)},
+  disable(){if(!this.enabled)return;this.enabled=false;if(this._raf){cancelAnimationFrame(this._raf);this._raf=null}if(this.ctx&&this.cv){this.ctx.clearRect(0,0,this.cv.width,this.cv.height);this.cv.style.display='none'}this.bubbles.length=0},
+  tick(){if(!this.ctx||!this.cv)return;const c=this.ctx,W=this.cv.width,H=this.cv.height,t=(performance.now()-this._t0)*0.001;
+    c.clearRect(0,0,W,H);
+    // Murky-blue vertical gradient — lighter at top (surface light), deeper toward the bottom.
+    const g=c.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'rgba(8,40,60,0.42)');g.addColorStop(0.5,'rgba(6,22,40,0.62)');g.addColorStop(1,'rgba(2,6,16,0.78)');
+    c.fillStyle=g;c.fillRect(0,0,W,H);
+    // Caustic shimmer — additive bands drifting horizontally, fading toward the bottom.
+    c.globalCompositeOperation='lighter';
+    for(let i=0;i<7;i++){const y=((i*H/7)+(Math.sin(t*0.5+i)*8))%H;const a=Math.max(0,0.10-y/H*0.10)*(0.6+Math.sin(t+i)*0.4);c.fillStyle='rgba(126,200,227,'+a.toFixed(3)+')';c.fillRect(0,y,W,H*0.04)}
+    c.globalCompositeOperation='source-over';
+    // Bubbles — rise, side-wobble, recycle from below.
+    for(let i=this.bubbles.length-1;i>=0;i--){const b=this.bubbles[i];b.y-=b.vy;b.wob+=b.wf;b.x+=Math.sin(b.wob)*0.6;
+      if(b.y<-20){this.bubbles.splice(i,1);this.spawn(H+10);continue}
+      c.fillStyle='rgba(180,220,240,0.22)';c.beginPath();c.arc(b.x,b.y,b.r,0,Math.PI*2);c.fill();
+      c.strokeStyle='rgba(220,240,250,0.32)';c.lineWidth=1;c.stroke();
+      c.fillStyle='rgba(255,255,255,0.45)';c.beginPath();c.arc(b.x-b.r*0.35,b.y-b.r*0.35,b.r*0.28,0,Math.PI*2);c.fill()}
+    // Vignette — edge darkening so the centre stays the focal point.
+    const vg=c.createRadialGradient(W/2,H/2,Math.min(W,H)*0.3,W/2,H/2,Math.max(W,H)*0.7);
+    vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,0.35)');
+    c.fillStyle=vg;c.fillRect(0,0,W,H)}
+};
 const wet={cv:null,ctx:null,drops:[],enabled:true,
   init(){this.cv=$('wet-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
   resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
@@ -3907,7 +3944,7 @@ document.body.classList.add('mode-'+GAME_MODE);
 // Apply a default hero tint so the s1 boat-picker chips have themed accents on first load. The
 // boat() call later overwrites this with the actual hero once a class is chosen.
 document.body.classList.add('hero-reel');
-initEngine();wet.init();refreshTrophyPeek();applyGfx();
+initEngine();wet.init();underwater.init();refreshTrophyPeek();applyGfx();
 // Pause when the tab is hidden — silence all continuous audio so we don't bleed in a background
 // tab, and stash S.on so we can restore it on visibilitychange→visible. The RAF loop is left
 // running (a paused tab throttles RAF automatically) so the scene is ready when the user returns.
@@ -4541,6 +4578,7 @@ function qaUnlock(ids){
   ids.forEach(id=>{if(ACH[id]){onUnlock(id)}else{pushAchToast({n:id,d:'(qa)'})}});return true;
 }
 function qaUnlockChapter(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;unlockChapter(id);return bayouFiles.has(id)}
+function qaUnderwater(on){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(on)underwater.enable();else underwater.disable();return underwater.enabled===!!on}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
 // can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
@@ -4648,6 +4686,6 @@ function qaSetTabHidden(hidden){
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

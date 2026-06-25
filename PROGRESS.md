@@ -26,7 +26,8 @@ but the live game runs in `GAME_MODE='game'`; the funnel is gated behind
 | #10 | **Phase IV-A — Duct + droplets + audio** | Duct the Rubber Ducky (uncatchable legendary, 5 escape archetypes, persisted sighting stats, locked codex entry); wet-screen droplet overlay; audio polish (quack/dig/croak/splash_big) |
 | #11 | **Phase IV-B — Foraging + bait inventory** | 4 shore camps; beach with **G** → worm-dig / bug-catch / frog-grab / minnow-net mini-games; typed bait pantry that biases the catch roll; equip via Tackle Shop |
 | #12 | **Phase IV-C — Boatworks + hero themes + abilities** | Castor Boatworks shop, per-hero boat upgrades (engine/lights/armor/electronics) with visible parts; hero accent kits (Reel chrome / Lilly flannel / Fly stealth); hero special abilities |
-| R20 | **Bayou Files + forage juice** | 5-chapter lore arc unlocked by progression milestones (launch / rescue / evidence / deep water / full extraction), redacted-until-earned, rendered in the Codex with an `Archivist` achievement; canvas particle layer on all 5 forage mini-games (dirt bursts, swat flash, catch ripples, net wake/sparkle) |
+| R20 | **Bayou Files + forage juice** | 5-chapter lore arc unlocked by progression milestones (launch / rescue / evidence / deep water / full extraction), redacted-until-earned, rendered in the Codex with an `Archivist` achievement; canvas particle layer on all 5 forage mini-games (dirt bursts, swat flash, catch ripples, net wake/sparkle); zero-dep in-game error capture (`DS.errors()`); SessionStart hook + ops log |
+| R21 | **Underwater cinematic** | A canvas2D veil over the THREE.js scene that fires for the Deep Dock boss — murky-blue gradient, drifting caustic shimmer, rising bubble particles, edge vignette. Activates on `openBoss`, drops on win/lose/flee, and is wired into `resetRunFlags()` as a safety net |
 
 ### Systems live now
 - **Entry**: hero pick → 2 lore questions → free-roam (optional home-dock address, real geocoded).

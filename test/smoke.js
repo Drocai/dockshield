@@ -212,6 +212,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(150);
     console.log('· bayou files lore arc unlocks + persists + renders');
 
+    // 13c. Underwater cinematic enable + disable. Confirms the canvas toggles display + the
+    //      bubble array seeds, and that disable() drops it back cleanly (no stranded RAF).
+    const uwOn=await p.evaluate(()=>{const ok=DS.qaUnderwater(true);const c=document.getElementById('underwater-cv');return ok&&c&&c.style.display!=='none'});
+    if(!uwOn)fail('Underwater cinematic did not enable');
+    const uwOff=await p.evaluate(()=>{const ok=DS.qaUnderwater(false);const c=document.getElementById('underwater-cv');return ok&&c&&c.style.display==='none'});
+    if(!uwOff)fail('Underwater cinematic did not disable cleanly');
+    console.log('· underwater cinematic enables + disables');
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
