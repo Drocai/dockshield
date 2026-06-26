@@ -244,8 +244,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     //      should render the codex board, mission board, and tackle counter shortcut.
     const hutOpen=await p.evaluate(()=>DS.qaDockHut());
     if(!hutOpen)fail('R24 Pier Hut did not open via qaDockHut');
-    const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')&&h.includes('Trophy Wall')&&h.includes('Run Journal')&&h.includes('Jukebox')});
-    if(!hutContent)fail('R24/R29 Pier Hut interior missing sections (now expects Trophy Wall, Run Journal, Jukebox)');
+    const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')&&h.includes('Trophy Wall')&&h.includes('Run Journal')&&h.includes('Jukebox')&&h.includes('Showcase Wall')});
+    if(!hutContent)fail('R24/R29/R32 Pier Hut interior missing sections (now expects Trophy Wall, Showcase Wall, Run Journal, Jukebox)');
+    // R32: pin toggle round-trip — toggle adds + removes the id.
+    const pinAdd=await p.evaluate(()=>DS.qaPinToggle('first_catch'));
+    if(!Array.isArray(pinAdd)||pinAdd.indexOf('first_catch')<0)fail('R32 qaPinToggle did not pin first_catch');
+    const pinRem=await p.evaluate(()=>DS.qaPinToggle('first_catch'));
+    if(!Array.isArray(pinRem)||pinRem.indexOf('first_catch')>=0)fail('R32 qaPinToggle did not unpin first_catch');
     await p.keyboard.press('Escape');await sleep(200);
     console.log('· pier hut interior opens with codex + missions + tackle counter');
 
