@@ -766,10 +766,13 @@ async function openProfilePanel(opts){
   miniActive=true;_peekOpen=true;
   if(!cloudReady()){card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-title">Cloud sync isn’t configured.</div><div class="m-sub" style="line-height:1.6;color:#cbd5e1">Profiles need Supabase. This deploy is running offline.</div><button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;el.style.display='flex';return}
   // Loading state.
+  const _pgen=_peekGen;  // R48: drop the post-fetch render if another overlay supersedes us
   card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-sub" style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`;el.style.display='flex';
   const profile=opts&&opts.userId?await fetchProfileFor(opts.userId):opts&&opts.handle?await fetchProfileByHandle(opts.handle):null;
+  if(_pgen!==_peekGen)return;
   if(!profile){card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-title">Captain not found.</div><div class="m-sub" style="line-height:1.6;color:#cbd5e1">Either they haven’t signed in yet, or the handle moved.</div><button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;return}
   const rank=await fetchTournamentRankFor(profile.user_id,isoWeekKey());
+  if(_pgen!==_peekGen)return;
   const isMe=auth.user&&profile.user_id===auth.user.id;
   let friendState='none';let friendBtnHTML='';
   if(!isMe&&auth.user){
@@ -5276,7 +5279,13 @@ function dockCamp(camp,mesh){
   card.querySelectorAll('.forage-row').forEach(btn=>btn.onclick=()=>{const fn=btn.dataset.fn;_peekOpen=false;const c2=$('mini-card');if(c2)c2.innerHTML='';if(typeof mini[fn]==='function')mini[fn](mesh)});
   el.style.display='flex';
 }
-function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;
+// R48 · overlay generation token. Bumped on every closePeek (and read by the async social
+// panels). A panel that awaits a network fetch captures the gen at open; if the gen changed
+// by the time the fetch resolves, another overlay superseded it, so the late render is dropped
+// instead of clobbering whatever is now on screen. Fixes: open daily challenge → close → open
+// tournament → the challenge's late leaderboard response was overwriting the tournament panel.
+let _peekGen=0;
+function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;_peekGen++;
   // If we paused a live run to dock at a shop, resume it now.
   if(_shopResumeRun){_shopResumeRun=false;S.on=true}}
 // Fish Codex — the full collection screen. Caught species show in color with their lore line;
@@ -5902,6 +5911,7 @@ let _friendsSearch='',_friendsSearchResults=[],_friendsSearchPending=false;
 async function openFriendsPanel(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
+  const _fgen=_peekGen;  // R48: drop the post-refreshFriends render if superseded
   if(!cloudReady()){
     card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
       <div class="m-title">Cloud sync isn’t configured.</div>
@@ -5918,6 +5928,7 @@ async function openFriendsPanel(){
     el.style.display='flex';return;
   }
   await refreshFriends();
+  if(_fgen!==_peekGen)return;  // R48: another overlay opened while we fetched — don't clobber it
   const myHandle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   const incomingHTML=friends.incoming.length
     ? friends.incoming.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(251,207,59,0.10);border:1px solid rgba(251,207,59,0.3);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
@@ -6027,9 +6038,11 @@ async function openTournamentPanel(){
     // Tab clicks re-render in place against the cached rows — no extra fetch.
     card.querySelectorAll('.tour-tab').forEach(b=>b.onclick=()=>{_tournamentTab=b.dataset.t;sfx('click');render(rows)});
   };
+  const gen=_peekGen;
   render(null);
   el.style.display='flex';
   const rows=cloudReady()?await fetchTournament(wk):[];
+  if(gen!==_peekGen)return;  // R48: superseded by another overlay — drop the stale render
   render(rows);
 }
 
@@ -6075,9 +6088,11 @@ async function openChallengePanel(){
       ${ldb}
       <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
   };
+  const gen=_peekGen;
   render(null);
   el.style.display='flex';
   const rows=cloudReady()?await fetchLeaderboard(ch.day):[];
+  if(gen!==_peekGen)return;  // R48: superseded by another overlay — drop the stale render
   render(rows);
 }
 
