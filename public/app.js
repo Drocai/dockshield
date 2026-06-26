@@ -355,15 +355,19 @@ const FISH=[
   {n:'Largemouth bass', r:'uncommon', w:12, s:25, e:'🎣', fight:1, line:1, f:'The Reel would already be on camera.'},
   {n:'Striper',      r:'uncommon', w:10, s:30, e:'🐠', fight:1, line:1, f:'Fights like it owes you money.'},
   {n:'Spotted gar',  r:'uncommon', w:8,  s:35, e:'🦈', fight:1, line:2, gator:true, f:'Teeth older than the marina.'},
+  {n:'Brook trout',  r:'uncommon', w:7,  s:42, e:'🐟', fight:1, line:1, winter:true, f:'Speckled like a chapel window. Bites better when the water turns.'},
+  {n:'Ice carp',     r:'uncommon', w:6,  s:48, e:'❄️', fight:1, line:2, winter:true, f:'Pale gold under a thin glaze. Castor Bayou has its own winter.'},
   // rare (real fight)
   {n:'Bowfin',       r:'rare',    w:5,  s:65, e:'🐉', fight:2, line:2, f:'Living fossil. Lilly loved them as a kid.'},
   {n:'Alligator gar',r:'rare',    w:4,  s:90, e:'🐊', fight:2, line:2, gator:true, f:'Folks say they used to be bigger. They’re right.'},
   {n:'Mud carp',     r:'rare',    w:3,  s:110,e:'🪲', fight:2, line:3, f:'The Quarantine Line outflow grew these.'},
   {n:'Bull gator',   r:'rare',    w:2.2,s:160,e:'🐊', fight:3, line:3, gator:true, f:'Not a fish. Hooked it anyway. It is NOT happy.'},
+  {n:'Northern pike',r:'rare',    w:2.6,s:135,e:'🐉', fight:3, line:3, winter:true, f:'Out of range on every chart — and on every chart anyway. Cold water draws them up.'},
   // legendary (Castor Bayou specials — heavy fights)
   {n:'Albino bream', r:'legendary', w:1.2, s:280, e:'👻', fight:2, line:3, f:'White as wet paper. Found near the Flooded Chapel.'},
   {n:'Three-eyed pike',r:'legendary', w:0.9, s:420, e:'🐲', fight:3, line:3, f:'Pulled from the Sunk Road waters. Lilly looked at it too long.'},
-  {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', fight:3, line:4, gator:true, f:'Doesn’t look right. Something else is on the line below this one.'}
+  {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', fight:3, line:4, gator:true, f:'Doesn’t look right. Something else is on the line below this one.'},
+  {n:'Spectral catfish',r:'legendary',w:0.35,s:780,e:'🐡', fight:3, line:4, night:true, f:'Only ever lands after dark. Eyes don’t catch the boat lights — they catch yours.'}
 ];
 const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
 // Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
@@ -378,8 +382,11 @@ function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s
 // Weighted roll, optionally with a 3x bonus on bias species.
 function rollFish(spot){
   // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2). Tournament
-  // Line shop buff multiplies rare+legendary weight again (×3) for the next 5 casts.
+  // Line shop buff multiplies rare+legendary weight again (×3) for the next 5 casts. Snow
+  // (R23) draws cold-water species up — fish.winter weights go ×2.6 when wx.c==='Snow'.
+  // Spectral catfish (fish.night) only spawns after dark — its weight zeroes out otherwise.
   const stormy=S.wx&&(S.wx.c==='Rain'||S.wx.c==='Drizzle');
+  const snowing=S.wx&&S.wx.c==='Snow';
   const tourney=buffs.rareLine>0;
   const reelBonus=eqReel().rare;  // equipped reel's permanent rare-odds multiplier
   // Bait pantry bias — consumed in castLine before the roll runs; bias is read here.
@@ -396,7 +403,12 @@ function rollFish(spot){
     if(useBait==='loudcricket')return f.r==='uncommon'?1.25:(spot&&spot.bias&&spot.bias.includes(f.n))?2.0:1;
     return 1;
   };
-  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;w*=baitBias(f);return {...f,w}});
+  let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;
+    // R23 winter + night seasoning. Snow brings winter species up hard; clear weather suppresses
+    // them. Spectral catfish only ever rolls when _isNight is true — daylight zeros it out.
+    if(f.winter)w*=snowing?2.6:0.35;
+    if(f.night)w*=_isNight?2.0:0;
+    w*=baitBias(f);return {...f,w}});
   if(useBait){baitInv[useBait]=Math.max(0,baitInv[useBait]-1);persist()}
   if(tourney){buffs.rareLine--;persist()}
   const total=pool.reduce((a,b)=>a+b.w,0);let r=Math.random()*total;
@@ -477,7 +489,7 @@ function pulseBait(delta){
 }
 const keys={};
 let tch={lY:0,rX:0};
-let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[];
+let wakes=[],rainDrops=[],sonarRings=[],stumpHighlights=[],snowFlakes=[];
 // === MINI-GAME SLOTS ===
 // Each mini-game key has an opener that pauses S.on while the overlay is up and a finish() helper
 // that re-arms the world. Battle/puzzle/runner/tetris bodies land in the next commits; the slots
@@ -2298,6 +2310,14 @@ function applyWeatherVisuals(){
     if(scene._sunDisc){scene._sunDisc.material.color.set(0x7a8090);scene._sunDisc.material.opacity=0.35}
     if(scene._sunHalo)scene._sunHalo.material.color.set(0x6070a0);
     if(scene._sun)scene._sun.intensity=0.8;
+  }else if(w.c==='Snow'){
+    // R23 winter — pale blue grade, brighter ambient (snow reflects), washed-cool sun.
+    scene.background.set(0x152434);scene.fog.color.set(0x1a2c40);
+    // Snow tightens visibility moderately — feels colder + chunkier.
+    scene.fog.near=Math.min(scene.fog.near,30);scene.fog.far=Math.min(scene.fog.far,180);
+    if(scene._sunDisc){scene._sunDisc.material.color.set(0xe6eef5);scene._sunDisc.material.opacity=0.5}
+    if(scene._sunHalo)scene._sunHalo.material.color.set(0xb8c8d8);
+    if(scene._sun)scene._sun.intensity=1.05;
   }else if(w.c==='Clouds'||w.c==='Overcast'){
     scene.background.set(0x0c1822);scene.fog.color.set(0x0c1822);
     if(scene._sunDisc){scene._sunDisc.material.color.set(0xccc0a0);scene._sunDisc.material.opacity=0.55}
@@ -2321,6 +2341,19 @@ function applyWeatherVisuals(){
     // Weather cleared — tear down the rain particles instead of letting them fall forever.
     rainDrops.forEach(r=>{disposeTree(r);scene.remove(r)});rainDrops.length=0;
   }
+  // R23 snowflakes — larger, slower, white. Reuse the rainDrops disposal pattern by piggybacking
+  // a parallel `snowFlakes` array so both can coexist (rain never overlaps snow in practice but the
+  // teardown stays trivially correct either way).
+  if(w.c==='Snow'&&snowFlakes.length===0){
+    const sg=new THREE.BufferGeometry();
+    const sn=140,sp=new Float32Array(sn*3);
+    for(let i=0;i<sn;i++){sp[i*3]=(Math.random()-0.5)*200;sp[i*3+1]=Math.random()*40;sp[i*3+2]=(Math.random()-0.5)*200}
+    sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
+    const sm=new THREE.PointsMaterial({color:0xfbffff,size:0.45,transparent:true,opacity:0.85,depthWrite:false});
+    const snow=new THREE.Points(sg,sm);scene.add(snow);snowFlakes.push(snow);
+  }else if(w.c!=='Snow'&&snowFlakes.length){
+    snowFlakes.forEach(s=>{disposeTree(s);scene.remove(s)});snowFlakes.length=0;
+  }
 }
 
 function tickRain(){
@@ -2331,6 +2364,16 @@ function tickRain(){
       if(pos.getY(i)<0)pos.setY(i,30+Math.random()*10);
       // Wind drift
       pos.setX(i,pos.getX(i)+Math.sin(S.wx.wd*Math.PI/180)*0.02);
+    }
+    pos.needsUpdate=true;
+  });
+  // R23 snowflakes — slower than rain, side-drift wobble keyed to wind direction.
+  snowFlakes.forEach(snow=>{
+    const pos=snow.geometry.attributes.position;
+    for(let i=0;i<pos.count;i++){
+      pos.setY(i,pos.getY(i)-0.06-S.wx.ws*0.006);
+      if(pos.getY(i)<0)pos.setY(i,30+Math.random()*10);
+      pos.setX(i,pos.getX(i)+Math.sin(S.wx.wd*Math.PI/180+pos.getY(i)*0.05)*0.04);
     }
     pos.needsUpdate=true;
   });
@@ -3915,7 +3958,12 @@ function paintDiscount(){
 }
 
 // === SERVICES ===
-async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c:['Clear','Clouds','Overcast'][Math.floor(Math.random()*3)],t:Math.round(65+Math.random()*20),v:5000+Math.random()*5000}}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;
+async function fetchWx(){try{const key=C.OWM_KEY||C.OPENWEATHER_KEY;if(!key)throw 0;const r=await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${S.lat}&lon=${S.lng}&appid=${key}&units=imperial`);if(!r.ok)throw 0;const d=await r.json();S.wx={ws:d.wind?.speed||3,wd:d.wind?.deg||180,g:d.wind?.gust||0,c:d.weather?.[0]?.main||'Clear',t:Math.round(d.main?.temp||72),v:d.visibility||10000}}catch(e){
+  // R23 — Snow joins the fallback rotation (12% of synthetic fetches). Real weather from OWM
+  // already returns 'Snow' when conditions are right; this lets the variant show up offline too.
+  const choice=Math.random();const c=choice<0.12?'Snow':choice<0.40?'Overcast':choice<0.70?'Clouds':'Clear';
+  S.wx={ws:3+Math.random()*7,wd:Math.round(Math.random()*360),g:5+Math.random()*5,c,t:Math.round(c==='Snow'?(28+Math.random()*8):65+Math.random()*20),v:c==='Snow'?(3000+Math.random()*3000):(5000+Math.random()*5000)};
+}$('wx-c').textContent=`${S.wx.c} ${S.wx.t}°F`;
   const wxText=$('wx-w-text');if(wxText)wxText.textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;else $('wx-w').textContent=`Wind ${S.wx.ws.toFixed(1)}mph`;
   // Wind arrow — rotate the down-arrow glyph to the wind's "to" bearing (meteorological wd is the
   // direction the wind comes FROM, so rotate by wd+180 to point where it's going).
@@ -4748,6 +4796,8 @@ function qaUnlock(ids){
 }
 function qaUnlockChapter(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;unlockChapter(id);return bayouFiles.has(id)}
 function qaUnderwater(on){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(on)underwater.enable();else underwater.disable();return underwater.enabled===!!on}
+function qaForceSnow(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:5,wd:90,g:6,c:'Snow',t:30,v:4000};applyWeatherVisuals();const el=$('wx-c');if(el)el.textContent='Snow 30°F';return S.wx.c==='Snow'&&snowFlakes.length>0}
+function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
 // can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
@@ -4856,6 +4906,6 @@ function qaSetTabHidden(hidden){
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
