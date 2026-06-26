@@ -344,7 +344,7 @@ async function authSignOut(){
       if(typeof drainPendingChallenges==='function')drainPendingChallenges();
       if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
       if(typeof syncProfile==='function')syncProfile();
-      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence();if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll()});
+      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence();if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll();if(typeof startCrewMessagesPoll==='function')startCrewMessagesPoll()});
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -615,6 +615,36 @@ function openSpotTagPrompt(){
   $('spot-drop').onclick=submit;
   const i=$('spot-label');if(i)i.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit()}};
 }
+// R41 · Crew Chat — 1-line messages with 24h TTL, friend-visible. Posts via the friends panel,
+// renders on the marina overlay as a scrolling card showing the last few from friends + self.
+const crewMessages={list:[]};
+let _crewMsgPollT=null;
+async function postCrewMessage(text){
+  if(!cloudReady()||!auth.token||!auth.user)return false;
+  const clean=String(text||'').trim().slice(0,140);if(!clean)return false;
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/crew_messages`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
+    body:JSON.stringify({user_id:auth.user.id,handle,text:clean})});
+    if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'POSTED',n:'Crew message sent',d:'Friends will see it for 24 hours.'});fetchCrewMessages();return true}return false;
+  }catch(e){return false}
+}
+async function fetchCrewMessages(){
+  if(!cloudReady()||!auth.token||!auth.user)return;
+  const ids=[auth.user.id,...friends.list.map(f=>f.uid)].map(u=>`"${u}"`).join(',');
+  if(!ids.length){crewMessages.list=[];return}
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/crew_messages?user_id=in.(${ids})&select=id,user_id,handle,text,created_at,expires_at&order=created_at.desc&limit=15`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
+    if(!r.ok)return;crewMessages.list=await r.json()||[];
+    if(typeof refreshCrewMessagesCard==='function')refreshCrewMessagesCard();
+  }catch(e){}
+}
+function startCrewMessagesPoll(){
+  if(_crewMsgPollT||!cloudReady()||!auth.user)return;
+  fetchCrewMessages();
+  _crewMsgPollT=setInterval(()=>fetchCrewMessages(),20000);
+}
+function stopCrewMessagesPoll(){if(_crewMsgPollT){clearInterval(_crewMsgPollT);_crewMsgPollT=null}crewMessages.list=[]}
 async function searchHandles(q){
   if(!cloudReady()||!q||q.length<2)return [];
   const qq=encodeURIComponent('*'+q.toLowerCase()+'*');
@@ -2334,6 +2364,8 @@ function qaSeedSpotTag(label){if(new URLSearchParams(location.search).get('qa')!
 function qaSpotTagCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewSpotTags.list.length}
 function qaOpenWhatsNew(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openWhatsNew();return miniActive&&_peekOpen}
 function qaExportPhoto(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;const d=exportPhoto();return d&&d.length>100?d.slice(0,30):null}
+function qaSeedCrewMessage(text){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;crewMessages.list.unshift({id:'qa'+Date.now(),user_id:'qa-self',handle:'QA',text:text||'Hot bite west of the chapel',created_at:new Date().toISOString(),expires_at:new Date(Date.now()+3600000).toISOString()});refreshCrewMessagesCard();return crewMessages.list.length}
+function qaCrewMessagesCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewMessages.list.length}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5623,6 +5655,7 @@ function refreshTrophyPeek(){
   refreshChallengeCard();
   refreshTournamentCard();
   refreshFriendsPill();
+  refreshCrewMessagesCard();
   if(typeof refreshWhatsNewButton==='function')refreshWhatsNewButton();
   if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
   // R36: catch the already-signed-in-at-boot case — if an invite URL was captured,
@@ -5648,6 +5681,20 @@ function refreshTournamentCard(){
 }
 
 // R33 · Friends pill — only when signed in. Shows N friends + (P pending) badge.
+// R41 · Render the latest 3 crew messages on the marina overlay below the friends pill.
+// Hidden when there's nothing to show (no signed-in friends, or empty feed).
+function refreshCrewMessagesCard(){
+  const el=$('crew-msg-card');if(!el)return;
+  if(GAME_MODE!=='game'||!cloudReady()||!auth.user||crewMessages.list.length===0){el.style.display='none';return}
+  const top=crewMessages.list.slice(0,3);
+  el.style.display='block';
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+    <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#86efac;text-transform:uppercase">Crew Wall · last ${top.length}</div>
+    <span style="font:600 9px 'JetBrains Mono',monospace;color:#475569">${crewMessages.list.length} active</span>
+  </div>
+  ${top.map(m=>{const min=Math.max(1,Math.round((Date.now()-new Date(m.created_at).getTime())/60000));const ago=min<60?min+'m':Math.round(min/60)+'h';
+    return `<div style="padding:5px 0;font:11.5px 'DM Sans',sans-serif;color:#cbd5e1;border-bottom:1px solid rgba(30,41,59,0.6)"><b class="prof-link" data-handle="${m.handle}" style="color:#86efac;cursor:pointer">${m.handle}</b> <span style="color:#94a3b8">· ${m.text}</span> <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${ago}</span></div>`}).join('')}`;
+}
 function refreshFriendsPill(){
   const el=$('friends-pill');if(!el)return;
   if(GAME_MODE!=='game'||!cloudReady()||!auth.user){el.style.display='none';return}
@@ -5710,6 +5757,15 @@ async function openFriendsPanel(){
   card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
     <div class="m-title">Your crew.</div>
     <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Signed in as <b style="color:#86efac">${myHandle}</b>. Share that handle — others can search for you.</div>
+    <!-- R41: Crew message post box. 140 char limit; visible to friends for 24h. -->
+    <div style="margin:14px 0 8px;padding:10px 12px;background:rgba(8,18,38,0.55);border:1px solid rgba(74,222,128,0.3);border-radius:6px">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#86efac;text-transform:uppercase;margin-bottom:5px">Crew Wall · post a note</div>
+      <textarea id="crew-msg-text" maxlength="140" placeholder="Hot bite on the Sunk Road shoals…" style="width:100%;height:54px;background:rgba(3,7,18,0.55);border:1px solid rgba(74,222,128,0.2);color:#e8edf5;border-radius:5px;padding:7px 10px;font:12px 'DM Sans',sans-serif;box-sizing:border-box;resize:none"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span style="font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1px">140 chars · 24h</span>
+        <button class="btn bp" id="crew-msg-post" style="width:auto;padding:5px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">POST</button>
+      </div>
+    </div>
     <!-- R34: crew-only toggle for the broadcast feed -->
     <div style="margin:10px 0;padding:9px 12px;background:rgba(3,7,18,0.55);border-radius:6px;border:1px solid rgba(74,222,128,0.25);display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div style="flex:1;min-width:0">
@@ -5733,6 +5789,11 @@ async function openFriendsPanel(){
   card.querySelectorAll('.friend-cancel').forEach(b=>b.onclick=async()=>{await removeFriend(b.dataset.uid);refreshFriendsPill();openFriendsPanel()});
   card.querySelectorAll('.friend-add').forEach(b=>b.onclick=async()=>{const ok=await sendFriendRequest(b.dataset.uid,b.dataset.handle);if(ok){sfx('click');refreshFriendsPill();openFriendsPanel()}});
   const ct=$('crew-toggle');if(ct)ct.onclick=()=>{setBroadcastCrewOnly(!broadcastCrewOnly);sfx('click');openFriendsPanel()};
+  // R41: crew message post.
+  const mp=$('crew-msg-post'),mt=$('crew-msg-text');
+  if(mp&&mt){mp.onclick=async()=>{const ok=await postCrewMessage(mt.value);if(ok){mt.value='';refreshCrewMessagesCard()}};
+    mt.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();mp.click()}};
+  }
   const q=$('friend-q');if(q){q.oninput=async()=>{_friendsSearch=q.value.trim();if(_friendsSearch.length<2){_friendsSearchResults=[];openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}return}_friendsSearchPending=true;openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}_friendsSearchResults=await searchHandles(_friendsSearch);_friendsSearchPending=false;openFriendsPanel();const q3=$('friend-q');if(q3){q3.focus();q3.selectionStart=q3.selectionEnd=q3.value.length}}}
 }
 // R34 · tournament panel now has an All/Crew tab toggle. Crew shows just the player's friends
@@ -6074,7 +6135,8 @@ openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
 dropSpotTag,openSpotTag:openSpotTagPrompt,
+postCrewMessage,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
