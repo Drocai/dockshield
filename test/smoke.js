@@ -272,7 +272,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!wk||!/^\d{4}-W\d{2}$/.test(wk))fail(`R30 isoWeekKey malformed: ${wk}`);
     const tOpen=await p.evaluate(()=>DS.qaTournamentOpen());
     if(!tOpen)fail('R30 tournament panel did not open');
-    const tContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Weekly Tournament')&&h.includes('Top 20')});
+    const tContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Weekly Tournament')&&h.includes('TOP 20')});
     if(!tContent)fail('R30 tournament panel missing top 20 section');
     await p.keyboard.press('Escape');await sleep(200);
     console.log(`· weekly tournament ${wk} resolves + panel renders`);
