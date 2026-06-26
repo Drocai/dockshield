@@ -516,6 +516,11 @@ async function fetchTournament(weekKey){
 // login + manually via the marina overlay's manage button.
 const friends={list:[],incoming:[],outgoing:[],byHandle:new Map()};
 let _profileSyncedAt=0;
+// R34 · "Crew only" filter for the broadcast feed. Local-storage backed so it survives
+// reloads even when signed out (no point pushing it to the save blob — it's a UI prefs flag).
+const _CREW_KEY='dockshield_crew_only_v1';
+let broadcastCrewOnly=(function(){try{return localStorage.getItem(_CREW_KEY)==='1'}catch(e){return false}})();
+function setBroadcastCrewOnly(on){broadcastCrewOnly=!!on;try{localStorage.setItem(_CREW_KEY,broadcastCrewOnly?'1':'0')}catch(e){}}
 async function syncProfile(){
   if(!cloudReady()||!auth.token||!auth.user)return false;
   const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
@@ -617,7 +622,10 @@ async function pollUnlockFeed(){
     // Toast oldest→newest so the visual order matches reality.
     rows.slice().reverse().forEach(r=>{
       if(r.handle===meHandle)return;  // skip our own broadcasts — local toast already fired
-      pushAchToast({k:'AROUND THE BAYOU',n:r.ach_name,d:`${r.handle}${r.boat?` · ${r.boat}`:''} just unlocked it.`});
+      // R34: when crew-only filter is active and we have friends loaded, only toast for
+      // handles in friends.byHandle. Falls back to the broad feed if no friends loaded yet.
+      if(broadcastCrewOnly&&friends.byHandle&&friends.byHandle.size>0&&!friends.byHandle.has((r.handle||'').toLowerCase()))return;
+      pushAchToast({k:broadcastCrewOnly?'YOUR CREW':'AROUND THE BAYOU',n:r.ach_name,d:`${r.handle}${r.boat?` · ${r.boat}`:''} just unlocked it.`});
     });
   }catch(e){}
 }
@@ -2118,6 +2126,8 @@ function openPinPicker(){
 function qaPinToggle(id){if(new URLSearchParams(location.search).get('qa')!=='1')return null;achievements.add(id);if(!ACH[id])ACH[id]={n:'TestAch',d:'qa'};pinToggle(id);return pinnedAchievements.slice()}
 function qaFriendsOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openFriendsPanel();return miniActive&&_peekOpen}
 function qaFriendsState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{list:friends.list.length,incoming:friends.incoming.length,outgoing:friends.outgoing.length}}
+function qaCrewOnly(on){if(new URLSearchParams(location.search).get('qa')!=='1')return null;if(on!==undefined)setBroadcastCrewOnly(on);return broadcastCrewOnly}
+function qaTournamentTab(t){if(new URLSearchParams(location.search).get('qa')!=='1')return null;if(t)_tournamentTab=t;return _tournamentTab}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5374,6 +5384,14 @@ async function openFriendsPanel(){
   card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
     <div class="m-title">Your crew.</div>
     <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Signed in as <b style="color:#86efac">${myHandle}</b>. Share that handle — others can search for you.</div>
+    <!-- R34: crew-only toggle for the broadcast feed -->
+    <div style="margin:10px 0;padding:9px 12px;background:rgba(3,7,18,0.55);border-radius:6px;border:1px solid rgba(74,222,128,0.25);display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${broadcastCrewOnly?'#4ade80':'#94a3b8'};text-transform:uppercase">Cross-device feed</div>
+        <div style="font-size:11px;color:#cbd5e1;margin-top:1px">${broadcastCrewOnly?'<b style="color:#86efac">Crew only</b> — toasts only fire for friends.':'<b style="color:#cbd5e1">All players</b> — toasts fire for everyone.'}</div>
+      </div>
+      <button class="btn bx" id="crew-toggle" style="width:auto;padding:5px 11px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:${broadcastCrewOnly?'rgba(74,222,128,0.25)':'rgba(3,7,18,0.5)'};color:${broadcastCrewOnly?'#86efac':'#94a3b8'};border:1px solid ${broadcastCrewOnly?'#4ade80':'rgba(30,41,59,0.6)'}">${broadcastCrewOnly?'CREW ✓':'CREW OFF'}</button>
+    </div>
     ${incomingHTML?`<div style="margin:14px 0 4px;font:11px 'JetBrains Mono',monospace;color:#fbcf3b;text-transform:uppercase;letter-spacing:1px">Pending · ${friends.incoming.length}</div>${incomingHTML}`:''}
     <div style="margin:14px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Friends · ${friends.list.length}</div>
     ${friendsHTML}
@@ -5388,21 +5406,39 @@ async function openFriendsPanel(){
   card.querySelectorAll('.friend-remove').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this friend?'))return;await removeFriend(b.dataset.uid);refreshFriendsPill();openFriendsPanel()});
   card.querySelectorAll('.friend-cancel').forEach(b=>b.onclick=async()=>{await removeFriend(b.dataset.uid);refreshFriendsPill();openFriendsPanel()});
   card.querySelectorAll('.friend-add').forEach(b=>b.onclick=async()=>{const ok=await sendFriendRequest(b.dataset.uid,b.dataset.handle);if(ok){sfx('click');refreshFriendsPill();openFriendsPanel()}});
+  const ct=$('crew-toggle');if(ct)ct.onclick=()=>{setBroadcastCrewOnly(!broadcastCrewOnly);sfx('click');openFriendsPanel()};
   const q=$('friend-q');if(q){q.oninput=async()=>{_friendsSearch=q.value.trim();if(_friendsSearch.length<2){_friendsSearchResults=[];openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}return}_friendsSearchPending=true;openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}_friendsSearchResults=await searchHandles(_friendsSearch);_friendsSearchPending=false;openFriendsPanel();const q3=$('friend-q');if(q3){q3.focus();q3.selectionStart=q3.selectionEnd=q3.value.length}}}
 }
+// R34 · tournament panel now has an All/Crew tab toggle. Crew shows just the player's friends
+// + the player's own row. The fetched rows are cached so the toggle is instant (no re-fetch).
+let _tournamentTab='all';
 async function openTournamentPanel(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
   miniActive=true;_peekOpen=true;
   const wk=isoWeekKey();
   const render=(rows)=>{
     const meHandle=playerHandle||(auth.user&&auth.user.email&&auth.user.email.split('@')[0])||'';
+    // R34 filter — when crew tab is active and the player is signed in with friends, narrow
+    // to friend handles + player's own row. Otherwise show all.
+    let viewRows=rows;
+    let filteredEmpty=false;
+    if(rows&&_tournamentTab==='crew'&&auth.user){
+      const fh=new Set(friends.list.map(f=>f.handle.toLowerCase()));
+      fh.add(meHandle.toLowerCase());
+      viewRows=rows.filter(r=>fh.has((r.handle||'').toLowerCase()));
+      filteredEmpty=rows.length>0&&viewRows.length===0;
+    }
+    const tabs=`<div style="display:flex;gap:6px;margin:10px 0 4px">
+      <button class="tour-tab" data-t="all" style="background:${_tournamentTab==='all'?'rgba(167,139,250,0.25)':'rgba(3,7,18,0.5)'};color:${_tournamentTab==='all'?'#c4b5fd':'#94a3b8'};border:1px solid ${_tournamentTab==='all'?'#a78bfa':'rgba(30,41,59,0.6)'};font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:5px 11px;border-radius:5px;cursor:pointer">ALL · TOP 20</button>
+      <button class="tour-tab" data-t="crew" style="background:${_tournamentTab==='crew'?'rgba(74,222,128,0.25)':'rgba(3,7,18,0.5)'};color:${_tournamentTab==='crew'?'#86efac':'#94a3b8'};border:1px solid ${_tournamentTab==='crew'?'#4ade80':'rgba(30,41,59,0.6)'};font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;padding:5px 11px;border-radius:5px;cursor:pointer">YOUR CREW${auth.user?` · ${friends.list.length}`:''}</button>
+    </div>`;
     const ldb=rows===null
       ? `<div style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`
-      : rows.length===0
-        ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No runs banked this week yet. Be first.</div>`
-        : `<div style="overflow-y:auto;max-height:380px">${rows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':''}">
+      : viewRows.length===0
+        ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">${_tournamentTab==='crew'?(auth.user?(friends.list.length===0?'Add some friends to populate this view.':'None of your crew has banked a run this week yet.'):'Sign in to use the crew view.'):'No runs banked this week yet. Be first.'}</div>`
+        : `<div style="overflow-y:auto;max-height:380px">${viewRows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;const isFriend=auth.user&&friends.byHandle&&friends.byHandle.has((r.handle||'').toLowerCase());return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':isFriend?'rgba(74,222,128,0.08)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':isFriend?'border-left:3px solid #4ade80;':''}">
             <span style="width:30px;text-align:center;font:600 13px 'JetBrains Mono',monospace;color:${i<3?'#fbcf3b':'#64748b'}">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 14px 'JetBrains Mono',monospace">${r.score}</span>
           </div>`}).join('')}</div>`;
     card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Weekly Tournament · ${wk}</div>
@@ -5410,9 +5446,11 @@ async function openTournamentPanel(){
       <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Every run you finish posts your score. Only your <b>best</b> counts toward the week. Ranks reset every Monday at 00:00 UTC.</div>
       ${!cloudReady()?`<div style="margin-top:10px;padding:10px 12px;background:rgba(96,208,255,0.08);border:1px solid rgba(96,208,255,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#93c5fd">Cloud sync isn’t configured for this deploy — tournament is read-only here.</div>`:''}
       ${cloudReady()&&!auth.user?`<div style="margin-top:10px;padding:10px 12px;background:rgba(251,207,59,0.08);border:1px solid rgba(251,207,59,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#fde68a">Sign in to bank your runs to the leaderboard.</div>`:''}
-      <div style="margin:14px 0 6px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Top 20 · this week</div>
+      ${tabs}
       ${ldb}
       <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+    // Tab clicks re-render in place against the cached rows — no extra fetch.
+    card.querySelectorAll('.tour-tab').forEach(b=>b.onclick=()=>{_tournamentTab=b.dataset.t;sfx('click');render(rows)});
   };
   render(null);
   el.style.display='flex';
@@ -5708,6 +5746,6 @@ signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaFriendsOpen,qaFriendsState,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

@@ -286,6 +286,21 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log('· friends panel + state resolve');
 
+    // 13m. R34 tournament tabs + crew filter. qaTournamentTab cycles ALL→CREW; the panel
+    //      re-renders against cached rows. qaCrewOnly persists the broadcast filter to
+    //      localStorage so it survives reloads.
+    const tabAll=await p.evaluate(()=>DS.qaTournamentTab('all'));
+    if(tabAll!=='all')fail('R34 tournament tab did not switch to all');
+    const tabCrew=await p.evaluate(()=>DS.qaTournamentTab('crew'));
+    if(tabCrew!=='crew')fail('R34 tournament tab did not switch to crew');
+    const crewOn=await p.evaluate(()=>DS.qaCrewOnly(true));
+    if(crewOn!==true)fail('R34 crew-only filter did not flip on');
+    const crewPersist=await p.evaluate(()=>localStorage.getItem('dockshield_crew_only_v1'));
+    if(crewPersist!=='1')fail('R34 crew-only flag did not persist');
+    const crewOff=await p.evaluate(()=>DS.qaCrewOnly(false));
+    if(crewOff!==false)fail('R34 crew-only filter did not flip off');
+    console.log('· tournament tabs + crew filter persist');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
