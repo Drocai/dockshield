@@ -326,6 +326,12 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(150);
     console.log("· what's new panel + entries render");
 
+    // 13q. R40 photo export — qaExportPhoto returns a data-URL prefix on success, null on
+    //      failure. Captures the live scene + stamps metadata; renderer is preserveDrawingBuffer.
+    const dataPrefix=await p.evaluate(()=>DS.qaExportPhoto());
+    if(!dataPrefix||!dataPrefix.startsWith('data:image/png'))fail(`R40 exportPhoto did not return a PNG data URL prefix: ${dataPrefix}`);
+    console.log('· photo export captures scene + stamps metadata');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());

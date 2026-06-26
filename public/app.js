@@ -1893,7 +1893,7 @@ function initEngine(){
     moonHalo.scale.set(110,110,1);moonHalo.visible=false;scene.add(moonHalo);scene._moonHalo=moonHalo;
   }
   cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1000);cam.position.set(0,15,30);cam.lookAt(0,0,0);
-  ren=new THREE.WebGLRenderer({antialias:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
+  ren=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});ren.setSize(innerWidth,innerHeight);ren.setPixelRatio(Math.min(devicePixelRatio,2));
   ren.toneMapping=THREE.ACESFilmicToneMapping;ren.toneMappingExposure=1.2;
   ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;
   document.body.insertBefore(ren.domElement,document.body.firstChild);
@@ -1969,6 +1969,7 @@ function initEngine(){
     if(e.code==='KeyH'&&S.on&&GAME_MODE==='game'&&_nearHut&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockHut()}
     if(e.code==='KeyT'&&S.on&&GAME_MODE==='game'&&!miniActive&&Math.abs(spd)<0.3){e.preventDefault();openSpotTagPrompt()}  // R38: drop a spot tag
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
+    if(e.code==='KeyS'&&photoMode&&GAME_MODE==='game'){e.preventDefault();exportPhoto()}  // R40: save photo
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
     // bail the open mini-game. Each path is distinct so Escape never corrupts drop-point state.
@@ -2332,6 +2333,7 @@ function qaCrewPresenceCount(){if(new URLSearchParams(location.search).get('qa')
 function qaSeedSpotTag(label){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;const exp=new Date(Date.now()+3600000).toISOString();crewSpotTags.list.push({id:'qa'+Date.now(),user_id:'qa-self',x:5,z:5,label:label||'QA Tag',handle:'QA',expires_at:exp});return crewSpotTags.list.length}
 function qaSpotTagCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewSpotTags.list.length}
 function qaOpenWhatsNew(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openWhatsNew();return miniActive&&_peekOpen}
+function qaExportPhoto(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;const d=exportPhoto();return d&&d.length>100?d.slice(0,30):null}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5381,6 +5383,45 @@ function exportTrophy(){
   const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='dockshield-trophy.png';document.body.appendChild(a);a.click();a.remove();
   sfx('win');return true;
 }
+// R40 · in-game photo export. Captures the live THREE.js renderer canvas + composites a
+// metadata stamp at the bottom (handle, boat, score, biggest fish, date) and downloads as PNG.
+// Renderer is constructed with preserveDrawingBuffer:true so toDataURL/toBlob succeeds. Called
+// during photo mode via the S key or DS.exportPhoto. Returns the data URL string on success
+// for QA inspection.
+function exportPhoto(){
+  if(!ren||!cam||!scene){if(typeof pushAchToast==='function')pushAchToast({k:'PHOTO',n:'Engine not ready',d:'Try again from a run.'});return null}
+  // Force a clean render so toDataURL captures the latest frame.
+  try{ren.render(scene,cam)}catch(e){return null}
+  const src=ren.domElement;const W=src.width,H=src.height;
+  if(!W||!H)return null;
+  const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+  // 1. Live scene base.
+  try{x.drawImage(src,0,0)}catch(e){if(typeof pushAchToast==='function')pushAchToast({k:'PHOTO',n:'Capture blocked',d:'WebGL context not ready.'});return null}
+  // 2. Bottom-overlay gradient panel.
+  const panelH=Math.round(H*0.13);
+  const g=x.createLinearGradient(0,H-panelH,0,H);
+  g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(0.4,'rgba(2,6,15,0.55)');g.addColorStop(1,'rgba(2,6,15,0.92)');
+  x.fillStyle=g;x.fillRect(0,H-panelH,W,panelH);
+  // 3. Brand line.
+  const fs=Math.max(14,Math.round(W*0.018));
+  x.font='700 '+fs+'px "DM Sans", sans-serif';x.fillStyle='#fde68a';
+  x.fillText('DockShield · The Depth',24,H-panelH+fs+12);
+  // 4. Stat line.
+  const parts=[];
+  if(playerHandle)parts.push(playerHandle);
+  if(BT[S.bc])parts.push(BT[S.bc].n);
+  if(S.score>0)parts.push(S.score+' score');
+  if(S.civsSaved>0&&S.civsTotal>0)parts.push(S.civsSaved+'/'+S.civsTotal+' civs');
+  if(bestFish)parts.push('best · '+bestFish.n+' +'+bestFish.s);
+  parts.push(new Date().toISOString().slice(0,10));
+  x.font='500 '+Math.round(fs*0.82)+'px "DM Sans", sans-serif';x.fillStyle='#cbd5e1';
+  x.fillText(parts.join('  ·  '),24,H-panelH+fs*2.4+10);
+  // 5. Trigger download via blob (smaller in-memory footprint than dataURL on big captures).
+  try{c.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='dockshield-'+Date.now()+'.png';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)},'image/png',0.92)}catch(e){}
+  if(typeof pushAchToast==='function')pushAchToast({k:'PHOTO',n:'Saved',d:'Dropped into your downloads.'});
+  if(typeof sfx==='function')sfx('win');
+  return c.toDataURL('image/png');
+}
 // Streak share card — same OG-friendly 1200×630 framing as exportTrophy. Shows the player's
 // current daily-streak count + all-time best as a shareable PNG.
 function exportStreak(){
@@ -6026,7 +6067,7 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
@@ -6034,6 +6075,6 @@ openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
 dropSpotTag,openSpotTag:openSpotTagPrompt,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
