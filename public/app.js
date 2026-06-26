@@ -4067,7 +4067,10 @@ const MUSIC_MODES={
   chase:  {freqs:[130,196,311],lfo:0.18,detune:[-8,5,-3], filtHi:1450,filtLo:700},
   golden: {freqs:[87,220,330], lfo:0.04,detune:[-3,2,-1], filtHi:1300,filtLo:600},
   // R46 · winter — D minor with a wider voicing + cooler filter. Active when wx.c='Snow'.
-  winter: {freqs:[73,147,220], lfo:0.05,detune:[-2,1,-1], filtHi:900, filtLo:380}
+  winter: {freqs:[73,147,220], lfo:0.05,detune:[-2,1,-1], filtHi:900, filtLo:380},
+  // R53 · night — a low A-minor drone, slow + heavily muffled, so the dark feels like its own
+  // place (pairs with the R52 Night Bite tier). Active when _isNight and it isn't snowing.
+  night:  {freqs:[55,110,165], lfo:0.035,detune:[-3,2,-2],filtHi:680, filtLo:300}
 };
 const music={on:false,osc:[],gain:null,filt:null,lfo:null,mode:'explore',
   ensure(){
@@ -4108,6 +4111,7 @@ const music={on:false,osc:[],gain:null,filt:null,lfo:null,mode:'explore',
     if((DUCT&&DUCT.engaged)||_bossActive||_gkActive)this.setMode('chase');
     else if(_goldenFlashUntil&&Date.now()<_goldenFlashUntil)this.setMode('golden');
     else if(S.wx&&S.wx.c==='Snow')this.setMode('winter');   // R46: winter pad while it's snowing
+    else if(_isNight)this.setMode('night');                 // R53: dark drone after dusk
     else this.setMode('explore');
     // Music ducks slightly in heavy weather + when a fight overlay is up so it doesn't compete.
     const fightDuck=_catchOpen||miniActive?0.35:1;
@@ -6381,6 +6385,8 @@ function qaAudioProbe(){
     reelOn:reelAudio.on,
     reelFreq:reelAudio.on&&reelAudio.osc?reelAudio.osc.frequency.value:null,
     musicOn:music.on,
+    musicMode:music.mode,
+    musicModes:Object.keys(MUSIC_MODES),
     stormOn:stormAudio.on,
     engineOn:engineAudio.on,
     campChans:Object.keys(campAudio.chans||{})

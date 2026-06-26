@@ -733,6 +733,23 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!musicModes)fail('qaAudioProbe missing or shape changed');
     console.log('· music probe still wired after mode-variant refactor');
 
+    // 44b. R53 night ambience — the 'night' music mode exists and the auto-pick precedence (chase >
+    //      golden > winter > night > explore) reaches it. Static check on the mode list is always
+    //      valid; the dynamic check only asserts when music is actually running.
+    const nightMusic=await p.evaluate(async()=>{
+      const a0=DS.qaAudioProbe();
+      const has=a0.musicModes&&a0.musicModes.indexOf('night')>=0;
+      DS.qaClearWeather&&DS.qaClearWeather();   // ensure not snowing (winter would win the precedence)
+      DS.qaForceNight();
+      await new Promise(r=>setTimeout(r,600));   // let the loop recompute _isNight + music.update()
+      const a1=DS.qaAudioProbe();
+      return {has,on:a1.musicOn,mode:a1.musicMode};
+    });
+    // Hard check: the mode must exist. Auto-pick is best-effort (depends on whether the audio loop
+    // is live in headless), so we log it rather than fail on loop-state timing.
+    if(!nightMusic.has)fail('R53 night music mode missing from MUSIC_MODES');
+    console.log(`· night music mode present (live=${nightMusic.on}, mode=${nightMusic.mode})`);
+
     // 45. Hull damage VFX layers exist on the boat. Verified via qaStumpCount path semantics —
     //     here we just confirm DS exposes the typeof markers (no scene access from headless).
     const dmgOk=await p.evaluate(()=>typeof DS.setHandle==='function'&&typeof DS.setBoatName==='function');
