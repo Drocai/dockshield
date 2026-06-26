@@ -587,7 +587,7 @@ function show(id){['s1','s2','s3','s4','s5'].forEach(s=>$(s).classList.toggle('o
   // Hide touch controls when any card is showing
   const tEl=$('touch');if(tEl)tEl.style.display=(id===null&&_isMob)?'block':'none'}
 
-let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[];
+let scene,cam,ren,bMesh,waterGeo,waterOZ,stumps=[],aiB=[],civs=[],evidence=null,dropPoints=[],treeMeshes=[];
 // Drop point types -> mini-game key, marker color, label, expected mini-game opener function name.
 // Special boss drop type — never spawned randomly; only by spawnDeepDock() once unlock fires.
 const DP_BOSS={k:'boss',col:0x9333ea,n:'THE DEPTH RISES',open:'openBoss'};
@@ -1904,6 +1904,7 @@ function mkWorld(){
     const crown=new THREE.Mesh(new THREE.SphereGeometry(1.5+Math.random()*1.5,6,5),new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(0.3+Math.random()*0.08,0.5+Math.random()*0.3,0.1+Math.random()*0.08)}));
     crown.position.y=4+Math.random()*2;crown.castShadow=true;g.add(crown);
     g.position.set(Math.cos(a)*r,0,Math.sin(a)*r);scene.add(g);
+    g.userData.crown=crown;treeMeshes.push(g);  // R28: tracked for seasonal snow caps
   }
   // Buoys with lights
   const buoyCols=[0xef4444,0xf59e0b,0xef4444,0xf59e0b,0xef4444,0xf59e0b];
@@ -2595,6 +2596,8 @@ function applyWeatherVisuals(){
   // R23 snowflakes — larger, slower, white. Reuse the rainDrops disposal pattern by piggybacking
   // a parallel `snowFlakes` array so both can coexist (rain never overlaps snow in practice but the
   // teardown stays trivially correct either way).
+  // R28: seasonal world skin (caps + frost + ice patches) tracks the same boundary.
+  if(w.c==='Snow')seasonal.enable();else seasonal.disable();
   if(w.c==='Snow'&&snowFlakes.length===0){
     const sg=new THREE.BufferGeometry();
     const sn=140,sp=new Float32Array(sn*3);
@@ -3434,6 +3437,56 @@ const underwater={cv:null,ctx:null,bubbles:[],enabled:false,_raf:null,_t0:0,
     vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,0.35)');
     c.fillStyle=vg;c.fillRect(0,0,W,H)}
 };
+// R28 · Seasonal world skin. When weather flips to Snow we paint snow caps on every tree +
+// stump top, add frost decals on the marina dock, and float a few drifting ice patches on the
+// water. When weather flips back, everything is disposed cleanly. Idempotent — repeated
+// enable() / disable() calls during a 45s wx refresh are no-ops.
+const seasonal={enabled:false,extras:[],iceDrift:[],
+  enable(){
+    if(this.enabled)return;this.enabled=true;
+    const sm=new THREE.MeshStandardMaterial({color:0xfafdff,roughness:0.85,emissive:0x202c38,emissiveIntensity:0.05});
+    // Tree snow caps — a flattened sphere on top of each crown, offset along world-up.
+    for(const t of treeMeshes){const cr=t.userData&&t.userData.crown;if(!cr)continue;
+      const cap=new THREE.Mesh(new THREE.SphereGeometry((cr.geometry.parameters.radius||1.5)*0.95,8,5,0,Math.PI*2,0,Math.PI*0.45),sm);
+      cap.position.copy(cr.position);cap.position.y+=cr.geometry.parameters.radius*0.55;cap.userData._seasonal=true;
+      t.add(cap);this.extras.push({parent:t,mesh:cap});
+    }
+    // Stump snow caps — small flat disc.
+    for(const s of stumps){const disc=new THREE.Mesh(new THREE.CylinderGeometry(0.75,0.55,0.18,8),sm);
+      disc.position.set(s.position.x,s.position.y+0.85,s.position.z);scene.add(disc);
+      this.extras.push({parent:scene,mesh:disc});
+    }
+    // Dock frost — a faint white plane laid over the dock area.
+    if(typeof dockPos!=='undefined'){
+      const frost=new THREE.Mesh(new THREE.PlaneGeometry(9,13),new THREE.MeshBasicMaterial({color:0xeaf4ff,transparent:true,opacity:0.55,depthWrite:false,blending:THREE.AdditiveBlending}));
+      frost.rotation.x=-Math.PI/2;frost.position.set(dockPos.x,0.46,dockPos.z);scene.add(frost);
+      this.extras.push({parent:scene,mesh:frost});
+    }
+    // Ice patches on the water — 12 flat patches scattered around the playable ring.
+    for(let i=0;i<12;i++){
+      const a=Math.random()*Math.PI*2,r=40+Math.random()*90;
+      const r1=2+Math.random()*3,r2=r1*(0.55+Math.random()*0.6);
+      const ice=new THREE.Mesh(new THREE.CircleGeometry(1,10),new THREE.MeshStandardMaterial({color:0xd6ecff,transparent:true,opacity:0.85,roughness:0.45,metalness:0.05,emissive:0x152a44,emissiveIntensity:0.06}));
+      ice.scale.set(r1,r2,1);ice.rotation.x=-Math.PI/2;ice.rotation.z=Math.random()*Math.PI*2;
+      ice.position.set(Math.cos(a)*r,0.12,Math.sin(a)*r);
+      scene.add(ice);
+      this.iceDrift.push({mesh:ice,vx:(Math.random()-0.5)*0.012,vz:(Math.random()-0.5)*0.012,t0:Math.random()*Math.PI*2});
+      this.extras.push({parent:scene,mesh:ice});
+    }
+  },
+  disable(){
+    if(!this.enabled)return;this.enabled=false;
+    this.extras.forEach(e=>{try{e.parent.remove(e.mesh);if(e.mesh.geometry)e.mesh.geometry.dispose();if(e.mesh.material)e.mesh.material.dispose()}catch(_){}});
+    this.extras.length=0;this.iceDrift.length=0;
+  },
+  tick(t){
+    if(!this.enabled||!this.iceDrift.length)return;
+    for(const ic of this.iceDrift){ic.mesh.position.x+=ic.vx;ic.mesh.position.z+=ic.vz;ic.mesh.rotation.z+=0.001;
+      // Bob with the water surface slightly.
+      ic.mesh.position.y=0.12+Math.sin(t*0.5+ic.t0)*0.04;
+    }
+  }
+};
 const wet={cv:null,ctx:null,drops:[],enabled:true,
   init(){this.cv=$('wet-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
   resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
@@ -3969,7 +4022,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Hides cleanly once they enter near range OR all civs are saved.
     updateRescueArrow(_nearestCiv,_nearestCivD);
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickPierHut();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickPierHut();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t);if(seasonal&&seasonal.enabled)seasonal.tick(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -5154,6 +5207,8 @@ function qaBroadcastHooks(){if(new URLSearchParams(location.search).get('qa')!==
 function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
 function qaPaintEquip(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const kit=PAINT_KITS[id];if(!kit)return false;if(kit.hero&&kit.hero!==S.bc)return false;if(!paintOwned[S.bc].includes(id))paintOwned[S.bc].push(id);equippedPaint[S.bc]=id;persist();return paintFor(S.bc).primary===kit.accents.primary}
 function qaPaintCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;return Object.keys(PAINT_KITS).length}
+function qaSeasonalState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{enabled:seasonal.enabled,extras:seasonal.extras.length,iceCount:seasonal.iceDrift.length}}
+function qaClearWeather(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:3,wd:180,g:0,c:'Clear',t:72,v:10000};applyWeatherVisuals();return S.wx.c==='Clear'}
 function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
@@ -5264,6 +5319,6 @@ function qaSetTabHidden(hidden){
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
