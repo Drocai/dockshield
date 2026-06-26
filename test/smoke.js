@@ -272,6 +272,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!bcToast)fail('R26 broadcast toast kicker missing');
     console.log('· cross-device unlock broadcast hooks + toast wire');
 
+    // 13i. R27 paint shop. Confirm at least 9 kits exist, equip a universal kit (chrome) via the
+    //      QA hook, verify paintFor returns the override accents.
+    const pc=await p.evaluate(()=>DS.qaPaintCount());
+    if(pc<9)fail(`R27 expected ≥9 paint kits, got ${pc}`);
+    const eq=await p.evaluate(()=>DS.qaPaintEquip('chrome'));
+    if(!eq)fail('R27 paint equip did not apply override');
+    console.log(`· paint shop: ${pc} kits, override applies`);
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
