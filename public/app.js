@@ -113,6 +113,30 @@ let boatUpgrades={
   speedboat:{engine:0,lights:0,armor:0,electronics:1}
 };
 const eqUp=(slot)=>BOAT_UP[slot][(boatUpgrades[S.bc]||{})[slot]||0];
+// R27 · Boat Paint Shop. Each kit overrides the hero accents palette (primary/trim/stripe/
+// emblem/glow/ui). Owned kits are tracked per hero so unlocking on one operative doesn't
+// unlock on the others. equippedPaint is the active kit id per hero (''/null = stock paint).
+const PAINT_KITS={
+  // Universal kits — owned across heroes once purchased; cheaper.
+  chrome:    {n:'Chrome',     c:30, hero:null, accents:{primary:0xb8c1cc,trim:0xeeeeee,stripe:0x5d6d7e,emblem:0xf2f3f4,glow:0xd6dde5,ui:'#d6dde5'}},
+  inkwave:   {n:'Inkwave',    c:50, hero:null, accents:{primary:0x0c0c14,trim:0x1f2937,stripe:0x4b5563,emblem:0x60a5fa,glow:0x60a5fa,ui:'#93c5fd'}},
+  copperbay: {n:'Copper Bay', c:60, hero:null, accents:{primary:0xb45309,trim:0x431407,stripe:0xf59e0b,emblem:0xfde68a,glow:0xfb923c,ui:'#fdba74'}},
+  // Hero-specific signature kits — premium, only for that hero.
+  reel_gold:    {n:'Tournament Gold', c:120, hero:'regular',   accents:{primary:0xc91111,trim:0xfde047,stripe:0xfde047,emblem:0xfde047,glow:0xfde047,ui:'#fde047'}},
+  reel_carbon:  {n:'Carbon Reel',     c:110, hero:'regular',   accents:{primary:0x0c0c14,trim:0xc91111,stripe:0xef4444,emblem:0xfde047,glow:0xfca5a5,ui:'#fca5a5'}},
+  lilly_camo:   {n:'Backwater Camo',  c:90,  hero:'pontoon',   accents:{primary:0x4a6b3a,trim:0x2c3924,stripe:0xfde047,emblem:0xfbcfe8,glow:0x84cc16,ui:'#a3e635',camo:true}},
+  lilly_floral: {n:'Magnolia Bloom',  c:120, hero:'pontoon',   accents:{primary:0xfdf4ff,trim:0xfbcfe8,stripe:0xec4899,emblem:0xfbcfe8,glow:0xf472b6,ui:'#fbcfe8'}},
+  fly_arctic:   {n:'Arctic Stealth',  c:130, hero:'speedboat', accents:{primary:0xeaf4ff,trim:0x93c5fd,stripe:0x60a5fa,emblem:0xbfdbfe,glow:0x60a5fa,ui:'#bfdbfe'}},
+  fly_neon:     {n:'Neon Recon',      c:140, hero:'speedboat', accents:{primary:0x0c1424,trim:0x1e293b,stripe:0xa3e635,emblem:0xa3e635,glow:0xa3e635,ui:'#a3e635'}}
+};
+let paintOwned={regular:[],pontoon:[],speedboat:[]};   // per-hero list of owned kit ids
+let equippedPaint={regular:'',pontoon:'',speedboat:''};  // active kit per hero
+// Return the live accents palette for a hero — paint override if equipped + owned, else stock.
+function paintFor(cls){
+  const eq=equippedPaint[cls];
+  if(eq&&PAINT_KITS[eq]&&(PAINT_KITS[eq].hero===null||PAINT_KITS[eq].hero===cls)&&(paintOwned[cls]||[]).includes(eq))return PAINT_KITS[eq].accents;
+  return BT[cls].accents||{};
+}
 const BAIT_TYPES={
   worm:    {n:'Worm',     c:'#a47a52', e:'🪱', desc:'+10% uncommon bias.'},
   cricket: {n:'Cricket',  c:'#8db347', e:'🦗', desc:'+18% uncommon, slight rare lift.'},
@@ -207,6 +231,8 @@ function loadSave(){
     if(d.duct)Object.assign(ductStats,d.duct);
     if(d.baitInv)Object.assign(baitInv,d.baitInv);
     if(typeof d.equippedBait==='string')equippedBait=d.equippedBait;
+    if(d.paintOwned){Object.keys(paintOwned).forEach(h=>{if(Array.isArray(d.paintOwned[h]))paintOwned[h]=d.paintOwned[h].filter(k=>!!PAINT_KITS[k])})}
+    if(d.equippedPaint){Object.keys(equippedPaint).forEach(h=>{if(typeof d.equippedPaint[h]==='string')equippedPaint[h]=d.equippedPaint[h]})}
     if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
     if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
     if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
@@ -219,7 +245,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -2300,7 +2326,7 @@ function mkBoat(cls){if(bMesh){disposeTree(bMesh);scene.remove(bMesh)}const t=BT
   // === Hero accent kit + upgrade-visible parts ===
   // Each operative gets a wildly different boat skin so they read at a glance from across the lake.
   const up=boatUpgrades[cls]||{};
-  const ac=t.accents||{};
+  const ac=paintFor(cls);
   if(cls==='regular'){
     // The Reel: tournament boat — red hull with white pinstripes, blue racing stripe, gold star
     // emblem on the cabin. Flashy, sponsored-looking.
@@ -4455,6 +4481,41 @@ const SHOP_ITEMS=[
 // no gear). Renders gear tiers (the shop's `sells` slots) + the shop's consumables.
 // Renders the Boatworks "Boat Upgrades" rows for the current hero. Each slot shows the next-step
 // tier (one above what you own) as buyable; already-owned tiers show ✓ OWNED.
+// R27 — Boat Paint Shop renderer. Renders inside the Boatworks shop, above the upgrade slots.
+// Universal kits are buyable by any hero (one purchase = unlocked everywhere); hero-specific
+// kits only show for their hero. Owned kits get an "EQUIP" / "EQUIPPED" button instead of price.
+function renderPaintRows(){
+  const heroBoat=BT[S.bc].n;
+  const owned=paintOwned[S.bc]||[];
+  const eqId=equippedPaint[S.bc]||'';
+  let html=`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:12px 0 2px">Paint Shop · ${heroBoat} <span style="color:#475569">· accent kits</span></div>`;
+  // Stock paint row — always equippable, free, used to revert.
+  const isStock=eqId==='';
+  html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0">
+    <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">🎨 Stock <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">factory</span></div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">The hero's default accent palette.</div></div>
+    <button class="btn bp paint-equip" data-k="" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${isStock?'#1f5f3a':'#475569'}">${isStock?'✓ EQUIPPED':'EQUIP'}</button>
+  </div>`;
+  for(const id of Object.keys(PAINT_KITS)){
+    const kit=PAINT_KITS[id];
+    if(kit.hero&&kit.hero!==S.bc)continue;
+    const have=owned.includes(id);const cost=loyaltyDiscount(kit.c);const eq=eqId===id;
+    const isUni=kit.hero===null;
+    // Color preview — three small dots showing primary / stripe / glow so the kit reads at a glance.
+    const pri='#'+(kit.accents.primary>>>0).toString(16).padStart(6,'0');
+    const stp='#'+(kit.accents.stripe>>>0).toString(16).padStart(6,'0');
+    const gl='#'+(kit.accents.glow>>>0).toString(16).padStart(6,'0');
+    const swatches=`<span style="display:inline-flex;gap:3px;margin-right:6px;vertical-align:middle"><span style="width:9px;height:9px;border-radius:50%;background:${pri};display:inline-block;border:1px solid rgba(255,255,255,0.15)"></span><span style="width:9px;height:9px;border-radius:50%;background:${stp};display:inline-block;border:1px solid rgba(255,255,255,0.15)"></span><span style="width:9px;height:9px;border-radius:50%;background:${gl};display:inline-block;border:1px solid rgba(255,255,255,0.15)"></span></span>`;
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:rgba(3,7,18,0.5);border-radius:8px;margin:5px 0;opacity:${have||bait>=cost?1:0.5}">
+      <div style="flex:1;min-width:0;padding-right:10px"><div style="font-weight:600;font-size:12.5px;color:#e8edf5">${swatches}${kit.n} <span style="color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:1px">${isUni?'universal':'hero kit'}</span></div></div>`;
+    if(have){
+      html+=`<button class="btn bp paint-equip" data-k="${id}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${eq?'#1f5f3a':'#475569'}">${eq?'✓ EQUIPPED':'EQUIP'}</button>`;
+    }else{
+      html+=`<button class="btn bp paint-buy" data-k="${id}" style="width:auto;padding:7px 13px;margin:0;font-size:11px;background:${bait>=cost?'#a78bfa':'#374151'}">${bait>=cost?priceLabel(kit.c):'—'}</button>`;
+    }
+    html+=`</div>`;
+  }
+  return html;
+}
 function renderBoatworksRows(){
   const heroBoat=BT[S.bc].n;const hu=boatUpgrades[S.bc]||{};
   // Identify the cheapest *buyable* next-tier slot for a "BEST VALUE" badge so the player has a
@@ -4554,7 +4615,7 @@ function openShop(shop){
       return `<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">Tackle Bench · craft custom bait</div>${rows}`;
     })()}
     ${gearHtml?`<div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:8px 0 2px">Equipment</div>${gearHtml}`:''}
-    ${shop&&shop.boatworks?renderBoatworksRows():''}
+    ${shop&&shop.boatworks?renderBoatworksRows()+renderPaintRows():''}
     <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin:10px 0 2px">Consumables</div>
     ${conRows}
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Cast Off</button>`;
@@ -4573,6 +4634,9 @@ function openShop(shop){
   });
   card.querySelectorAll('.gear-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=GEAR[slot][tier];if(gear[slot]!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);gear[slot]=tier;persist();sfx('win');onUnlock('first_gear');if(['rod','reel','line','box'].every(s=>gear[s]>=GEAR[s].length-1))onUnlock('fully_decked');reopen()});
   card.querySelectorAll('.up-buy').forEach(b=>b.onclick=()=>{const slot=b.dataset.slot,tier=+b.dataset.tier,it=BOAT_UP[slot][tier];const cur=(boatUpgrades[S.bc]||{})[slot]||0;if(cur!==tier-1||bait<loyaltyDiscount(it.cost))return;loyaltyBuy(it.cost);boatUpgrades[S.bc][slot]=tier;persist();sfx('win');onUnlock('first_upgrade');if(['engine','lights','armor','electronics'].every(s=>(boatUpgrades[S.bc][s]||0)>=BOAT_UP[s].length-1))onUnlock('boat_maxed');mkBoat(S.bc);reopen()});
+  // R27 paint kit buy + equip handlers.
+  card.querySelectorAll('.paint-buy').forEach(b=>b.onclick=()=>{const id=b.dataset.k,kit=PAINT_KITS[id];if(!kit)return;const cost=loyaltyDiscount(kit.c);if(bait<cost)return;if(kit.hero&&kit.hero!==S.bc)return;loyaltyBuy(cost);if(!paintOwned[S.bc].includes(id))paintOwned[S.bc].push(id);equippedPaint[S.bc]=id;persist();sfx('win');mkBoat(S.bc);reopen()});
+  card.querySelectorAll('.paint-equip').forEach(b=>b.onclick=()=>{const id=b.dataset.k;if(id&&!(paintOwned[S.bc]||[]).includes(id))return;equippedPaint[S.bc]=id;persist();sfx('click');mkBoat(S.bc);reopen()});
   el.style.display='flex';
 }
 
@@ -5088,6 +5152,8 @@ function qaChallengeOpen(){if(new URLSearchParams(location.search).get('qa')!=='
 function qaChallengeToday(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return todaysChallenge()}
 function qaBroadcastHooks(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{post:typeof postUnlockBroadcast,poll:typeof pollUnlockFeed,start:typeof startUnlockFeedPoll,stop:typeof stopUnlockFeedPoll}}
 function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
+function qaPaintEquip(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const kit=PAINT_KITS[id];if(!kit)return false;if(kit.hero&&kit.hero!==S.bc)return false;if(!paintOwned[S.bc].includes(id))paintOwned[S.bc].push(id);equippedPaint[S.bc]=id;persist();return paintFor(S.bc).primary===kit.accents.primary}
+function qaPaintCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;return Object.keys(PAINT_KITS).length}
 function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
@@ -5198,6 +5264,6 @@ function qaSetTabHidden(hidden){
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
