@@ -310,6 +310,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(count!==2)fail(`R37 qaCrewPresenceCount expected 2, got ${count}`);
     console.log(`· crew presence seeds + renders (${count})`);
 
+    // 13o. R38 spot tags — seed a synthetic tag, verify count, then qaSpotTagCount reflects.
+    const tagSeeded=await p.evaluate(()=>DS.qaSeedSpotTag('Bowfin pool'));
+    if(tagSeeded<1)fail(`R38 qaSeedSpotTag returned ${tagSeeded}`);
+    const tagCount=await p.evaluate(()=>DS.qaSpotTagCount());
+    if(tagCount<1)fail(`R38 qaSpotTagCount returned ${tagCount}`);
+    console.log(`· spot tags seed + count (${tagCount})`);
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
