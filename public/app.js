@@ -323,10 +323,19 @@ let _authPillNote='';
 // refresh. Bumped on every closePeek; the async social panels capture it at open and drop a
 // post-fetch render if it moved (another overlay superseded them).
 let _peekGen=0;
+// Same boot-time TDZ hazard: openProfilePanel sets _peekOpen=true, and the boot refreshTrophyPeek
+// → popInvitePromptIfPending → openProfilePanel path (live for a returning signed-in user opening
+// an invite URL) can run before the original declaration down by the trophy-peek code executed.
+let _peekOpen=false;
 function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
 // Bound an awaited cloud read so a slow/unreachable Supabase can't leave a panel stuck on its
 // Loading state (and can't hang headless CI). Resolves to `fallback` after `ms`; the underlying
 // fetch still settles in the background but its result is ignored once we've fallen back.
+// HTML-escape any cloud-sourced / user-controlled string before it goes into innerHTML. Handles,
+// boat names, crew-message text and spot-tag labels are stored by other players via Supabase; with
+// cloud reads live they must be escaped at every render sink or a crafted handle/message becomes
+// stored XSS for everyone who opens a leaderboard, profile, friends list or crew wall.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function withTimeout(promise,ms,fallback){
   return new Promise(resolve=>{
     let done=false;
@@ -344,6 +353,25 @@ function authRestore(){
 }
 authRestore();
 function authPersist(){try{localStorage.setItem(_AUTH_KEY,JSON.stringify({access_token:auth.token,refresh_token:auth.refresh,expires_at:auth.exp,user:auth.user}))}catch(e){}}
+// The post-auth sync the magic-link callback runs — pull the cloud save, drain queued challenges,
+// sync the profile, load friends + start the social pollers. MUST also run after a silent session
+// restore (a reload of an already-signed-in browser); otherwise the pill shows synced without
+// pulling, and the next persist() pushes stale local state over the server save. (cloudSync('login')
+// guards its pull with _cloudPulled, so running this twice is safe.)
+function runPostAuthSync(){
+  if(typeof cloudSync==='function')cloudSync('login');
+  if(typeof drainPendingChallenges==='function')drainPendingChallenges();
+  if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
+  if(typeof syncProfile==='function')syncProfile();
+  if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence();if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll();if(typeof startCrewMessagesPoll==='function')startCrewMessagesPoll()});
+  if(typeof refreshAuthPill==='function')refreshAuthPill();
+}
+// If authRestore() above rehydrated a session, run the same login sync — but defer it so it lands
+// after the IIFE finishes declaring everything (avoids the boot-time TDZ class), and skip it when a
+// magic-link callback is present in the URL since that path runs the sync itself.
+if(auth.user&&!(typeof location!=='undefined'&&location.hash&&location.hash.includes('access_token='))){
+  setTimeout(function(){if(auth.user)runPostAuthSync()},0);
+}
 async function authSendMagicLink(email){
   if(!cloudReady())return{ok:false,error:'Cloud sync isn’t configured for this deploy.'};
   const cleanEmail=String(email||'').trim().toLowerCase();
@@ -376,12 +404,7 @@ async function authSignOut(){
       auth.user=user;auth.token=access_token;auth.refresh=refresh_token;auth.exp=Math.floor(Date.now()/1000)+expires_in;
       authPersist();
       try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}
-      if(typeof cloudSync==='function')cloudSync('login');
-      if(typeof drainPendingChallenges==='function')drainPendingChallenges();
-      if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
-      if(typeof syncProfile==='function')syncProfile();
-      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence();if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll();if(typeof startCrewMessagesPoll==='function')startCrewMessagesPoll()});
-      if(typeof refreshAuthPill==='function')refreshAuthPill();
+      runPostAuthSync();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
 })();
@@ -803,15 +826,15 @@ async function openProfilePanel(opts){
         ? `<button class="btn bx" disabled style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;opacity:0.6">⏳ REQUEST SENT</button>`
         : friendState==='incoming'
           ? `<button class="btn bp prof-accept" data-uid="${profile.user_id}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">ACCEPT REQUEST</button>`
-          : `<button class="btn bp prof-add" data-uid="${profile.user_id}" data-handle="${profile.handle}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD FRIEND</button>`;
+          : `<button class="btn bp prof-add" data-uid="${profile.user_id}" data-handle="${esc(profile.handle)}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD FRIEND</button>`;
   }
   const joined=profile.updated_at?new Date(profile.updated_at).toISOString().slice(0,10):'';
   card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div>
     <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
-      <div style="font-size:42px;background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.35);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center">${profile.flag||'🎣'}</div>
+      <div style="font-size:42px;background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.35);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center">${esc(profile.flag)||'🎣'}</div>
       <div style="flex:1;min-width:0">
-        <div style="font:700 18px 'DM Sans',sans-serif;color:#e8edf5">${profile.handle}${isMe?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· YOU</span>':friendState==='friends'?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· CREW</span>':''}</div>
-        <div style="font-size:11px;color:#94a3b8;margin-top:2px">${profile.boat||'—'}${joined?` · seen ${joined}`:''}</div>
+        <div style="font:700 18px 'DM Sans',sans-serif;color:#e8edf5">${esc(profile.handle)}${isMe?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· YOU</span>':friendState==='friends'?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· CREW</span>':''}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px">${esc(profile.boat)||'—'}${joined?` · seen ${joined}`:''}</div>
       </div>
       ${friendBtnHTML}
     </div>
@@ -838,7 +861,7 @@ async function openProfilePanel(opts){
     <!-- R36 · Share invite link — only on the player's own profile card. -->
     <div style="margin-top:14px;padding:12px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.3);border-radius:6px">
       <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#4ade80;text-transform:uppercase">Share your invite</div>
-      <div style="font-size:11px;color:#cbd5e1;margin-top:3px;line-height:1.5">Send this URL to anyone. When they open it, the game pops a one-tap "Add ${profile.handle}" prompt.</div>
+      <div style="font-size:11px;color:#cbd5e1;margin-top:3px;line-height:1.5">Send this URL to anyone. When they open it, the game pops a one-tap "Add ${esc(profile.handle)}" prompt.</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <input id="invite-url" readonly value="${location.origin+location.pathname}?invite=${profile.user_id}" style="flex:1;background:rgba(3,7,18,0.55);border:1px solid rgba(74,222,128,0.25);color:#86efac;border-radius:5px;padding:6px 10px;font:600 10px 'JetBrains Mono',monospace">
         <button class="btn bp" onclick="DS.copyInvite()" style="width:auto;padding:6px 12px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">COPY</button>
@@ -911,7 +934,7 @@ async function pollUnlockFeed(){
       // R34: when crew-only filter is active and we have friends loaded, only toast for
       // handles in friends.byHandle. Falls back to the broad feed if no friends loaded yet.
       if(broadcastCrewOnly&&friends.byHandle&&friends.byHandle.size>0&&!friends.byHandle.has((r.handle||'').toLowerCase()))return;
-      pushAchToast({k:broadcastCrewOnly?'YOUR CREW':'AROUND THE BAYOU',n:r.ach_name,d:`${r.handle}${r.boat?` · ${r.boat}`:''} just unlocked it.`});
+      pushAchToast({k:broadcastCrewOnly?'YOUR CREW':'AROUND THE BAYOU',n:esc(r.ach_name),d:`${esc(r.handle)}${r.boat?` · ${esc(r.boat)}`:''} just unlocked it.`});
     });
   }catch(e){}
 }
@@ -5249,7 +5272,7 @@ if(GAME_MODE==='game'&&!tutorialSeen.intro){
 // second press inside 2.5s actually ends. Stops accidental kills on mobile.
 let _endArmed=false,_endArmedT=null;
 // Trophy peek from the landing card — opens an in-overlay dialog with the same trophy list as s5.
-let _peekOpen=false;
+// (_peekOpen is declared up by _peekGen to dodge the boot-time TDZ.)
 // Trophy = caught species that's rare or legendary. Commons/uncommons fill the Codex but don't
 // earn a trophy chip.
 function trophyFish(){return FISH.filter(f=>fishCatalog.has(f.n)&&(f.r==='rare'||f.r==='legendary'))}
@@ -5906,7 +5929,7 @@ function refreshCrewMessagesCard(){
     <span style="font:600 9px 'JetBrains Mono',monospace;color:#475569">${crewMessages.list.length} active</span>
   </div>
   ${top.map(m=>{const min=Math.max(1,Math.round((Date.now()-new Date(m.created_at).getTime())/60000));const ago=min<60?min+'m':Math.round(min/60)+'h';
-    return `<div style="padding:5px 0;font:11.5px 'DM Sans',sans-serif;color:#cbd5e1;border-bottom:1px solid rgba(30,41,59,0.6)"><b class="prof-link" data-handle="${m.handle}" style="color:#86efac;cursor:pointer">${m.handle}</b> <span style="color:#94a3b8">· ${m.text}</span> <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${ago}</span></div>`}).join('')}`;
+    return `<div style="padding:5px 0;font:11.5px 'DM Sans',sans-serif;color:#cbd5e1;border-bottom:1px solid rgba(30,41,59,0.6)"><b class="prof-link" data-handle="${esc(m.handle)}" style="color:#86efac;cursor:pointer">${esc(m.handle)}</b> <span style="color:#94a3b8">· ${esc(m.text)}</span> <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${ago}</span></div>`}).join('')}`;
 }
 function refreshFriendsPill(){
   const el=$('friends-pill');if(!el)return;
@@ -5948,30 +5971,30 @@ async function openFriendsPanel(){
   const myHandle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   const incomingHTML=friends.incoming.length
     ? friends.incoming.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(251,207,59,0.10);border:1px solid rgba(251,207,59,0.3);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
-        <span style="flex:1;min-width:0;color:#fde68a"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b> wants to add you</span>
+        <span style="flex:1;min-width:0;color:#fde68a"><b class="prof-link" data-handle="${esc(r.handle)}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${esc(r.handle)}</b> wants to add you</span>
         <button class="btn bp friend-accept" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">ACCEPT</button>
         <button class="btn bx friend-decline" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">DECLINE</button>
       </div>`).join('')
     : '';
   const friendsHTML=friends.list.length
     ? friends.list.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif;border-left:3px solid #4ade80">
-        <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b></span>
+        <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${esc(r.handle)}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${esc(r.handle)}</b></span>
         <button class="btn bx friend-remove" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">REMOVE</button>
       </div>`).join('')
     : `<div style="padding:12px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">No friends yet. Search a handle below to send a request.</div>`;
   const outgoingHTML=friends.outgoing.length
-    ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Sent · ${friends.outgoing.length}</div>${friends.outgoing.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:2px 0;font:11px 'DM Sans',sans-serif;color:#64748b"><span style="flex:1">Request sent to <b style="color:#94a3b8">${r.handle}</b></span><button class="btn bx friend-cancel" data-uid="${r.uid}" style="width:auto;padding:3px 8px;margin:0;font:600 8px 'JetBrains Mono',monospace;letter-spacing:1px">CANCEL</button></div>`).join('')}`
+    ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Sent · ${friends.outgoing.length}</div>${friends.outgoing.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:2px 0;font:11px 'DM Sans',sans-serif;color:#64748b"><span style="flex:1">Request sent to <b style="color:#94a3b8">${esc(r.handle)}</b></span><button class="btn bx friend-cancel" data-uid="${r.uid}" style="width:auto;padding:3px 8px;margin:0;font:600 8px 'JetBrains Mono',monospace;letter-spacing:1px">CANCEL</button></div>`).join('')}`
     : '';
   const searchHTML=_friendsSearchResults.length
     ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Results</div>${_friendsSearchResults.map(r=>{const isMe=r.user_id===auth.user.id;const already=friends.list.find(f=>f.uid===r.user_id)||friends.outgoing.find(f=>f.uid===r.user_id);
         return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
-          <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${isMe?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace">· YOU</span>`:''}</span>
-          ${isMe?'':already?`<span style="font:600 9px 'JetBrains Mono',monospace;color:#475569;letter-spacing:1px">${already.since?'✓ FRIENDS':'⏳ SENT'}</span>`:`<button class="btn bp friend-add" data-uid="${r.user_id}" data-handle="${r.handle}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD</button>`}
+          <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${esc(r.handle)}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${esc(r.handle)}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${esc(r.boat)}</span>`:''}${isMe?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace">· YOU</span>`:''}</span>
+          ${isMe?'':already?`<span style="font:600 9px 'JetBrains Mono',monospace;color:#475569;letter-spacing:1px">${already.since?'✓ FRIENDS':'⏳ SENT'}</span>`:`<button class="btn bp friend-add" data-uid="${r.user_id}" data-handle="${esc(r.handle)}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD</button>`}
         </div>`}).join('')}`
     : (_friendsSearch.length>=2?`<div style="padding:10px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">${_friendsSearchPending?'Searching…':'No captains match.'}</div>`:'');
   card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
     <div class="m-title">Your crew.</div>
-    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Signed in as <b style="color:#86efac">${myHandle}</b>. Share that handle — others can search for you.</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Signed in as <b style="color:#86efac">${esc(myHandle)}</b>. Share that handle — others can search for you.</div>
     <!-- R41: Crew message post box. 140 char limit; visible to friends for 24h. -->
     <div style="margin:14px 0 8px;padding:10px 12px;background:rgba(8,18,38,0.55);border:1px solid rgba(74,222,128,0.3);border-radius:6px">
       <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#86efac;text-transform:uppercase;margin-bottom:5px">Crew Wall · post a note</div>
@@ -6040,7 +6063,7 @@ async function openTournamentPanel(){
         ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">${_tournamentTab==='crew'?(auth.user?(friends.list.length===0?'Add some friends to populate this view.':'None of your crew has banked a run this week yet.'):'Sign in to use the crew view.'):'No runs banked this week yet. Be first.'}</div>`
         : `<div style="overflow-y:auto;max-height:380px">${viewRows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;const isFriend=auth.user&&friends.byHandle&&friends.byHandle.has((r.handle||'').toLowerCase());return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':isFriend?'rgba(74,222,128,0.08)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':isFriend?'border-left:3px solid #4ade80;':''}">
             <span style="width:30px;text-align:center;font:600 13px 'JetBrains Mono',monospace;color:${i<3?'#fbcf3b':'#64748b'}">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px">${mine&&playerFlag?`<span style="margin-right:4px">${playerFlag}</span>`:flagFor(r.handle)?`<span style="margin-right:4px">${flagFor(r.handle)}</span>`:''}<b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px">${mine&&playerFlag?`<span style="margin-right:4px">${playerFlag}</span>`:flagFor(r.handle)?`<span style="margin-right:4px">${flagFor(r.handle)}</span>`:''}<b class="prof-link" data-handle="${esc(r.handle)}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${esc(r.handle)}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${esc(r.boat)}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 14px 'JetBrains Mono',monospace">${r.score}</span>
           </div>`}).join('')}</div>`;
     card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Weekly Tournament · ${wk}</div>
@@ -6091,7 +6114,7 @@ async function openChallengePanel(){
         ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No completions yet today. Be first.</div>`
         : `<div style="overflow-y:auto;max-height:300px">${rows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':' ';const t=new Date(r.completed_at);const hh=String(t.getHours()).padStart(2,'0'),mm=String(t.getMinutes()).padStart(2,'0');return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:4px;margin:3px 0">
             <span style="width:24px;text-align:center;font-size:14px">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font-size:10px">· ${r.boat}</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b class="prof-link" data-handle="${esc(r.handle)}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${esc(r.handle)}</b>${r.boat?` <span style="color:#64748b;font-size:10px">· ${esc(r.boat)}</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 13px 'JetBrains Mono',monospace">${r.score}</span>
             <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${hh}:${mm}</span>
           </div>`}).join('')}</div>`;

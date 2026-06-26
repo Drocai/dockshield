@@ -19,6 +19,12 @@
 // should be — those stay server-side only.
 (function () {
   var e = (window.__ENV__ = window.__ENV__ || {});
-  if (!e.SUPABASE_URL) e.SUPABASE_URL = 'https://yjpfrrjuahtzpizcrhvf.supabase.co';
-  if (!e.SUPABASE_ANON_KEY) e.SUPABASE_ANON_KEY = 'sb_publishable_QaLrLsyZL4_-IJbcAFtz6w_c-KE7pxX';
+  // Treat URL + key as ONE atomic pair. If /api/config supplied even one half (e.g. a staging
+  // URL but a blank key), do NOT fill the other half — mixing a real URL with the fallback key
+  // would flip cloudReady() true and fire every auth/REST call at one project with another
+  // project's key, which is worse than staying offline. Only apply the fallback when BOTH blank.
+  if (!e.SUPABASE_URL && !e.SUPABASE_ANON_KEY) {
+    e.SUPABASE_URL = 'https://yjpfrrjuahtzpizcrhvf.supabase.co';
+    e.SUPABASE_ANON_KEY = 'sb_publishable_QaLrLsyZL4_-IJbcAFtz6w_c-KE7pxX';
+  }
 })();
