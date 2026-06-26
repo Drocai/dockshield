@@ -113,8 +113,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
     // 3. Backward-compat: the seed save lacked audioVol/shakeMul. The current save (after we
     // touched the sliders above) should now contain them, but the originals (bait, best) survive.
-    if(saved.bait!==100||saved.best!==200)fail('legacy save fields not preserved: '+JSON.stringify(saved));
+    // R57: the seeded bait (100) loaded, but the first run of the day adds the daily bonus on top,
+    // so assert it's at least the seeded value rather than exactly equal.
+    if(saved.bait<100||saved.best!==200)fail('legacy save fields not preserved: '+JSON.stringify(saved));
     console.log('· save backward-compat OK');
+
+    // 3b. R57 daily first-run bonus — curve: 20 base + 3/streak-day, capped at +30 (streak ≥10).
+    //     The seed had lastPlayed:'' (not yesterday), so startGame RESETS the streak to 1 on this
+    //     fresh day — the run paid out dailyBonusAmount(1)=23 on top of the seeded 100 bait (=123).
+    const db=await p.evaluate(()=>({b0:DS.qaDailyBonus(0),b1:DS.qaDailyBonus(1),b5:DS.qaDailyBonus(5),b10:DS.qaDailyBonus(10),b50:DS.qaDailyBonus(50)}));
+    if(db.b0!==20||db.b1!==23||db.b5!==35||db.b10!==50||db.b50!==50)fail('R57 daily bonus curve wrong: '+JSON.stringify(db));
+    if(saved.bait<100+db.b1)fail(`R57 daily bonus did not apply on the first run of the day (bait=${saved.bait}, expected ≥${100+db.b1})`);
+    console.log('· daily first-run bonus curve + grant');
 
     // 4. Toast queue: fire two unlocks, verify the toast becomes visible.
     await p.evaluate(()=>DS.qaUnlock(['boss_clean','duct_three_near']));await sleep(150);
