@@ -277,6 +277,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log(`· weekly tournament ${wk} resolves + panel renders`);
 
+    // 13l. R33 friends panel. With no SUPABASE config (smoke env) the panel renders the
+    //      offline banner cleanly. State counters are zeroed.
+    const fOpen=await p.evaluate(()=>DS.qaFriendsOpen());
+    if(!fOpen)fail('R33 friends panel did not open');
+    const fState=await p.evaluate(()=>DS.qaFriendsState());
+    if(!fState||fState.list!==0||fState.incoming!==0||fState.outgoing!==0)fail(`R33 friends state not zeroed at boot: ${JSON.stringify(fState)}`);
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· friends panel + state resolve');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());

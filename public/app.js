@@ -343,6 +343,8 @@ async function authSignOut(){
       if(typeof cloudSync==='function')cloudSync('login');
       if(typeof drainPendingChallenges==='function')drainPendingChallenges();
       if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
+      if(typeof syncProfile==='function')syncProfile();
+      if(typeof refreshFriends==='function')refreshFriends().then(()=>typeof refreshFriendsPill==='function'&&refreshFriendsPill());
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -502,6 +504,83 @@ async function fetchTournament(weekKey){
     {headers:{apikey:C.SUPABASE_ANON_KEY}});
     if(!r.ok)return [];return await r.json();
   }catch(e){return []}
+}
+// ============================================================================
+
+// === R33 · Friends graph (profiles + friendships) ==========================
+// profiles: shared search index for handles. Refreshed on every sign-in + on
+// every handle/boat change. friendships: directional pending → mutual accepted.
+// Local cache: `friends.list` is the accepted set (by other-side user_id),
+// `friends.incoming` are pending requests *for* the local user,
+// `friends.outgoing` are pending requests *from* the local user. Refreshed on
+// login + manually via the marina overlay's manage button.
+const friends={list:[],incoming:[],outgoing:[],byHandle:new Map()};
+let _profileSyncedAt=0;
+async function syncProfile(){
+  if(!cloudReady()||!auth.token||!auth.user)return false;
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const body={user_id:auth.user.id,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc,updated_at:new Date().toISOString()};
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?on_conflict=user_id`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(body)});if(r.ok)_profileSyncedAt=Date.now();return r.ok;
+  }catch(e){return false}
+}
+async function searchHandles(q){
+  if(!cloudReady()||!q||q.length<2)return [];
+  const qq=encodeURIComponent('*'+q.toLowerCase()+'*');
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${qq}&select=user_id,handle,boat&limit=12`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});
+    if(!r.ok)return [];return await r.json();
+  }catch(e){return []}
+}
+async function refreshFriends(){
+  if(!cloudReady()||!auth.token||!auth.user)return false;
+  try{const uid=auth.user.id;
+    const r=await fetch(`${C.SUPABASE_URL}/rest/v1/friendships?or=(requester.eq.${uid},responder.eq.${uid})&select=requester,responder,status,requester_handle,responder_handle,created_at`,
+      {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
+    if(!r.ok)return false;const rows=await r.json();
+    friends.list=[];friends.incoming=[];friends.outgoing=[];friends.byHandle=new Map();
+    for(const f of rows){const me=f.requester===uid;
+      if(f.status==='accepted'){friends.list.push({uid:me?f.responder:f.requester,handle:me?f.responder_handle:f.requester_handle,since:f.created_at})}
+      else if(f.status==='pending'){
+        if(me)friends.outgoing.push({uid:f.responder,handle:f.responder_handle,sent:f.created_at});
+        else friends.incoming.push({uid:f.requester,handle:f.requester_handle,sent:f.created_at});
+      }
+    }
+    friends.list.forEach(f=>friends.byHandle.set(f.handle.toLowerCase(),f));
+    return true;
+  }catch(e){return false}
+}
+async function sendFriendRequest(otherUserId,otherHandle){
+  if(!cloudReady()||!auth.token||!auth.user||!otherUserId||otherUserId===auth.user.id)return false;
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/friendships?on_conflict=requester,responder`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify({requester:auth.user.id,responder:otherUserId,status:'pending',requester_handle:handle,responder_handle:otherHandle,updated_at:new Date().toISOString()})});
+    if(r.ok)await refreshFriends();return r.ok;
+  }catch(e){return false}
+}
+async function respondFriendRequest(requesterUserId,accept){
+  if(!cloudReady()||!auth.token||!auth.user)return false;
+  if(accept){
+    try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/friendships?requester=eq.${requesterUserId}&responder=eq.${auth.user.id}`,{method:'PATCH',
+      headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
+      body:JSON.stringify({status:'accepted',updated_at:new Date().toISOString()})});
+      if(r.ok)await refreshFriends();return r.ok;
+    }catch(e){return false}
+  }else{
+    try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/friendships?requester=eq.${requesterUserId}&responder=eq.${auth.user.id}`,{method:'DELETE',
+      headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,Prefer:'return=minimal'}});
+      if(r.ok)await refreshFriends();return r.ok;
+    }catch(e){return false}
+  }
+}
+async function removeFriend(otherUserId){
+  if(!cloudReady()||!auth.token||!auth.user)return false;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/friendships?or=(and(requester.eq.${auth.user.id},responder.eq.${otherUserId}),and(requester.eq.${otherUserId},responder.eq.${auth.user.id}))`,{method:'DELETE',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,Prefer:'return=minimal'}});
+    if(r.ok)await refreshFriends();return r.ok;
+  }catch(e){return false}
 }
 // ============================================================================
 
@@ -2037,6 +2116,8 @@ function openPinPicker(){
   el.style.display='flex';
 }
 function qaPinToggle(id){if(new URLSearchParams(location.search).get('qa')!=='1')return null;achievements.add(id);if(!ACH[id])ACH[id]={n:'TestAch',d:'qa'};pinToggle(id);return pinnedAchievements.slice()}
+function qaFriendsOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openFriendsPanel();return miniActive&&_peekOpen}
+function qaFriendsState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{list:friends.list.length,incoming:friends.incoming.length,outgoing:friends.outgoing.length}}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -4963,7 +5044,7 @@ function setMusicVol(v){_musicVol=Math.max(0,Math.min(1,v));persist()}
 // Intro is excluded — re-firing it on the next reload would surprise the player.
 function replayTutorials(){const intro=tutorialSeen.intro;tutorialSeen={};if(intro)tutorialSeen.intro=intro;persist()}
 // Identity setters — persist + update the HUD operative pill if a name is added mid-run.
-function setHandle(v){playerHandle=String(v||'').slice(0,24);persist()}
+function setHandle(v){playerHandle=String(v||'').slice(0,24);persist();if(auth.user&&typeof syncProfile==='function')syncProfile()}
 function setBoatName(v){boatName=String(v||'').slice(0,24);persist();if(S.bc)boat(S.bc)}
 // Render the player's biggest catch into a shareable PNG. Lays the trophy out on a 1200×630
 // open-graph-friendly card and triggers a browser download.
@@ -5211,6 +5292,7 @@ function refreshTrophyPeek(){
   refreshAuthPill();
   refreshChallengeCard();
   refreshTournamentCard();
+  refreshFriendsPill();
   if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
 }
 // R30 · weekly tournament tile renderer. Always shown in game mode (mirrors challenge tile).
@@ -5227,6 +5309,86 @@ function refreshTournamentCard(){
     <span style="font:600 10px 'JetBrains Mono',monospace;color:#c4b5fd;letter-spacing:1px">RANK →</span>
   </div>`;
   el.onclick=()=>openTournamentPanel();
+}
+
+// R33 · Friends pill — only when signed in. Shows N friends + (P pending) badge.
+function refreshFriendsPill(){
+  const el=$('friends-pill');if(!el)return;
+  if(GAME_MODE!=='game'||!cloudReady()||!auth.user){el.style.display='none';return}
+  el.style.display='block';
+  const fc=friends.list.length;const pc=friends.incoming.length;
+  el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div style="flex:1;min-width:0">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#4ade80;text-transform:uppercase">Friends</div>
+      <div style="margin-top:2px;font-size:12.5px;color:#e8edf5">${fc} ${fc===1?'friend':'friends'}${pc?` · <span style="color:#fbcf3b">${pc} pending</span>`:''}</div>
+    </div>
+    <span style="font:600 10px 'JetBrains Mono',monospace;color:#86efac;letter-spacing:1px">MANAGE →</span>
+  </div>`;
+  el.onclick=()=>openFriendsPanel();
+}
+
+let _friendsSearch='',_friendsSearchResults=[],_friendsSearchPending=false;
+async function openFriendsPanel(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  if(!cloudReady()){
+    card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
+      <div class="m-title">Cloud sync isn’t configured.</div>
+      <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Friends rely on Supabase — once SUPABASE_URL + SUPABASE_ANON_KEY are set on this deploy, this panel comes to life.</div>
+      <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+    el.style.display='flex';return;
+  }
+  if(!auth.user){
+    card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
+      <div class="m-title">Sign in to use friends.</div>
+      <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Once you sign in, you can search for other captains by handle, send requests, and see them on a "Friends Only" tournament view.</div>
+      <button class="btn bp" onclick="DS.closePeek();setTimeout(()=>DS.signIn(),100)" style="margin-top:12px;background:linear-gradient(135deg,#3b82f6,#1d4ed8)">Sign In</button>
+      <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Close</button>`;
+    el.style.display='flex';return;
+  }
+  await refreshFriends();
+  const myHandle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const incomingHTML=friends.incoming.length
+    ? friends.incoming.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(251,207,59,0.10);border:1px solid rgba(251,207,59,0.3);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
+        <span style="flex:1;min-width:0;color:#fde68a"><b>${r.handle}</b> wants to add you</span>
+        <button class="btn bp friend-accept" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">ACCEPT</button>
+        <button class="btn bx friend-decline" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">DECLINE</button>
+      </div>`).join('')
+    : '';
+  const friendsHTML=friends.list.length
+    ? friends.list.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif;border-left:3px solid #4ade80">
+        <span style="flex:1;min-width:0;color:#e8edf5"><b>${r.handle}</b></span>
+        <button class="btn bx friend-remove" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">REMOVE</button>
+      </div>`).join('')
+    : `<div style="padding:12px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">No friends yet. Search a handle below to send a request.</div>`;
+  const outgoingHTML=friends.outgoing.length
+    ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Sent · ${friends.outgoing.length}</div>${friends.outgoing.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:2px 0;font:11px 'DM Sans',sans-serif;color:#64748b"><span style="flex:1">Request sent to <b style="color:#94a3b8">${r.handle}</b></span><button class="btn bx friend-cancel" data-uid="${r.uid}" style="width:auto;padding:3px 8px;margin:0;font:600 8px 'JetBrains Mono',monospace;letter-spacing:1px">CANCEL</button></div>`).join('')}`
+    : '';
+  const searchHTML=_friendsSearchResults.length
+    ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Results</div>${_friendsSearchResults.map(r=>{const isMe=r.user_id===auth.user.id;const already=friends.list.find(f=>f.uid===r.user_id)||friends.outgoing.find(f=>f.uid===r.user_id);
+        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
+          <span style="flex:1;min-width:0;color:#e8edf5"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${isMe?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace">· YOU</span>`:''}</span>
+          ${isMe?'':already?`<span style="font:600 9px 'JetBrains Mono',monospace;color:#475569;letter-spacing:1px">${already.since?'✓ FRIENDS':'⏳ SENT'}</span>`:`<button class="btn bp friend-add" data-uid="${r.user_id}" data-handle="${r.handle}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD</button>`}
+        </div>`}).join('')}`
+    : (_friendsSearch.length>=2?`<div style="padding:10px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">${_friendsSearchPending?'Searching…':'No captains match.'}</div>`:'');
+  card.innerHTML=`<div class="m-kicker" style="color:#4ade80">Friends</div>
+    <div class="m-title">Your crew.</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Signed in as <b style="color:#86efac">${myHandle}</b>. Share that handle — others can search for you.</div>
+    ${incomingHTML?`<div style="margin:14px 0 4px;font:11px 'JetBrains Mono',monospace;color:#fbcf3b;text-transform:uppercase;letter-spacing:1px">Pending · ${friends.incoming.length}</div>${incomingHTML}`:''}
+    <div style="margin:14px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Friends · ${friends.list.length}</div>
+    ${friendsHTML}
+    ${outgoingHTML}
+    <div style="margin:18px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Find a captain</div>
+    <input id="friend-q" type="text" placeholder="Search by handle…" value="${_friendsSearch}" style="width:100%;background:rgba(8,18,38,0.6);border:1px solid rgba(74,222,128,0.25);color:#e8edf5;border-radius:6px;padding:7px 10px;font:12px 'DM Sans',sans-serif;box-sizing:border-box">
+    ${searchHTML}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  el.style.display='flex';
+  card.querySelectorAll('.friend-accept').forEach(b=>b.onclick=async()=>{await respondFriendRequest(b.dataset.uid,true);sfx('win');refreshFriendsPill();openFriendsPanel()});
+  card.querySelectorAll('.friend-decline').forEach(b=>b.onclick=async()=>{await respondFriendRequest(b.dataset.uid,false);refreshFriendsPill();openFriendsPanel()});
+  card.querySelectorAll('.friend-remove').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this friend?'))return;await removeFriend(b.dataset.uid);refreshFriendsPill();openFriendsPanel()});
+  card.querySelectorAll('.friend-cancel').forEach(b=>b.onclick=async()=>{await removeFriend(b.dataset.uid);refreshFriendsPill();openFriendsPanel()});
+  card.querySelectorAll('.friend-add').forEach(b=>b.onclick=async()=>{const ok=await sendFriendRequest(b.dataset.uid,b.dataset.handle);if(ok){sfx('click');refreshFriendsPill();openFriendsPanel()}});
+  const q=$('friend-q');if(q){q.oninput=async()=>{_friendsSearch=q.value.trim();if(_friendsSearch.length<2){_friendsSearchResults=[];openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}return}_friendsSearchPending=true;openFriendsPanel();const q2=$('friend-q');if(q2){q2.focus();q2.selectionStart=q2.selectionEnd=q2.value.length}_friendsSearchResults=await searchHandles(_friendsSearch);_friendsSearchPending=false;openFriendsPanel();const q3=$('friend-q');if(q3){q3.focus();q3.selectionStart=q3.selectionEnd=q3.value.length}}}
 }
 async function openTournamentPanel(){
   const card=$('mini-card'),el=$('mini');if(!card||!el)return;
@@ -5545,6 +5707,7 @@ return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+openFriends:openFriendsPanel,refreshFriends,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaFriendsOpen,qaFriendsState,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
