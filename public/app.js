@@ -28,6 +28,16 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// R32 · Achievement Showcase Wall — up to 6 pinned achievement ids, surfaced in the Pier Hut.
+const PIN_MAX=6;
+let pinnedAchievements=[];
+function pinToggle(id){
+  if(!achievements.has(id))return false;
+  const i=pinnedAchievements.indexOf(id);
+  if(i>=0){pinnedAchievements.splice(i,1);persist();return true}
+  if(pinnedAchievements.length>=PIN_MAX)return false;
+  pinnedAchievements.push(id);persist();return true;
+}
 // R29: bounded log of the most recent 5 runs for the Pier Hut "Run Journal" section.
 // Each entry: {ts:'YYYY-MM-DDThh:mm', score, civs, civsTotal, outcome, sec, hero}.
 let runHistory=[];
@@ -256,6 +266,7 @@ function loadSave(){
     if(d.equippedPaint){Object.keys(equippedPaint).forEach(h=>{if(typeof d.equippedPaint[h]==='string')equippedPaint[h]=d.equippedPaint[h]})}
     if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
     if(Array.isArray(d.runHistory))runHistory=d.runHistory.slice(0,5);
+    if(Array.isArray(d.pinnedAchievements))pinnedAchievements=d.pinnedAchievements.slice(0,PIN_MAX);  // ACH defined later — picker filters unknowns at render time
     if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
     if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
     if(typeof d.sfxVol==='number')_sfxVol=Math.max(0,Math.min(1,d.sfxVol));
@@ -267,7 +278,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,pinnedAchievements,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -1947,6 +1958,20 @@ function openHutInterior(){
         <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Trophy Wall</div>
         ${trophyWallHTML}
       </div>
+      <!-- Showcase Wall (R32) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(167,139,250,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Showcase Wall · ${pinnedAchievements.length} / ${PIN_MAX}</div>
+          <button class="btn bx" onclick="DS.openPinPicker()" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:rgba(167,139,250,0.15);color:#c4b5fd;border:1px solid rgba(167,139,250,0.4)">MANAGE</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+          ${Array.from({length:PIN_MAX}).map((_,i)=>{const id=pinnedAchievements[i];const a=id&&ACH[id];
+            return a
+              ? `<div style="background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.4);border-radius:6px;padding:8px 10px;min-height:64px;display:flex;flex-direction:column;justify-content:center"><div style="font:700 10px 'DM Sans',sans-serif;color:#e8edf5;line-height:1.2;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical">${a.n}</div><div style="font:9px 'DM Sans',sans-serif;color:#94a3b8;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${a.d}</div></div>`
+              : `<div style="background:rgba(3,7,18,0.4);border:1px dashed rgba(167,139,250,0.25);border-radius:6px;padding:8px 10px;min-height:64px;display:flex;align-items:center;justify-content:center;color:#475569;font:italic 10px 'DM Sans',sans-serif">PIN ONE</div>`;
+          }).join('')}
+        </div>
+      </div>
       <!-- Codex Board -->
       <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,207,59,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
         <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Codex Board · ${caught} / ${total} species</div>
@@ -1989,6 +2014,29 @@ function openHutInterior(){
   if(typeof sfx==='function')sfx('click');
 }
 function qaDockHut(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!pierHutMesh)return false;_nearHut=pierHutMesh;dockHut();return miniActive&&_peekOpen}
+// R32 · Pin Picker — grid of all unlocked achievements, tap to toggle pin. Cap of 6 enforced
+// via pinToggle() so the picker disables further pins when full. Bounces back to the hut on close.
+function openPinPicker(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const unlocked=Object.keys(ACH).filter(id=>achievements.has(id));
+  const full=pinnedAchievements.length>=PIN_MAX;
+  const rows=unlocked.length
+    ? unlocked.map(id=>{const a=ACH[id];const pinned=pinnedAchievements.includes(id);return `<button class="pin-btn" data-i="${id}" style="text-align:left;width:100%;padding:9px 12px;background:${pinned?'rgba(167,139,250,0.18)':'rgba(3,7,18,0.5)'};border:1px solid ${pinned?'rgba(167,139,250,0.5)':'rgba(30,41,59,0.6)'};border-radius:6px;margin:4px 0;color:#e8edf5;display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;${(!pinned&&full)?'opacity:0.4;cursor:not-allowed':''}">
+        <span style="flex:1;min-width:0"><div style="font-weight:700;font-size:12.5px">${a.n}</div><div style="font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:2px">${a.d}</div></span>
+        <span style="font:600 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:${pinned?'#a78bfa':'#475569'}">${pinned?'✓ PINNED':full?'FULL':'PIN'}</span>
+      </button>`}).join('')
+    : `<div style="padding:16px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No achievements unlocked yet. Run a route and come back.</div>`;
+  card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Showcase Wall</div>
+    <div class="m-title">Pin your favorites.</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Pick up to <b>${PIN_MAX}</b> achievements to hang on the Pier Hut wall. Visitors see whatever you put up.</div>
+    <div style="margin:10px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Unlocked · ${unlocked.length}</div>
+    <div style="max-height:340px;overflow-y:auto">${rows}</div>
+    <button class="btn bx" onclick="DS.closePeek();setTimeout(()=>DS.openHut(),100)" style="margin-top:12px">Back to the Hut</button>`;
+  card.querySelectorAll('.pin-btn').forEach(b=>b.onclick=()=>{const id=b.dataset.i;pinToggle(id);sfx('click');openPinPicker()});
+  el.style.display='flex';
+}
+function qaPinToggle(id){if(new URLSearchParams(location.search).get('qa')!=='1')return null;achievements.add(id);if(!ACH[id])ACH[id]={n:'TestAch',d:'qa'};pinToggle(id);return pinnedAchievements.slice()}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5493,10 +5541,10 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
