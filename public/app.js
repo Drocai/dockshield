@@ -1433,7 +1433,7 @@ function initEngine(){
   const waterMesh=new THREE.Mesh(waterGeo,wM);waterMesh.rotation.x=-Math.PI/2;waterMesh.receiveShadow=true;scene.add(waterMesh);
 
   mkBoat('pontoon');
-  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();mkCamps();mkMarinaPreview();
+  mkDock();mkWorld();mkObstacles();mkAI();mkWaypoints();mkCivs();mkEvidence();mkCryptid();mkDuct();mkMist();mkPOIs();mkShops();mkCamps();mkMarinaPreview();mkPierHut();
   // Drop points are spawned by resetDropPoints() inside startGame() so each new run gets a fresh
   // set instead of inheriting whatever the previous run left mid-respawn.
 
@@ -1450,6 +1450,7 @@ function initEngine(){
       else boatHorn();
     }
     if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
+    if(e.code==='KeyH'&&S.on&&GAME_MODE==='game'&&_nearHut&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockHut()}
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
@@ -1617,6 +1618,104 @@ function mkDock(){
   pinG.position.set(dockPos.x,0,dockPos.z);scene.add(pinG);
   scene._pinG=pinG;scene._beacon=beacon;
 }
+
+// === R24 · PIER HUT ===
+// A small wooden hut on the marina, visible from across the lake. Walk-in interior surfaced as
+// a full-screen overlay (cabin diorama in HTML) housing the codex board, tackle counter
+// shortcut, and the active mission board. Pure decoration when not entered — costs ~6 meshes.
+let pierHutMesh=null,_nearHut=null;
+function mkPierHut(){
+  if(GAME_MODE!=='game')return;
+  const g=new THREE.Group();
+  // Hut sits on land just left of the marina dock so it doesn't crowd the boat preview slots.
+  // Slight rotation gives the front door a friendly angle to anyone driving up to dock.
+  const hutX=dockPos.x-16,hutZ=dockPos.z-2;
+  // Foundation — short stone-look band so it doesn't read as sitting on the water.
+  const foundation=new THREE.Mesh(new THREE.BoxGeometry(7,0.5,5.6),new THREE.MeshStandardMaterial({color:0x4a3e2e,roughness:0.95}));foundation.position.y=0.25;g.add(foundation);
+  // Walls — cedar plank look. Two long boards + two short boards forming a box.
+  const wallMat=new THREE.MeshStandardMaterial({color:0x6b4a1f,roughness:0.85});
+  const wF=new THREE.Mesh(new THREE.BoxGeometry(7,3,0.25),wallMat);wF.position.set(0,2,2.8);g.add(wF);
+  const wB=new THREE.Mesh(new THREE.BoxGeometry(7,3,0.25),wallMat);wB.position.set(0,2,-2.8);g.add(wB);
+  const wL=new THREE.Mesh(new THREE.BoxGeometry(0.25,3,5.6),wallMat);wL.position.set(-3.4,2,0);g.add(wL);
+  const wR=new THREE.Mesh(new THREE.BoxGeometry(0.25,3,5.6),wallMat);wR.position.set( 3.4,2,0);g.add(wR);
+  // Sloped roof — two planes for a gable. Darker shingle color.
+  const roofMat=new THREE.MeshStandardMaterial({color:0x2a1a10,roughness:0.95});
+  const rL=new THREE.Mesh(new THREE.BoxGeometry(7.6,0.18,3.5),roofMat);rL.position.set(-1.55,3.9,0);rL.rotation.z=Math.PI*0.18;g.add(rL);
+  const rR=new THREE.Mesh(new THREE.BoxGeometry(7.6,0.18,3.5),roofMat);rR.position.set( 1.55,3.9,0);rR.rotation.z=-Math.PI*0.18;g.add(rR);
+  // Door + sign.
+  const door=new THREE.Mesh(new THREE.BoxGeometry(1,2,0.08),new THREE.MeshStandardMaterial({color:0x3b2a16,roughness:0.7}));door.position.set(0,1.5,2.93);g.add(door);
+  const knob=new THREE.Mesh(new THREE.SphereGeometry(0.06,8,6),new THREE.MeshStandardMaterial({color:0xc9a14a,metalness:0.85}));knob.position.set(0.35,1.5,2.98);g.add(knob);
+  // Glowing window — amber pane reading as a fire-lit interior.
+  const windowGlow=new THREE.Mesh(new THREE.PlaneGeometry(1.2,1.2),new THREE.MeshBasicMaterial({color:0xffb45a,transparent:true,opacity:0.85,side:THREE.DoubleSide}));windowGlow.position.set(-2,2,2.94);g.add(windowGlow);
+  const windowFrame=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.3,0.08),new THREE.MeshStandardMaterial({color:0x3b2a16}));windowFrame.position.set(-2,2,2.92);g.add(windowFrame);
+  const windowLight=new THREE.PointLight(0xffa040,1.2,18);windowLight.position.set(-2,2.1,3.4);g.add(windowLight);
+  // Sign over the door — small board with carved "PIER HUT" feel via an emissive plane.
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.55,0.1),new THREE.MeshStandardMaterial({color:0x5a3e1c,emissive:0x2a1a08,emissiveIntensity:0.3}));sign.position.set(0,3.3,2.94);g.add(sign);
+  // Chimney — small stack for silhouette read at distance.
+  const chim=new THREE.Mesh(new THREE.BoxGeometry(0.65,1.4,0.65),new THREE.MeshStandardMaterial({color:0x3a2a18,roughness:0.95}));chim.position.set(2,4.3,-1.4);g.add(chim);
+  // Subtle smoke (sprite) over the chimney — additive yellow, drifts on its own bob.
+  const smoke=new THREE.Sprite(new THREE.SpriteMaterial({color:0xb8a890,transparent:true,opacity:0.35,depthWrite:false,blending:THREE.AdditiveBlending}));smoke.scale.set(1.6,2.4,1);smoke.position.set(2,5.6,-1.4);g.add(smoke);g.userData.smoke=smoke;
+  // Welcoming porch lantern.
+  const lantern=new THREE.Mesh(new THREE.SphereGeometry(0.2,8,6),new THREE.MeshStandardMaterial({color:0xffe1a0,emissive:0xffe1a0,emissiveIntensity:0.9}));lantern.position.set(1.5,2.6,2.95);g.add(lantern);
+  g.position.set(hutX,0,hutZ);
+  // Slight angle so the door faces the marina dock.
+  g.rotation.y=Math.PI*0.06;
+  scene.add(g);
+  g.userData.kind='pierHut';
+  pierHutMesh=g;
+}
+function tickPierHut(){
+  if(!S.on||GAME_MODE!=='game'||miniActive||!pierHutMesh){const p=$('hut-prompt');if(p)p.style.display='none';return}
+  // Soft smoke bob on the chimney sprite so the hut reads alive even when nobody is near.
+  const sm=pierHutMesh.userData.smoke;if(sm){const t=Date.now()*0.001;sm.position.y=5.4+Math.sin(t*0.8)*0.18;sm.material.opacity=0.28+Math.sin(t*0.6)*0.08}
+  const d=bMesh.position.distanceTo(pierHutMesh.position);
+  _nearHut=d<10?pierHutMesh:null;
+  const p=$('hut-prompt');if(!p)return;
+  if(_nearHut&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#ffb45a">Pier Hut</b> — press <b>H</b> to enter`}
+  else if(_nearHut){p.style.display='block';p.innerHTML='Tie up to enter the hut'}
+  else p.style.display='none';
+}
+function dockHut(){
+  if(!_nearHut||miniActive)return;
+  openHutInterior();
+}
+function openHutInterior(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  // Pre-compute interior contents.
+  const caught=fishCatalog.size,total=FISH.length;
+  const speciesGrid=FISH.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?(f.f||''):'Not yet caught'}" style="display:inline-flex;align-items:center;gap:3px;background:rgba(8,18,38,0.55);border:1px solid ${got?(RARE_COLOR[f.r]||'#475569'):'rgba(80,80,80,0.35)'};border-radius:4px;padding:2px 6px;font:11px 'DM Sans',sans-serif;color:${got?RARE_COLOR[f.r]:'#475569'}">${got?f.e:'🔒'}<span style="${got?'':'opacity:0.65'}">${got?f.n:'?'}</span></span>`}).join(' ');
+  const activeMissions=(typeof dropPoints!=='undefined'?dropPoints:[]).filter(d=>d&&!d.userData.done).map(d=>{const u=d.userData,t=u.type||{n:'Mission',col:0xfb923c},dist=Math.round(bMesh.position.distanceTo(d.position));return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(3,7,18,0.55);border-left:3px solid #${t.col.toString(16).padStart(6,'0')};border-radius:4px;margin:4px 0;font:12px 'DM Sans',sans-serif"><span><b>${t.n}</b><span style="color:#94a3b8;font-size:10px"> · ${u.n||'unknown'}</span></span><span style="color:#fb923c;font:600 10px 'JetBrains Mono',monospace">${dist}u</span></div>`}).join('')||`<div style="padding:10px 12px;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No active missions right now — drive the lake to spawn drop points.</div>`;
+  card.innerHTML=`<div class="m-kicker" style="color:#ffb45a">Pier Hut</div>
+    <div class="m-title">Inside.</div>
+    <!-- Interior diorama — gradient + lantern glow + wood-grain feel. -->
+    <div style="position:relative;background:linear-gradient(180deg,#3a2a18 0%,#241910 100%);border-radius:8px;padding:14px;margin:8px 0">
+      <!-- soft amber haze from a hearth -->
+      <div style="position:absolute;inset:0;background:radial-gradient(circle at 20% 30%,rgba(255,180,90,0.18),transparent 60%);border-radius:8px;pointer-events:none"></div>
+      <!-- Codex board (wall) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,207,59,0.3);border-radius:6px;padding:10px 12px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Codex Board · ${caught} / ${total} species</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow-y:auto">${speciesGrid}</div>
+      </div>
+      <!-- Mission board -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,146,60,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase;margin-bottom:6px">Mission Board · active</div>
+        <div style="max-height:120px;overflow-y:auto">${activeMissions}</div>
+      </div>
+      <!-- Tackle counter -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.3);border-radius:6px;padding:10px 12px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div>
+          <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#60d0ff;text-transform:uppercase">Tackle Counter</div>
+          <div style="font-size:11.5px;color:#cbd5e1;margin-top:2px">Stock up before the next run.</div>
+        </div>
+        <button class="btn bp" onclick="DS.closePeek();setTimeout(()=>DS.openShop(),100)" style="width:auto;padding:7px 14px;margin:0;background:linear-gradient(135deg,#3b82f6,#1d4ed8);font-size:11px">OPEN SHOP</button>
+      </div>
+    </div>
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Leave the Hut</button>`;
+  el.style.display='flex';
+  if(typeof sfx==='function')sfx('click');
+}
+function qaDockHut(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!pierHutMesh)return false;_nearHut=pierHutMesh;dockHut();return miniActive&&_peekOpen}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -3713,7 +3812,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // Hides cleanly once they enter near range OR all civs are saved.
     updateRescueArrow(_nearestCiv,_nearestCivD);
     spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickPierHut();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
@@ -3860,7 +3959,7 @@ function startGame(){
 }
 
 // === RESULT → SALES BRIDGE ===
-function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');stopAllAudio();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
+function endGame(won){S.on=false;S.played=true;document.body.classList.remove('playing');stopAllAudio();_shake=0;if(cam){cam.fov=60;cam.updateProjectionMatrix()}$('hud').style.display='none';$('nfo').style.display='none';$('phud').style.display='none';$('ww').style.display='none';const er=$('end-run');if(er)er.style.display='none';const mm=$('minimap');if(mm)mm.style.display='none';const sp=$('spot-tag');if(sp)sp.style.display='none';const shp=$('shop-prompt');if(shp)shp.style.display='none';const mq=$('mq');if(mq)mq.style.display='none';const ph=$('photo-hint');if(ph)ph.style.display='none';const fp=$('forage-prompt');if(fp)fp.style.display='none';const hp=$('hut-prompt');if(hp)hp.style.display='none';photoMode=false;_photoResume=false;_nearShop=null;_nearCamp=null;_nearHut=null;despawnDuct();cancelCast();const cp=$('cast-prompt');if(cp)cp.style.display='none';const ch=$('cast-hint');if(ch)ch.style.display='none';aiB.forEach(a=>a.userData.on=false);
   // Tear down any in-flight cast / open catch dialog / fight so it can't pop over the result screen.
   cancelCast();if(_fightCleanup){_fightCleanup();_fightCleanup=null}if(_catchOpen){_catchOpen=false;miniActive=false;const me=$('mini');if(me)me.style.display='none';const mc=$('mini-card');if(mc)mc.innerHTML=''}
   if(_wxTimer){clearInterval(_wxTimer);_wxTimer=null}
@@ -4904,8 +5003,8 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

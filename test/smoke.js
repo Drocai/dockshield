@@ -240,6 +240,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!snowOk)fail('R23 qaForceSnow did not light up snow particles');
     console.log(`· snow weather + ${fishN} species`);
 
+    // 13f. R24 Pier Hut. qaDockHut forces the proximity flag + opens the interior, the overlay
+    //      should render the codex board, mission board, and tackle counter shortcut.
+    const hutOpen=await p.evaluate(()=>DS.qaDockHut());
+    if(!hutOpen)fail('R24 Pier Hut did not open via qaDockHut');
+    const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')});
+    if(!hutContent)fail('R24 Pier Hut interior missing sections');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log('· pier hut interior opens with codex + missions + tackle counter');
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
