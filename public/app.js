@@ -1847,11 +1847,11 @@ function mkShopStructure(shop){
 function mkShops(){if(GAME_MODE!=='game')return;shopMeshes=SHOPS.map(mkShopStructure)}
 // Proximity → dock prompt. Opening requires the player to be slow + close.
 let _nearShop=null;
-function tickShops(){
+function tickShops(t){if(t===undefined)t=Date.now()*0.001;
   if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('shop-prompt');if(p)p.style.display='none';return}
   let near=null;
   for(const m of shopMeshes){
-    if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(Date.now()*0.003+m.position.x)*0.1;
+    if(m.userData.ring)m.userData.ring.material.opacity=0.15+Math.sin(t*3+m.position.x)*0.1;
     // Night-bloom on the shop neon: bigger + brighter sprite, brighter base sign.
     if(m.userData.signGlow){const sg=m.userData.signGlow;const sc=_isNight?11:8;sg.scale.set(sc,sc,sc);sg.material.opacity=_isNight?0.78:0.5}
     const d=bMesh.position.distanceTo(m.position);
@@ -1894,10 +1894,10 @@ function mkCampStructure(c){
 }
 function mkCamps(){if(GAME_MODE!=='game')return;campMeshes=CAMPS.map(mkCampStructure)}
 let _nearCamp=null;
-function tickCamps(){
+function tickCamps(t){if(t===undefined)t=Date.now()*0.001;
   if(!S.on||GAME_MODE!=='game'||miniActive){const p=$('forage-prompt');if(p)p.style.display='none';return}
   let near=null;
-  for(const m of campMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.12+Math.sin(Date.now()*0.003+m.position.x)*0.09;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
+  for(const m of campMeshes){if(m.userData.ring)m.userData.ring.material.opacity=0.12+Math.sin(t*3+m.position.x)*0.09;const d=bMesh.position.distanceTo(m.position);if(d<9)near=m}
   _nearCamp=near;
   const p=$('forage-prompt');if(!p)return;
   if(near&&Math.abs(spd)<0.25){p.style.display='block';p.innerHTML=`<b style="color:#${near.userData.camp.col.toString(16).padStart(6,'0')}">${near.userData.camp.n}</b> — press <b>G</b> to forage`}
@@ -1984,10 +1984,10 @@ function mkPierHut(){
   g.userData.kind='pierHut';
   pierHutMesh=g;
 }
-function tickPierHut(){
+function tickPierHut(t){if(t===undefined)t=Date.now()*0.001;
   if(!S.on||GAME_MODE!=='game'||miniActive||!pierHutMesh){const p=$('hut-prompt');if(p)p.style.display='none';return}
   // Soft smoke bob on the chimney sprite so the hut reads alive even when nobody is near.
-  const sm=pierHutMesh.userData.smoke;if(sm){const t=Date.now()*0.001;sm.position.y=5.4+Math.sin(t*0.8)*0.18;sm.material.opacity=0.28+Math.sin(t*0.6)*0.08}
+  const sm=pierHutMesh.userData.smoke;if(sm){sm.position.y=5.4+Math.sin(t*0.8)*0.18;sm.material.opacity=0.28+Math.sin(t*0.6)*0.08}
   const d=bMesh.position.distanceTo(pierHutMesh.position);
   _nearHut=d<10?pierHutMesh:null;
   const p=$('hut-prompt');if(!p)return;
@@ -2802,8 +2802,8 @@ function fireSonar(){
   radio(pinged>0?'Ping out. '+pinged+' hits in the ring.':'Ping out. Water reads clean — for now.','fly');
   return true;
 }
-function tickSonar(){
-  const now=Date.now()*0.001;
+function tickSonar(t){
+  const now=t!==undefined?t:Date.now()*0.001;
   for(let i=sonarRings.length-1;i>=0;i--){const r=sonarRings[i],age=now-r.t0;if(age>1.5){scene.remove(r.m);r.m.geometry.dispose();r.m.material.dispose();sonarRings.splice(i,1);continue}const sc=1+age*22;r.m.scale.set(sc,sc,sc);r.m.material.opacity=Math.max(0,0.85-age/1.5)}
   for(let i=stumpHighlights.length-1;i>=0;i--){const h=stumpHighlights[i],age=now-h.t0;if(age>1.5){scene.remove(h.m);h.m.geometry.dispose();h.m.material.dispose();stumpHighlights.splice(i,1);continue}h.m.material.opacity=Math.max(0,0.65-age/1.5)}
   // Update HUD readiness pill
@@ -4071,13 +4071,17 @@ function setPh(p){S.phase=p;if(p>2)return;$('pn').textContent=PH[p].n;$('pd').te
   if(p===1){aiB.forEach(a=>a.userData.on=true);$('ww').style.display='block';setTimeout(()=>$('ww').style.display='none',4000);wps.forEach(w=>{w.visible=false;if(w.userData.inner)w.userData.inner.visible=false});S.pc=1;radio('Phase two. Shallows live. Stay sharp.','fly')}
   if(p===2){$('nfo').textContent='SLOW DOWN — Extraction';$('nfo').style.color='#f59e0b';S.pc=2;radio('Phase three. Bring them in slow.','fly')}}
 
-function tickPh(){const d=bMesh.position.distanceTo(dockPos),p=S.phase;
-  if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(Date.now()*0.005)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(Date.now()*0.008)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
+// R35 audit: take `t` from loop() so the per-waypoint opacity pulse uses one cached time
+// per frame instead of 2× Date.now()/Math.sin computations per visible waypoint.
+function tickPh(t){if(t===undefined)t=Date.now()*0.001;const d=bMesh.position.distanceTo(dockPos),p=S.phase;
+  if(p===0&&wpI<wps.length){const w=wps[wpI];if(w.visible){w.material.opacity=0.25+Math.sin(t*5)*0.15;if(w.userData.inner)w.userData.inner.material.opacity=0.15+Math.sin(t*8)*0.1;if(bMesh.position.distanceTo(w.position)<6){w.visible=false;if(w.userData.inner)w.userData.inner.visible=false;S.score+=50;wpI++;if(wpI<wps.length){wps[wpI].visible=true;if(wps[wpI].userData.inner)wps[wpI].userData.inner.visible=true}}}}
   if(p<2&&PH[p].check())setPh(p+1);
-  if(p>=1)tickAI();
+  if(p>=1)tickAI(t);
   if(p===2&&Math.abs(spd)>0.4)S.score=Math.max(0,S.score-2)}
 // Roaming AI boat motion — shared by business phases and free-roam.
-function tickAI(){const t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
+// R35 audit: accepts cached `t` from loop() so we don't re-read Date.now() every frame
+// per ai boat. Falls back to a local read so any caller passing nothing keeps working.
+function tickAI(t){if(t===undefined)t=Date.now()*0.001;aiB.forEach(a=>{if(!a.userData.on)return;a.position.x=a.userData.ox+Math.sin(t*0.6+a.userData.w)*50;a.position.z=a.userData.oz+Math.cos(t*0.4+a.userData.w)*10;a.position.y=0.3+Math.sin(t*2+a.userData.w)*0.15;if(bMesh.position.distanceTo(a.position)<4)S.near+=2})}
 
 // === RENDER ===
 function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
@@ -4281,8 +4285,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     // ~50u, paint a small directional chevron at the edge of the screen pointing toward them.
     // Hides cleanly once they enter near range OR all civs are saved.
     updateRescueArrow(_nearestCiv,_nearestCivD);
-    spawnWake();tickWakes();tickRain();tickSonar();
-    if(GAME_MODE==='game'){tickDropPoints(t);tickAI();tickShops();tickCamps();tickPierHut();tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t);if(seasonal&&seasonal.enabled)seasonal.tick(t)}
+    spawnWake();tickWakes();tickRain();tickSonar(t);
+    if(GAME_MODE==='game'){tickDropPoints(t);tickAI(t);tickShops(t);tickCamps(t);tickPierHut(t);tickFishJumps(t);maybeSpawnDuct();tickDuct(t);storm.maybe(t);if(seasonal&&seasonal.enabled)seasonal.tick(t)}
     // Business mode: reaching the dock wins the run. Game mode: dock is just a POI;
     // runs end on hull=0 (sink) or player-triggered "End Run".
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
