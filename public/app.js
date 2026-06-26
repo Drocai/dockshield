@@ -97,7 +97,7 @@ let ductStats={sightings:0,attempts:0,nearCatches:0};
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
-let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0,topwater:0,spinnerbait:0,jig:0};
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0,topwater:0,spinnerbait:0,jig:0,lantern:0};
 let equippedBait='';   // '' = bare hook, no bait bias
 // === BOAT UPGRADES ===
 // Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
@@ -176,7 +176,10 @@ const BAIT_TYPES={
   // spinnerbait: triples weight on `cover` species (snakehead) + rare bias.
   spinnerbait:{n:'Spinnerbait',       c:'#fbcf3b', e:'🌀', desc:'3× cover species (snakehead). +20% rare.', crafted:true},
   // jig: doubles weight on `bottom` species (drum/mud minnow/river cat).
-  jig:        {n:'Bottom Jig',        c:'#94a3b8', e:'⚖️', desc:'2× bottom species (drum, river cat).', crafted:true}
+  jig:        {n:'Bottom Jig',        c:'#94a3b8', e:'⚖️', desc:'2× bottom species (drum, river cat).', crafted:true},
+  // R52 "Night Bite" — a glass lantern rigged below the bobber. 2.5× the nocturnal species, and
+  // its glow draws them up even in daylight (the only way to land a night fish before dark).
+  lantern:    {n:'Lantern Lure',      c:'#fde68a', e:'🏮', desc:'2.5× night species · draws them up even by day.', crafted:true}
 };
 // Duct Tape Lure recipe — crafted at any tackle shop. Designed to be just out of reach early on so
 // the player has to forage a while before they can chase the legend with it.
@@ -203,7 +206,11 @@ const CRAFT_RECIPES=[
    tag:'🌀 Spinnerbait',       blurb:'Flashing blade rig. Snakeheads hit it like they\'re owed money. +20% rare.'},
   {id:'jig',        out:'jig',        in:{worm:8,crayfish:1},
    ach:'first_craft',
-   tag:'⚖️ Bottom Jig',         blurb:'Heavy head, soft-plastic trailer. 2× bottom species — drum, mud, river cat.'}
+   tag:'⚖️ Bottom Jig',         blurb:'Heavy head, soft-plastic trailer. 2× bottom species — drum, mud, river cat.'},
+  // R52 Night Bite — crickets for the glow-bugs inside, a crayfish for ballast.
+  {id:'lantern',    out:'lantern',    in:{cricket:6,crayfish:1},
+   ach:'first_craft',
+   tag:'🏮 Lantern Lure',        blurb:'A glass lantern below the bobber. 2.5× nocturnal fish — and its glow draws them up even by day.'}
 ];
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
@@ -1015,7 +1022,15 @@ const FISH=[
   {n:'Snakehead',    r:'rare',    w:3.5,s:120,e:'🐍', fight:3, line:3, cover:true, gator:true, f:'Out of place on every chart. Pulls like it doesn\'t care which way is up.'},
   {n:'River cat',    r:'rare',    w:3,  s:140,e:'🐈', fight:2, line:3, bottom:true, f:'Old as the channel. Lilly\'s grandfather lost a finger to one.'},
   // Legendary — night-only. Joins Spectral catfish as the second nocturnal showpiece.
-  {n:'Ghost gar',    r:'legendary',w:0.3,s:920,e:'👻', fight:3, line:4, gator:true, night:true, f:'Silver scales that don\'t reflect right. Only ever in the water after the sky turns.'}
+  {n:'Ghost gar',    r:'legendary',w:0.3,s:920,e:'👻', fight:3, line:4, gator:true, night:true, f:'Silver scales that don\'t reflect right. Only ever in the water after the sky turns.'},
+  // R52 "Night Bite" — five nocturnal species below the two night legendaries, so fishing after
+  // dark (or with a Lantern Lure) has an attainable ladder, not just a 0.3%-weight showpiece.
+  // night:true zeroes their daylight weight unless a Lantern Lure is equipped (see rollFish).
+  {n:'Bullhead',     r:'uncommon', w:9,  s:26, e:'🐡', fight:1, line:1, night:true, bottom:true, f:'Whiskered mud-sitter. Bites best once the dock lights come on.'},
+  {n:'Walleye',      r:'uncommon', w:7,  s:40, e:'🐟', fight:1, line:2, night:true, f:'Glass eyes that gather the moon. Daylight sends it deep.'},
+  {n:'Moon perch',   r:'uncommon', w:8,  s:30, e:'🌙', fight:1, line:1, night:true, surface:true, f:'Pale belly that catches the dark like a sliver of moon.'},
+  {n:'Burbot',       r:'rare',     w:3.2,s:120,e:'🐍', fight:2, line:3, night:true, bottom:true, f:'The "lawyer fish" — only works the bottom after midnight.'},
+  {n:'Lantern-eye gar',r:'rare',   w:2.5,s:165,e:'🏮', fight:3, line:3, night:true, gator:true, f:'Its eyes throw back the boat light like two coals. Lilly won\'t fish for it twice.'}
 ];
 const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
 // Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
@@ -1028,6 +1043,9 @@ const FISH_SPOTS=[
 // Pull the active fishing spot (or null if just on open water).
 function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
 // Weighted roll, optionally with a 3x bonus on bias species.
+// R52: night-species weight gate. night-only species are zeroed in daylight UNLESS a Lantern Lure
+// draws them up at half rate; at night they get ×2. Pulled out so the smoke can test the real rule.
+function nightWeight(isNight,lantern){return isNight?2.0:(lantern?0.5:0)}
 function rollFish(spot){
   // Foul weather stirs the deep — Rain/Drizzle nudge rare + legendary odds up (×2.2). Tournament
   // Line shop buff multiplies rare+legendary weight again (×3) for the next 5 casts. Snow
@@ -1053,13 +1071,14 @@ function rollFish(spot){
     if(useBait==='topwater')return f.surface?2.0:f.r==='uncommon'?1.20:1;
     if(useBait==='spinnerbait')return f.cover?3.0:f.r==='rare'?1.20:1;
     if(useBait==='jig')return f.bottom?2.0:f.r==='uncommon'?1.10:1;
+    if(useBait==='lantern')return f.night?2.5:f.r==='rare'?1.10:1;
     return 1;
   };
   let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;
     // R23 winter + night seasoning. Snow brings winter species up hard; clear weather suppresses
     // them. Spectral catfish only ever rolls when _isNight is true — daylight zeros it out.
     if(f.winter)w*=snowing?2.6:0.35;
-    if(f.night)w*=_isNight?2.0:0;
+    if(f.night)w*=nightWeight(_isNight,useBait==='lantern');
     w*=baitBias(f);return {...f,w}});
   if(useBait){baitInv[useBait]=Math.max(0,baitInv[useBait]-1);persist()}
   if(tourney){buffs.rareLine--;persist()}
@@ -3579,6 +3598,10 @@ function landFish(fish,spot){
     if(fishCatalog.size>=6)onUnlock('codex_half');if(fishCatalog.size>=FISH.length)onUnlock('codex_full');
   }
   if(fish.gator)onUnlock('gator_wrangler');
+  // R52 Night Bite achievements. lantern_keeper: a night species landed while it's NOT night can
+  // only happen with the Lantern Lure drawing it up. night_owl: 3+ nocturnal species in the Codex.
+  if(fish.night&&!_isNight)onUnlock('lantern_keeper');
+  if(fish.night&&FISH.filter(f=>f.night&&fishCatalog.has(f.n)).length>=3)onUnlock('night_owl');
   // Track the biggest fish in THIS run and flash a "NEW BEST" pill when it changes. Separate from
   // bestFish (all-time, persisted) and runCatches[] (chronological run log).
   if(!S.runBest||fish.s>(S.runBest.s||0)){S.runBest={n:fish.n,e:fish.e,r:fish.r,s:fish.s};flashRunBest(S.runBest)}
@@ -4358,6 +4381,9 @@ const ACH={
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
   gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'},
+  // R52 Night Bite — reward fishing after dark + the Lantern Lure daytime trick.
+  night_owl:{n:'Night Owl',d:'Three nocturnal species in the Codex.',p:()=>({cur:Math.min(FISH.filter(f=>f.night&&fishCatalog.has(f.n)).length,3),max:3})},
+  lantern_keeper:{n:'Lantern Keeper',d:'Drew a night fish up in daylight with the Lantern Lure.'},
   // Polish v2 — Duct + boss tightening.
   duct_25_attempts:{n:'Tape Faithful',d:'25 attempts on Duct. Still not him.',p:()=>({cur:Math.min(ductStats.attempts||0,25),max:25})},
   duct_three_near:{n:'Almost A Story',d:'Three near-catches on Duct.',p:()=>({cur:Math.min(ductStats.nearCatches||0,3),max:3})},
@@ -6292,6 +6318,11 @@ function qaPaintCount(){if(new URLSearchParams(location.search).get('qa')!=='1')
 function qaSeasonalState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{enabled:seasonal.enabled,extras:seasonal.extras.length,iceCount:seasonal.iceDrift.length}}
 function qaClearWeather(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:3,wd:180,g:0,c:'Clear',t:72,v:10000};applyWeatherVisuals();return S.wx.c==='Clear'}
 function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
+// R52 — exposes the real night-gate factors + the catalog of night species so the smoke can
+// assert the Night Bite mechanic (night=2, day=0, day+lantern=0.5) and the new content.
+function qaNightBite(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  return {night:nightWeight(true,false),day:nightWeight(false,false),dayLantern:nightWeight(false,true),
+    species:FISH.filter(f=>f.night).map(f=>f.n),lantern:!!BAIT_TYPES.lantern,lanternRecipe:CRAFT_RECIPES.some(r=>r.out==='lantern')}}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
 // can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
@@ -6408,6 +6439,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
