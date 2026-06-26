@@ -1,7 +1,8 @@
 // DockShield · client environment fallback.
 //
-// The app reads its Supabase config from window.__ENV__, which /api/config.js
-// injects at runtime from Vercel environment variables. When those env vars
+// The app reads its Supabase config from window.__ENV__, which the /api/config
+// route (served by api/config.js) injects at runtime from Vercel environment
+// variables. index.html loads it as <script src="/api/config">. When those env vars
 // aren't set (e.g. a fresh deploy), the social + cloud layer stays dark.
 //
 // This file provides a FALLBACK so the publishable Supabase config is always

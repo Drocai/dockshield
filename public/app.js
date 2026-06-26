@@ -324,6 +324,17 @@ let _authPillNote='';
 // post-fetch render if it moved (another overlay superseded them).
 let _peekGen=0;
 function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
+// Bound an awaited cloud read so a slow/unreachable Supabase can't leave a panel stuck on its
+// Loading state (and can't hang headless CI). Resolves to `fallback` after `ms`; the underlying
+// fetch still settles in the background but its result is ignored once we've fallen back.
+function withTimeout(promise,ms,fallback){
+  return new Promise(resolve=>{
+    let done=false;
+    const t=setTimeout(()=>{if(!done){done=true;resolve(fallback)}},ms);
+    Promise.resolve(promise).then(v=>{if(!done){done=true;clearTimeout(t);resolve(v)}},
+      ()=>{if(!done){done=true;clearTimeout(t);resolve(fallback)}});
+  });
+}
 function authRestore(){
   try{const raw=localStorage.getItem(_AUTH_KEY);if(!raw)return;const d=JSON.parse(raw);
     if(d&&d.access_token&&d.user&&d.expires_at&&d.expires_at*1000>Date.now()+30000){
@@ -775,10 +786,10 @@ async function openProfilePanel(opts){
   // Loading state.
   const _pgen=_peekGen;  // R48: drop the post-fetch render if another overlay supersedes us
   card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-sub" style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`;el.style.display='flex';
-  const profile=opts&&opts.userId?await fetchProfileFor(opts.userId):opts&&opts.handle?await fetchProfileByHandle(opts.handle):null;
+  const profile=opts&&opts.userId?await withTimeout(fetchProfileFor(opts.userId),6000,null):opts&&opts.handle?await withTimeout(fetchProfileByHandle(opts.handle),6000,null):null;
   if(_pgen!==_peekGen)return;
   if(!profile){card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-title">Captain not found.</div><div class="m-sub" style="line-height:1.6;color:#cbd5e1">Either they haven’t signed in yet, or the handle moved.</div><button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;return}
-  const rank=await fetchTournamentRankFor(profile.user_id,isoWeekKey());
+  const rank=await withTimeout(fetchTournamentRankFor(profile.user_id,isoWeekKey()),6000,null);
   if(_pgen!==_peekGen)return;
   const isMe=auth.user&&profile.user_id===auth.user.id;
   let friendState='none';let friendBtnHTML='';
@@ -5932,7 +5943,7 @@ async function openFriendsPanel(){
       <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Close</button>`;
     el.style.display='flex';return;
   }
-  await refreshFriends();
+  await withTimeout(refreshFriends(),6000,null);  // bound the Loading state if Supabase stalls
   if(_fgen!==_peekGen)return;  // R48: another overlay opened while we fetched — don't clobber it
   const myHandle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   const incomingHTML=friends.incoming.length
@@ -6046,7 +6057,7 @@ async function openTournamentPanel(){
   const gen=_peekGen;
   render(null);
   el.style.display='flex';
-  const rows=cloudReady()?await fetchTournament(wk):[];
+  const rows=cloudReady()?await withTimeout(fetchTournament(wk),6000,[]):[];
   if(gen!==_peekGen)return;  // R48: superseded by another overlay — drop the stale render
   render(rows);
 }
@@ -6096,7 +6107,7 @@ async function openChallengePanel(){
   const gen=_peekGen;
   render(null);
   el.style.display='flex';
-  const rows=cloudReady()?await fetchLeaderboard(ch.day):[];
+  const rows=cloudReady()?await withTimeout(fetchLeaderboard(ch.day),6000,[]):[];
   if(gen!==_peekGen)return;  // R48: superseded by another overlay — drop the stale render
   render(rows);
 }
@@ -6225,7 +6236,11 @@ function qaChallengeToday(){if(new URLSearchParams(location.search).get('qa')!==
 function qaTournamentOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openTournamentPanel();return miniActive&&_peekOpen}
 function qaTournamentWeek(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return isoWeekKey()}
 function qaBroadcastHooks(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{post:typeof postUnlockBroadcast,poll:typeof pollUnlockFeed,start:typeof startUnlockFeedPoll,stop:typeof stopUnlockFeedPoll}}
-function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
+function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;
+  // Clear any in-flight/queued toast first so the fake broadcast renders immediately and
+  // deterministically — with cloud active, pollUnlockFeed can hold _achBusy and queue ours behind it.
+  clearTimeout(_achDrainT);_achQ.length=0;_achBusy=false;
+  pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
 function qaPaintEquip(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const kit=PAINT_KITS[id];if(!kit)return false;if(kit.hero&&kit.hero!==S.bc)return false;if(!paintOwned[S.bc].includes(id))paintOwned[S.bc].push(id);equippedPaint[S.bc]=id;persist();return paintFor(S.bc).primary===kit.accents.primary}
 function qaPaintCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;return Object.keys(PAINT_KITS).length}
 function qaSeasonalState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{enabled:seasonal.enabled,extras:seasonal.extras.length,iceCount:seasonal.iceDrift.length}}
