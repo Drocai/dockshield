@@ -1030,7 +1030,10 @@ const FISH=[
   {n:'Walleye',      r:'uncommon', w:7,  s:40, e:'🐟', fight:1, line:2, night:true, f:'Glass eyes that gather the moon. Daylight sends it deep.'},
   {n:'Moon perch',   r:'uncommon', w:8,  s:30, e:'🌙', fight:1, line:1, night:true, surface:true, f:'Pale belly that catches the dark like a sliver of moon.'},
   {n:'Burbot',       r:'rare',     w:3.2,s:120,e:'🐍', fight:2, line:3, night:true, bottom:true, f:'The "lawyer fish" — only works the bottom after midnight.'},
-  {n:'Lantern-eye gar',r:'rare',   w:2.5,s:165,e:'🏮', fight:3, line:3, night:true, gator:true, f:'Its eyes throw back the boat light like two coals. Lilly won\'t fish for it twice.'}
+  {n:'Lantern-eye gar',r:'rare',   w:2.5,s:165,e:'🏮', fight:3, line:3, night:true, gator:true, f:'Its eyes throw back the boat light like two coals. Lilly won\'t fish for it twice.'},
+  // R58 — Mirror carp. A structure-loving rare that holds in the submerged trees of the new
+  // Drowned Orchard spot (heavily biased there). Codex 30 → 31.
+  {n:'Mirror carp',  r:'rare',     w:3,  s:118,e:'🎏', fight:2, line:2, cover:true, f:'Scattered chrome scales like broken mirror. Holds tight to the drowned orchard rows.'}
 ];
 const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
 // Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
@@ -1038,7 +1041,9 @@ const FISH_SPOTS=[
   {n:'Sunk Road shallows',  x:-80, z:30,  r:25, bias:['Three-eyed pike','Bowfin','Spotted gar']},
   {n:'Flooded Chapel pool', x:90,  z:55,  r:25, bias:['Albino bream','Bowfin']},
   {n:'Quarantine outflow',  x:60,  z:-60, r:20, bias:['Mud carp','Alligator gar']},
-  {n:'Deep Dock fringe',    x:-50, z:-105,r:18, bias:['Deep-Dock catch','Alligator gar']}
+  {n:'Deep Dock fringe',    x:-50, z:-105,r:18, bias:['Deep-Dock catch','Alligator gar']},
+  // R58 — submerged orchard on the east shelf; cover-loving fish hold in the drowned tree rows.
+  {n:'The Drowned Orchard', x:100, z:10,  r:20, bias:['Mirror carp','Snakehead','Bowfin']}
 ];
 // Pull the active fishing spot (or null if just on open water).
 function fishingSpot(pos){return FISH_SPOTS.find(s=>Math.hypot(pos.x-s.x,pos.z-s.z)<=s.r)||null}
@@ -2740,7 +2745,8 @@ const POIS=[
   {n:'Sunk Road',x:-80,z:30,c:'#94a3b8'},
   {n:'Flooded Chapel',x:90,z:55,c:'#a78bfa'},
   {n:'Quarantine Line',x:60,z:-60,c:'#f59e0b'},
-  {n:'Deep Dock',x:-50,z:-105,c:'#ef4444'}
+  {n:'Deep Dock',x:-50,z:-105,c:'#ef4444'},
+  {n:'Drowned Orchard',x:100,z:10,c:'#65a30d'}  // R58
 ];
 // R42 · Full-screen Lake Atlas. Opens via Tab; renders the entire playable lake on a 900×700
 // canvas with every named POI, shop, camp, hut, civilian, drop point, friend boat, and spot tag
@@ -4415,6 +4421,7 @@ const ACH={
   first_gear:{n:'Outfitted',d:'Bought your first piece of gear.'},
   fully_decked:{n:'Fully Decked',d:'Maxed every gear slot.'},
   gator_wrangler:{n:'Gator Wrangler',d:'Landed a thrashing gator.'},
+  orchard_found:{n:'Into the Orchard',d:'Found the Drowned Orchard on the east shelf.'},
   // R52 Night Bite — reward fishing after dark + the Lantern Lure daytime trick.
   night_owl:{n:'Night Owl',d:'Three nocturnal species in the Codex.',p:()=>({cur:Math.min(FISH.filter(f=>f.night&&fishCatalog.has(f.n)).length,3),max:3})},
   lantern_keeper:{n:'Lantern Keeper',d:'Drew a night fish up in daylight with the Lantern Lure.'},
@@ -4778,7 +4785,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
   if(S.on&&$('mm-canvas')){drawMinimap()}
   if(_atlasOpen)drawAtlas();  // R42: keep the atlas live while open
   // Named fishing-spot indicator — fades in when the boat enters a spot's radius.
-  if(S.on&&GAME_MODE==='game'&&!photoMode){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
+  if(S.on&&GAME_MODE==='game'&&!photoMode){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block';if(sp.n==='The Drowned Orchard')onUnlock('orchard_found')}else tag.style.display='none'}}
   updateMissionQueue();
   // Cryptid drift — phase >=1 only, slow sinusoidal pass under the water
   if(scene._cryptid&&S.on&&S.phase>=1){
@@ -6369,6 +6376,12 @@ function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')r
 function qaNightBite(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;
   return {night:nightWeight(true,false),day:nightWeight(false,false),dayLantern:nightWeight(false,true),
     species:FISH.filter(f=>f.night).map(f=>f.n),lantern:!!BAIT_TYPES.lantern,lanternRecipe:CRAFT_RECIPES.some(r=>r.out==='lantern')}}
+// R58 — verify the Drowned Orchard content: new species, fishing spot (+ its bias), POI marker,
+// and the discovery achievement. fired:true once the boat has entered the orchard radius.
+function qaOrchard(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  const spot=FISH_SPOTS.find(s=>s.n==='The Drowned Orchard');
+  return {species:FISH.some(f=>f.n==='Mirror carp'),spot:!!spot,bias:spot?spot.bias:[],
+    poi:POIS.some(p=>p.n==='Drowned Orchard'),ach:!!ACH.orchard_found,fired:achievements.has('orchard_found')}}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
 // can verify + screenshot the starfield/moon. Returns whether the night sky meshes exist.
@@ -6499,6 +6512,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaNightfall,qaDailyBonus,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaOrchard,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaNightfall,qaDailyBonus,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

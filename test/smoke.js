@@ -245,7 +245,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // 13e. R23 snow weather + new species count. Confirms FISH.length grew from 13 → 17 and that
     //      forcing Snow weather lights up the snowFlakes particle layer + sets S.wx.c correctly.
     const fishN=await p.evaluate(()=>DS.qaFishCount());
-    if(fishN<30)fail(`R23/R31/R52 expected ≥30 species, got ${fishN}`);
+    if(fishN<31)fail(`R23/R31/R52/R58 expected ≥31 species, got ${fishN}`);
     const snowOk=await p.evaluate(()=>DS.qaForceSnow());
     if(!snowOk)fail('R23 qaForceSnow did not light up snow particles');
     console.log(`· snow weather + ${fishN} species`);
@@ -262,6 +262,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
       if(!nb.species.includes(want))fail('R52 night species missing: '+want);
     }
     console.log(`· night bite — ${nb.species.length} nocturnal species + lantern lure (gate 2/0/0.5)`);
+
+    // 13e4. R58 Drowned Orchard — a new east-shelf fishing spot (POI + FISH_SPOT bias) + the rare
+    //       Mirror carp that holds there, and a discovery achievement that fires on entry.
+    const orc=await p.evaluate(()=>DS.qaOrchard());
+    if(!orc||!orc.species)fail('R58 Mirror carp species missing');
+    if(!orc.spot||orc.bias.indexOf('Mirror carp')<0)fail('R58 Drowned Orchard FISH_SPOT missing or not biasing Mirror carp: '+JSON.stringify(orc));
+    if(!orc.poi)fail('R58 Drowned Orchard POI marker missing');
+    if(!orc.ach)fail('R58 orchard_found achievement not defined');
+    console.log('· drowned orchard spot + POI + mirror carp + discovery achievement');
 
     // 13e3. R55 nightfall cue — fires once per run when dusk tips into night (discoverability for the
     //       R52 tier). qaNightfall resets the per-run guard, fakes in-run, fires it, and confirms a
