@@ -280,6 +280,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!eq)fail('R27 paint equip did not apply override');
     console.log(`· paint shop: ${pc} kits, override applies`);
 
+    // 13j. R28 seasonal world skin. qaForceSnow flips wx + applyWeatherVisuals which then
+    //      seasonal.enable()s. Confirm tree/stump caps + ice drift are present, then verify
+    //      flipping wx back disables seasonal cleanly.
+    await p.evaluate(()=>DS.qaForceSnow());await sleep(100);
+    const onState=await p.evaluate(()=>DS.qaSeasonalState());
+    if(!onState||!onState.enabled||onState.extras<5||onState.iceCount<5)fail(`R28 seasonal didn't enable cleanly: ${JSON.stringify(onState)}`);
+    // Flip back to clear weather + verify teardown.
+    await p.evaluate(()=>DS.qaClearWeather());await sleep(100);
+    const offState=await p.evaluate(()=>DS.qaSeasonalState());
+    if(!offState||offState.enabled||offState.extras!==0)fail(`R28 seasonal didn't disable cleanly: ${JSON.stringify(offState)}`);
+    console.log(`· seasonal world skin: ${onState.extras} winter meshes enable + tear down`);
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
