@@ -1140,6 +1140,15 @@ let _frame=0;
 let _mmZoom=1.0;
 // Hysteresis flag for night-mode visuals (sign-bloom). Toggled in the sun-arc block of loop().
 let _isNight=false;
+let _nightAnnounced=false;  // R55: one nightfall cue per run, so the night-bite tier is discoverable
+// R55: nightfall cue — fires once per run when dusk tips into night (S.on), so players discover the
+// R52 nocturnal tier + the Lantern Lure. Suppressed if the run already started after dark.
+function announceNightfall(){
+  if(!S.on||GAME_MODE!=='game'||_nightAnnounced)return false;
+  _nightAnnounced=true;
+  if(typeof pushAchToast==='function')pushAchToast({k:'NIGHTFALL',n:'The night bite is on',d:'Nocturnal species surface after dark — a Lantern Lure draws them up by day.'});
+  return true;
+}
 // Local-day key for the streak counter — UTC (via toISOString) drifts in PST/JST late hours, so use
 // the player's actual calendar day. Used only for streak math; other date-stamps stay UTC for now.
 function localDayKey(offsetDays){const d=new Date();if(offsetDays)d.setDate(d.getDate()+offsetDays);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
@@ -4728,7 +4737,8 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
       if(dayness>0.05){gl.material.color.setHex(0xfff2c0);gl.material.opacity=dayness*0.6;gl.visible=true}
       else{gl.material.color.setHex(0xaec6ff);gl.material.opacity=0.22;gl.visible=true}}
     // Night hysteresis: flip on at sunY<25 (low sun), off at sunY>35 — prevents flicker at dusk.
-    if(!_isNight&&sunY<25)_isNight=true;else if(_isNight&&sunY>35)_isNight=false;
+    if(!_isNight&&sunY<25){_isNight=true;announceNightfall()}
+    else if(_isNight&&sunY>35)_isNight=false;
     // Night sky: fade stars + moon in/out with how dark it is. Moon arcs opposite the sun.
     const nightAmt=Math.max(0,Math.min(1,(28-sunY)/40));  // 0 at high sun, ramps in as it sets
     if(scene._stars){const on=nightAmt>0.02;scene._stars.visible=on;if(on)scene._stars.material.opacity=nightAmt*0.9*(0.85+Math.sin(t*1.5)*0.15)}
@@ -4946,6 +4956,9 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
 // Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
 function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
 function startGame(){
+  // R55: if it's already dark at launch, suppress the nightfall cue (no point announcing a state
+  // the player started in); otherwise arm it so it fires once when dusk crosses into night.
+  _nightAnnounced=_isNight;
   // Daily streak — local-day key (UTC drifts in late-evening timezones). yesterday→++, today→noop,
   // gap→reset. Fires non-persistent milestone toasts at 3/14/100; real ACH at 7 + 30.
   {const today=localDayKey(),yesterday=localDayKey(-1);
@@ -6356,6 +6369,17 @@ function qaForceNight(){
   const t=Date.now()*0.001;_dayOffset=(270-((t%360)))-0;  // land the cycle at 270° (sunY≈-30)
   return !!(scene&&scene._stars&&scene._moon);
 }
+// R55: deterministically exercise the nightfall cue — reset the per-run guard, fake an in-run
+// state, clear any queued toast, fire announceNightfall(), and report whether the toast rendered.
+function qaNightfall(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;
+  _nightAnnounced=false;const wasOn=S.on;S.on=true;
+  clearTimeout(_achDrainT);_achQ.length=0;_achBusy=false;
+  const fired=announceNightfall();
+  const onceMore=announceNightfall();  // second call must be a no-op (one cue per run)
+  S.on=wasOn;
+  const t=$('ach-toast');
+  return {fired,onceMore,toast:t?/NIGHTFALL/.test(t.innerHTML):false};
+}
 // QA: spawn the Gator King drop directly (skips the gators-required gate).
 function qaSpawnGatorKing(){
   if(new URLSearchParams(location.search).get('qa')!=='1')return false;
@@ -6466,6 +6490,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaNightfall,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

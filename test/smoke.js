@@ -253,6 +253,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     }
     console.log(`· night bite — ${nb.species.length} nocturnal species + lantern lure (gate 2/0/0.5)`);
 
+    // 13e3. R55 nightfall cue — fires once per run when dusk tips into night (discoverability for the
+    //       R52 tier). qaNightfall resets the per-run guard, fakes in-run, fires it, and confirms a
+    //       second call is a no-op (one cue per run) + the NIGHTFALL toast rendered.
+    const nf=await p.evaluate(()=>DS.qaNightfall());
+    if(!nf||!nf.fired)fail('R55 nightfall cue did not fire: '+JSON.stringify(nf));
+    if(nf.onceMore)fail('R55 nightfall cue fired twice in one run (guard broken)');
+    if(!nf.toast)fail('R55 NIGHTFALL toast did not render');
+    console.log('· nightfall cue fires once per run + renders');
+
     // 13f. R24 Pier Hut. qaDockHut forces the proximity flag + opens the interior, the overlay
     //      should render the codex board, mission board, and tackle counter shortcut.
     const hutOpen=await p.evaluate(()=>DS.qaDockHut());
