@@ -261,6 +261,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log(`· daily challenge resolves (${ch.id}) + leaderboard panel renders`);
 
+    // 13k. R30 weekly tournament. isoWeekKey returns YYYY-W##; panel renders with top-20 frame
+    //      + signed-out banner when no SUPABASE config.
+    const wk=await p.evaluate(()=>DS.qaTournamentWeek());
+    if(!wk||!/^\d{4}-W\d{2}$/.test(wk))fail(`R30 isoWeekKey malformed: ${wk}`);
+    const tOpen=await p.evaluate(()=>DS.qaTournamentOpen());
+    if(!tOpen)fail('R30 tournament panel did not open');
+    const tContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Weekly Tournament')&&h.includes('Top 20')});
+    if(!tContent)fail('R30 tournament panel missing top 20 section');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log(`· weekly tournament ${wk} resolves + panel renders`);
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
