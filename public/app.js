@@ -250,6 +250,10 @@ let photoMode=false,photoCam={yaw:0,pitch:0.35,dist:22},_photoResume=false;
 // identical to before. Each consumer reads master*bus.
 let _audVol=0.6,_shakeMul=1.0;
 let _sfxVol=1.0,_engineVol=1.0,_ambientVol=1.0,_musicVol=0.8;
+// R47 · accessibility. reducedMotion zeroes camera shake + suppresses cosmetic particle spawns
+// (wet droplets). hiContrastMarkers thickens minimap/atlas markers with white outlines so they
+// read regardless of hue. Both persisted in save_v1.
+let _reducedMotion=false,_hiContrast=false;
 function loadSave(){
   try{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;const d=JSON.parse(raw);
     (d.fish||[]).forEach(n=>fishCatalog.add(n));(d.evidence||[]).forEach(n=>evidenceCatalog.add(n));
@@ -276,6 +280,8 @@ function loadSave(){
     if(Array.isArray(d.pinnedAchievements))pinnedAchievements=d.pinnedAchievements.slice(0,PIN_MAX);  // ACH defined later — picker filters unknowns at render time
     if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
     if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
+    if(typeof d.reducedMotion==='boolean')_reducedMotion=d.reducedMotion;
+    if(typeof d.hiContrast==='boolean')_hiContrast=d.hiContrast;
     if(typeof d.sfxVol==='number')_sfxVol=Math.max(0,Math.min(1,d.sfxVol));
     if(typeof d.engineVol==='number')_engineVol=Math.max(0,Math.min(1,d.engineVol));
     if(typeof d.ambientVol==='number')_ambientVol=Math.max(0,Math.min(1,d.ambientVol));
@@ -285,7 +291,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,pinnedAchievements,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,playerFlag,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,pinnedAchievements,audioVol:_audVol,shakeMul:_shakeMul,reducedMotion:_reducedMotion,hiContrast:_hiContrast,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,playerFlag,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -2394,6 +2400,7 @@ function qaCrewPresenceCount(){if(new URLSearchParams(location.search).get('qa')
 function qaSeedSpotTag(label){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;const exp=new Date(Date.now()+3600000).toISOString();crewSpotTags.list.push({id:'qa'+Date.now(),user_id:'qa-self',x:5,z:5,label:label||'QA Tag',handle:'QA',expires_at:exp});return crewSpotTags.list.length}
 function qaSpotTagCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewSpotTags.list.length}
 function qaOpenWhatsNew(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openWhatsNew();return miniActive&&_peekOpen}
+function qaA11y(rm,hc){if(new URLSearchParams(location.search).get('qa')!=='1')return null;if(rm!==undefined)setReducedMotion(rm);if(hc!==undefined)setHiContrast(hc);return{reducedMotion:_reducedMotion,hiContrast:_hiContrast}}
 function qaExportPhoto(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;const d=exportPhoto();return d&&d.length>100?d.slice(0,30):null}
 function qaSeedCrewMessage(text){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;crewMessages.list.unshift({id:'qa'+Date.now(),user_id:'qa-self',handle:'QA',text:text||'Hot bite west of the chapel',created_at:new Date().toISOString(),expires_at:new Date(Date.now()+3600000).toISOString()});refreshCrewMessagesCard();return crewMessages.list.length}
 function qaCrewMessagesCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewMessages.list.length}
@@ -2766,8 +2773,8 @@ function drawMinimap(){
       ctx.globalAlpha=0.45;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(wx,wz);ctx.stroke();ctx.globalAlpha=1;
     }
   }
-  // drop points
-  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
+  // drop points (R47: hi-contrast adds a white outline + larger radius so hue isn't the only cue)
+  dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,_hiContrast?4:3,0,Math.PI*2);ctx.fill();if(_hiContrast){ctx.strokeStyle='#fff';ctx.lineWidth=1.2;ctx.stroke()}});
   // R19 — Civilians are ALWAYS visible on the minimap as small orange beacons (was previously
   // gated on sonar reveal, which made the rescue loop opaque — players couldn't find anyone
   // without spending a ping). They pulse gently and ride at 60% alpha; sonar/scout flare bumps
@@ -2779,8 +2786,9 @@ function drawMinimap(){
   civs.forEach(c=>{if(c.userData.saved)return;
     const[cx,cz]=proj(c.position.x,c.position.z);
     ctx.fillStyle='#ff8c42';ctx.globalAlpha=reveal?1:0.6*pulse;
-    ctx.beginPath();ctx.arc(cx,cz,reveal?2.6:2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(cx,cz,reveal||_hiContrast?2.6:2,0,Math.PI*2);ctx.fill();
     if(reveal){ctx.strokeStyle='#ff8c42';ctx.globalAlpha=0.5*pulse;ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,cz,5,0,Math.PI*2);ctx.stroke()}
+    if(_hiContrast){ctx.globalAlpha=1;ctx.strokeStyle='#fff';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(cx,cz,3.6,0,Math.PI*2);ctx.stroke()}
     ctx.globalAlpha=1;
   });
   if(reveal&&evidence&&!evidence.userData.collected){const[ex,ez]=proj(evidence.position.x,evidence.position.z);ctx.fillStyle='#fbcf3b';ctx.fillRect(ex-2,ez-2,4,4)}
@@ -4156,7 +4164,7 @@ const seasonal={enabled:false,extras:[],iceDrift:[],
 const wet={cv:null,ctx:null,drops:[],enabled:true,
   init(){this.cv=$('wet-cv');if(!this.cv)return;this.ctx=this.cv.getContext('2d');this.resize();window.addEventListener('resize',()=>this.resize())},
   resize(){if(!this.cv)return;this.cv.width=innerWidth;this.cv.height=innerHeight},
-  add(n){if(!this.enabled||!this.cv)return;for(let i=0;i<n&&this.drops.length<90;i++){const r=2+Math.random()*6;this.drops.push({x:Math.random()*this.cv.width,y:Math.random()*this.cv.height*0.8,r,life:1,vy:0.2+Math.random()*0.6,streak:Math.random()<0.4?r*(4+Math.random()*8):0,jx:(Math.random()-0.5)*0.4})}},
+  add(n){if(!this.enabled||!this.cv||_reducedMotion)return;for(let i=0;i<n&&this.drops.length<90;i++){const r=2+Math.random()*6;this.drops.push({x:Math.random()*this.cv.width,y:Math.random()*this.cv.height*0.8,r,life:1,vy:0.2+Math.random()*0.6,streak:Math.random()<0.4?r*(4+Math.random()*8):0,jx:(Math.random()-0.5)*0.4})}},
   tick(){if(!this.ctx||!this.cv)return;const c=this.ctx;c.clearRect(0,0,this.cv.width,this.cv.height);
     for(let i=this.drops.length-1;i>=0;i--){const d=this.drops[i];d.life-=0.006;d.y+=d.vy;d.vy+=0.03;d.x+=d.jx;d.jx*=0.96;if(d.streak)d.streak*=0.985;
       if(d.life<=0){this.drops.splice(i,1);continue}
@@ -4746,7 +4754,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
     if(GAME_MODE==='business'){tickPh();if(dd<8){S.pc=3;endGame(true)}}
     const bh=_vCam.set(0,7+Math.abs(spd)*3,-14);bh.applyAxisAngle(_yAxis,bMesh.rotation.y);bh.add(bMesh.position);cam.position.lerp(bh,0.1);
     // Screen-shake (surge/impact) — random jitter that decays fast for a punchy, recoverable hit.
-    if(_shake>0.002){const sk=_shake*_shakeMul;cam.position.x+=(Math.random()-0.5)*sk;cam.position.y+=(Math.random()-0.5)*sk*0.6;_shake*=0.86}
+    if(_shake>0.002){const sk=_reducedMotion?0:_shake*_shakeMul;cam.position.x+=(Math.random()-0.5)*sk;cam.position.y+=(Math.random()-0.5)*sk*0.6;_shake*=0.86}
     cam.lookAt(bMesh.position.x,bMesh.position.y+1,bMesh.position.z);
     // Speed-punch FOV — widens with throttle for a GTA-style sense of speed, eased both ways.
     const wantFov=60+Math.min(13,Math.abs(spd)*9);if(Math.abs(cam.fov-wantFov)>0.04){cam.fov+=(wantFov-cam.fov)*0.07;cam.updateProjectionMatrix()}
@@ -5496,19 +5504,27 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
   const gfxTab=`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="color:#cbd5e1">Graphics Quality</span><select id="set-gfx" onchange="DS.setGfx(this.value)" style="background:rgba(8,18,38,0.8);border:1px solid rgba(251,146,60,0.25);color:#e8edf5;border-radius:6px;padding:6px 10px;font:12px 'DM Sans',sans-serif"><option value="low" ${gfxQuality==='low'?'selected':''}>Low (fastest)</option><option value="medium" ${gfxQuality==='medium'?'selected':''}>Medium</option><option value="high" ${gfxQuality==='high'?'selected':''}>High (bloom + reflections)</option></select></div>
     ${row('Screen Shake',`<input id="shake-mul" type="range" min="0" max="1.5" step="0.1" value="${_shakeMul}" oninput="DS.setShakeMul(parseFloat(this.value))" style="width:160px;accent-color:#fb923c">`)}
+    ${row('Reduced Motion <span style="color:#64748b;font-size:10px">· no shake, fewer particles</span>',`<button class="btn bx" id="set-rm" onclick="DS.setReducedMotion(!DS.a11y().reducedMotion);DS.openSettings()" style="width:auto;padding:6px 12px;margin:0;${_reducedMotion?'background:rgba(74,222,128,0.2);color:#86efac;border-color:#4ade80':''}">${_reducedMotion?'ON':'OFF'}</button>`)}
+    ${row('High-Contrast Markers <span style="color:#64748b;font-size:10px">· white outlines on the map</span>',`<button class="btn bx" id="set-hc" onclick="DS.setHiContrast(!DS.a11y().hiContrast);DS.openSettings()" style="width:auto;padding:6px 12px;margin:0;${_hiContrast?'background:rgba(74,222,128,0.2);color:#86efac;border-color:#4ade80':''}">${_hiContrast?'ON':'OFF'}</button>`)}
     ${row('Reset Save',`<button class="btn bx" onclick="if(confirm('Wipe all trophies + bait + achievements?')){try{localStorage.removeItem('dockshield_save_v1')}catch(e){};location.reload()}" style="width:auto;padding:6px 12px;margin:0;border-color:rgba(239,68,68,0.4);color:#fca5a5">WIPE</button>`)}
   `;
   // Controls tab: keybinds + the bobber-rhythm key, which didn't exist when this card was first written.
   const controlsTab=`
-    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.85;padding:6px 0">
+    <div style="font:11px 'JetBrains Mono',monospace;color:#94a3b8;line-height:1.8;padding:6px 0;max-height:220px;overflow-y:auto">
       <span style="color:#fbcf3b">W A S D</span> · Arrows — Drive<br>
       <span style="color:#fbcf3b">Space</span> — Sonar Ping / Reel (in a fight)<br>
       <span style="color:#fbcf3b">B</span> — Bobber-bounce tap (rhythm bonus during fights + Duct)<br>
       <span style="color:#fbcf3b">F</span> — Cast (when stopped) / engage Duct<br>
       <span style="color:#fbcf3b">E</span> — Dock at a bait shop<br>
       <span style="color:#fbcf3b">G</span> — Beach at a shore camp (forage)<br>
-      <span style="color:#fbcf3b">P</span> — Photo mode (orbit cam)<br>
+      <span style="color:#fbcf3b">H</span> — Enter the Pier Hut (when docked at the marina)<br>
+      <span style="color:#fbcf3b">T</span> — Drop a spot tag for your crew<br>
+      <span style="color:#fbcf3b">Tab</span> — Open the full-screen Lake Atlas<br>
+      <span style="color:#fbcf3b">C</span> — Clear the active waypoint<br>
+      <span style="color:#fbcf3b">P</span> — Photo mode (orbit cam) · <span style="color:#fbcf3b">S</span> saves a PNG<br>
       <span style="color:#fbcf3b">M</span> — Toggle minimap zoom<br>
+      <span style="color:#60d0ff">Click minimap</span> — Set a waypoint (click the boat dot to clear)<br>
+      <span style="color:#60d0ff">Click a handle</span> — Open that captain's profile<br>
       <span style="color:#fbcf3b">Esc</span> — Bail mini-game / close menus
     </div>
     ${row('Replay Tutorials',`<button class="btn bx" onclick="DS.replayTutorials();this.textContent='Will Replay'" style="width:auto;padding:6px 12px;margin:0">Clear seen flags</button>`)}
@@ -5524,6 +5540,8 @@ function openSettings(){const card=$('mini-card'),el=$('mini');if(!card||!el)ret
 function setGfx(q){gfxQuality=q;try{localStorage.setItem('dockshield_gfx',q)}catch(e){}applyGfx()}
 function setAudVol(v){_audVol=Math.max(0,Math.min(1,v));persist()}
 function setShakeMul(v){_shakeMul=Math.max(0,Math.min(1.5,v));persist()}
+function setReducedMotion(on){_reducedMotion=!!on;persist();return _reducedMotion}
+function setHiContrast(on){_hiContrast=!!on;persist();return _hiContrast}
 function setSfxVol(v){_sfxVol=Math.max(0,Math.min(1,v));persist()}
 function setEngineVol(v){_engineVol=Math.max(0,Math.min(1,v));persist()}
 function setAmbientVol(v){_ambientVol=Math.max(0,Math.min(1,v));persist()}
@@ -6293,7 +6311,7 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,setFlag:setPlayerFlag,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setReducedMotion,setHiContrast,a11y:()=>({reducedMotion:_reducedMotion,hiContrast:_hiContrast}),setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,setFlag:setPlayerFlag,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
@@ -6303,6 +6321,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
