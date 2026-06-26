@@ -54,6 +54,13 @@
 <!-- Underwater cinematic veil — fires during Deep Dock boss. Murky-blue gradient + rising
      bubbles + caustic shimmer. Sits just under the wet-cv (z-13) so droplets still read on top. -->
 <canvas id="underwater-cv" style="position:fixed;inset:0;z-index:12;pointer-events:none;display:none"></canvas>
+<!-- R42: Lake Atlas — opens via Tab. Full-screen pannable map of the whole lake. -->
+<div id="atlas-overlay" style="display:none;position:fixed;inset:0;z-index:42;background:rgba(2,6,15,0.92);align-items:center;justify-content:center;flex-direction:column;padding:20px;backdrop-filter:blur(4px)">
+  <div style="font:700 11px 'JetBrains Mono',monospace;letter-spacing:2px;color:#fbcf3b;text-transform:uppercase;margin-bottom:8px">Castor Bayou · Lake Atlas</div>
+  <canvas id="atlas-cv" width="900" height="700" style="border-radius:10px;border:1px solid rgba(251,207,59,0.35);background:rgba(8,18,38,0.9);max-width:96vw;max-height:80vh"></canvas>
+  <div id="atlas-legend" style="margin-top:10px;font:11px 'DM Sans',sans-serif;color:#cbd5e1;display:flex;flex-wrap:wrap;gap:14px;justify-content:center;max-width:900px"></div>
+  <div style="margin-top:12px;font:9px 'JetBrains Mono',monospace;color:#64748b;letter-spacing:1.5px;text-transform:uppercase">Tab or Escape to close</div>
+</div>
 <!-- Wet-screen droplet overlay — canvas2D, above the THREE.js scene, below the HUD. -->
 <canvas id="wet-cv" style="position:fixed;inset:0;z-index:13;pointer-events:none"></canvas>
 <!-- Duct proximity prompt: appears top-center when Duct is in sight + you're slow. -->

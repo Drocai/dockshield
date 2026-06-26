@@ -1998,6 +1998,8 @@ function initEngine(){
     if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
     if(e.code==='KeyH'&&S.on&&GAME_MODE==='game'&&_nearHut&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockHut()}
     if(e.code==='KeyT'&&S.on&&GAME_MODE==='game'&&!miniActive&&Math.abs(spd)<0.3){e.preventDefault();openSpotTagPrompt()}  // R38: drop a spot tag
+    if(e.code==='Tab'&&GAME_MODE==='game'&&!miniActive){e.preventDefault();if(_atlasOpen)closeAtlas();else openAtlas()}  // R42: lake atlas
+    if(e.code==='Escape'&&_atlasOpen){e.preventDefault();closeAtlas()}  // R42: close atlas
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     if(e.code==='KeyS'&&photoMode&&GAME_MODE==='game'){e.preventDefault();exportPhoto()}  // R40: save photo
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
@@ -2366,6 +2368,8 @@ function qaOpenWhatsNew(){if(new URLSearchParams(location.search).get('qa')!=='1
 function qaExportPhoto(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;const d=exportPhoto();return d&&d.length>100?d.slice(0,30):null}
 function qaSeedCrewMessage(text){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;crewMessages.list.unshift({id:'qa'+Date.now(),user_id:'qa-self',handle:'QA',text:text||'Hot bite west of the chapel',created_at:new Date().toISOString(),expires_at:new Date(Date.now()+3600000).toISOString()});refreshCrewMessagesCard();return crewMessages.list.length}
 function qaCrewMessagesCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewMessages.list.length}
+function qaOpenAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openAtlas();return _atlasOpen}
+function qaCloseAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;closeAtlas();return !_atlasOpen}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -2576,6 +2580,72 @@ const POIS=[
   {n:'Quarantine Line',x:60,z:-60,c:'#f59e0b'},
   {n:'Deep Dock',x:-50,z:-105,c:'#ef4444'}
 ];
+// R42 · Full-screen Lake Atlas. Opens via Tab; renders the entire playable lake on a 900×700
+// canvas with every named POI, shop, camp, hut, civilian, drop point, friend boat, and spot tag
+// drawn to scale + labeled. Closes on Tab or Escape.
+let _atlasOpen=false;
+function openAtlas(){
+  const ov=$('atlas-overlay');if(!ov)return;
+  _atlasOpen=true;ov.style.display='flex';
+  drawAtlas();
+  // Click outside the canvas to close. Bound once; the closure self-detaches on close.
+  if(!ov._wired){ov._wired=true;ov.addEventListener('click',e=>{if(e.target===ov)closeAtlas()})}
+}
+function closeAtlas(){
+  const ov=$('atlas-overlay');if(!ov)return;
+  _atlasOpen=false;ov.style.display='none';
+}
+function drawAtlas(){
+  const c=$('atlas-cv');if(!c||!_atlasOpen)return;
+  const ctx=c.getContext('2d'),W=c.width,H=c.height;
+  // World extent: the playable ring is roughly ±200u; render at scale that fits comfortably.
+  const worldR=210,scl=Math.min(W,H)/(worldR*2.05);const cx=W/2,cy=H/2;
+  ctx.clearRect(0,0,W,H);
+  // Water — radial gradient suggesting depth.
+  const g=ctx.createRadialGradient(cx,cy,40,cx,cy,Math.max(W,H)*0.7);
+  g.addColorStop(0,'#0e2a44');g.addColorStop(1,'#02060f');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // Shoreline ring.
+  ctx.strokeStyle='rgba(251,207,59,0.25)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,cy,worldR*scl,0,Math.PI*2);ctx.stroke();
+  // Compass.
+  ctx.fillStyle='#94a3b8';ctx.font='600 10px "JetBrains Mono", monospace';ctx.textAlign='center';
+  ctx.fillText('N',cx,20);ctx.fillText('S',cx,H-10);ctx.textAlign='left';ctx.fillText('W',6,cy+4);ctx.textAlign='right';ctx.fillText('E',W-6,cy+4);ctx.textAlign='center';
+  const proj=(wx,wz)=>[cx+wx*scl,cy+wz*scl];
+  // POIs (named landmarks).
+  POIS.forEach(p=>{const[x,y]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
+    ctx.font='600 10px "DM Sans", sans-serif';ctx.fillStyle='#cbd5e1';ctx.textAlign='left';ctx.fillText(p.n,x+7,y+3);
+  });
+  // Shops.
+  shopMeshes.forEach(m=>{const[x,y]=proj(m.position.x,m.position.z);ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/4);ctx.fillStyle='#'+m.userData.shop.col.toString(16).padStart(6,'0');ctx.fillRect(-3,-3,6,6);ctx.restore();
+    ctx.font='500 9px "DM Sans", sans-serif';ctx.fillStyle='#94a3b8';ctx.fillText('🛒 '+m.userData.shop.n,x+7,y-4);
+  });
+  // Camps.
+  if(typeof campMeshes!=='undefined')campMeshes.forEach(m=>{const[x,y]=proj(m.position.x,m.position.z);ctx.fillStyle='#a47a52';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
+    ctx.font='500 9px "DM Sans", sans-serif';ctx.fillStyle='#a47a52';ctx.fillText('🪱 '+(m.userData.camp&&m.userData.camp.n||'camp'),x+7,y+12);
+  });
+  // Pier Hut.
+  if(typeof pierHutMesh!=='undefined'&&pierHutMesh){const[x,y]=proj(pierHutMesh.position.x,pierHutMesh.position.z);ctx.fillStyle='#ffb45a';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#ffb45a';ctx.fillText('🏡 Pier Hut',x+9,y+4)}
+  // Marina dock.
+  {const[x,y]=proj(dockPos.x,dockPos.z);ctx.fillStyle='#fb923c';ctx.fillRect(x-3,y-3,6,6);ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#fb923c';ctx.fillText('⚓ Marina',x+9,y+4)}
+  // Civilians waiting.
+  if(typeof civs!=='undefined')civs.forEach(civ=>{if(civ.userData&&civ.userData.saved)return;const[x,y]=proj(civ.position.x,civ.position.z);ctx.fillStyle='#fb923c';ctx.globalAlpha=0.85;ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1});
+  // Drop points (missions).
+  if(typeof dropPoints!=='undefined')dropPoints.forEach(dp=>{if(!dp.userData||!dp.userData.active||dp.userData.qa)return;const[x,y]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();ctx.font='600 9px "DM Sans", sans-serif';ctx.fillStyle='#cbd5e1';ctx.fillText(dp.userData.type.n||'',x+6,y-4)});
+  // R37 — Crew presence (friends' live boats).
+  if(typeof crewPresence!=='undefined')crewPresence.list.forEach(p=>{const[x,y]=proj(p.pos_x,p.pos_z);ctx.fillStyle='rgba(74,222,128,0.35)';ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fill();ctx.fillStyle='#4ade80';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();ctx.font='600 10px "DM Sans", sans-serif';ctx.fillStyle='#86efac';ctx.fillText(p.handle,x+8,y+4)});
+  // R38 — Spot tags.
+  if(typeof crewSpotTags!=='undefined')crewSpotTags.list.forEach(t=>{const[x,y]=proj(t.x,t.z);ctx.strokeStyle='#a16207';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-10);ctx.stroke();ctx.fillStyle='#fbcf3b';ctx.beginPath();ctx.moveTo(x,y-10);ctx.lineTo(x+7,y-7);ctx.lineTo(x,y-4);ctx.closePath();ctx.fill();ctx.font='600 9px "DM Sans", sans-serif';ctx.fillStyle='#fde68a';ctx.fillText('🚩 '+t.label,x+10,y-4)});
+  // Player boat — last so it's on top.
+  if(typeof bMesh!=='undefined'&&bMesh){const[x,y]=proj(bMesh.position.x,bMesh.position.z);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();const hx=x+Math.sin(bMesh.rotation.y)*-14,hy=y+Math.cos(bMesh.rotation.y)*-14;ctx.strokeStyle='#fb923c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(hx,hy);ctx.stroke();ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#fb923c';ctx.fillText('YOU',x+8,y+18)}
+  // Legend.
+  const lg=$('atlas-legend');if(lg){lg.innerHTML=`
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fb923c;vertical-align:middle"></span> Marina / Mission</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ffb45a;vertical-align:middle"></span> Pier Hut</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fb923c;opacity:0.85;vertical-align:middle"></span> Civilian</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#4ade80;vertical-align:middle"></span> Crew (live)</span>
+    <span><span style="display:inline-block;width:8px;height:8px;background:#fbcf3b;clip-path:polygon(0 0,100% 50%,0 100%);vertical-align:middle"></span> Spot tag</span>
+    <span><span style="display:inline-block;width:8px;height:8px;background:#a47a52;border-radius:50%;vertical-align:middle"></span> Shore camp</span>
+  `;}
+}
 function drawMinimap(){
   const c=$('mm-canvas');if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height,scl=0.42*_mmZoom;  // scale: world u -> px (× zoom toggle)
@@ -4484,6 +4554,7 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
   if(scene._mist){const m=scene._mist;m.rotation.y=t*0.01;m.position.y=2+Math.sin(t*0.2)*0.4}
   // Minimap update
   if(S.on&&$('mm-canvas')){drawMinimap()}
+  if(_atlasOpen)drawAtlas();  // R42: keep the atlas live while open
   // Named fishing-spot indicator — fades in when the boat enters a spot's radius.
   if(S.on&&GAME_MODE==='game'&&!photoMode){const sp=fishingSpot(bMesh.position),tag=$('spot-tag');if(tag){if(sp){tag.textContent='~ '+sp.n+' ~';tag.style.display='block'}else tag.style.display='none'}}
   updateMissionQueue();
@@ -6136,7 +6207,8 @@ openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
 dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
+openAtlas,closeAtlas,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

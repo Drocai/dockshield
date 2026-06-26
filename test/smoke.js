@@ -339,6 +339,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(cmCount<1)fail(`R41 qaCrewMessagesCount returned ${cmCount}`);
     console.log(`· crew chat seed + count (${cmCount})`);
 
+    // 13s. R42 lake atlas — opens via DS.qaOpenAtlas, the overlay flips to display flex.
+    const atlasOn=await p.evaluate(()=>DS.qaOpenAtlas());
+    if(!atlasOn)fail('R42 atlas did not open');
+    const atlasVisible=await p.evaluate(()=>{const el=document.getElementById('atlas-overlay');return el&&el.style.display==='flex'});
+    if(!atlasVisible)fail('R42 atlas overlay not visible');
+    const atlasOff=await p.evaluate(()=>DS.qaCloseAtlas());
+    if(!atlasOff)fail('R42 atlas did not close');
+    console.log('· lake atlas open + close');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
