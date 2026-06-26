@@ -220,17 +220,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!uwOff)fail('Underwater cinematic did not disable cleanly');
     console.log('· underwater cinematic enables + disables');
 
-    // 13d. R22 cloud-sync wiring. With no SUPABASE_URL/ANON_KEY in this smoke harness,
-    //      the auth-pill should stay hidden, the DS hooks should still resolve, and
-    //      authState() should report signed-out. Belt-and-braces against accidentally
-    //      shipping a half-wired auth UI.
+    // 13d. R22/R48 cloud-sync wiring. The static env.js fallback now ships a publishable
+    //      Supabase config, so cloudReady() is true and the auth-pill is VISIBLE in the
+    //      signed-out "sign in to sync" state. The DS hooks resolve and authState reports
+    //      signed-out (no session restored in the smoke harness).
     const hasHooks=await p.evaluate(()=>typeof DS.signIn==='function'&&typeof DS.signOut==='function'&&typeof DS.authState==='function');
     if(!hasHooks)fail('R22 DS auth hooks missing');
-    const pillHidden=await p.evaluate(()=>{const el=document.getElementById('auth-pill');return el&&el.style.display==='none'});
-    if(!pillHidden)fail('R22 auth-pill should be hidden when SUPABASE config is absent');
+    const ready=await p.evaluate(()=>DS.cloudReady());
+    if(!ready)fail('R48 cloudReady should be true via the env.js fallback config');
     const offline=await p.evaluate(()=>{const s=DS.authState();return s.signedIn===false&&s.email===null});
     if(!offline)fail('R22 authState should report signed-out when no session restored');
-    console.log('· cloud sync hooks present + auth-pill gated on config');
+    console.log('· cloud config active via env.js fallback + signed-out state');
 
     // 13e. R23 snow weather + new species count. Confirms FISH.length grew from 13 → 17 and that
     //      forcing Snow weather lights up the snowFlakes particle layer + sets S.wx.c correctly.

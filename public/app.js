@@ -311,6 +311,11 @@ loadSave();
 const _AUTH_KEY='dockshield_auth_v1';
 const auth={user:null,token:null,refresh:null,exp:0};
 let _cloudPulled=false,_cloudPushT=null,_cloudPushing=false;
+// R48: hoisted here (was declared near refreshAuthPill far below). When cloudReady() is true
+// — which it now is on the live deploy via the env.js fallback — refreshAuthPill() runs at boot
+// (initEngine → refreshTrophyPeek) and reads _authPillNote. Declaring it down by the function
+// left it in the temporal dead zone at boot, crashing the whole IIFE before DS was assigned.
+let _authPillNote='';
 function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
 function authRestore(){
   try{const raw=localStorage.getItem(_AUTH_KEY);if(!raw)return;const d=JSON.parse(raw);
@@ -6079,7 +6084,8 @@ async function openChallengePanel(){
 // R22 · sign-in pill renderer. Hidden when no Supabase config (offline-only deploy).
 // Three states: (1) not signed in → "Sign in to sync"  (2) signed in → "✓ synced · email" + Sign out
 // (3) email sent → "Check your email" (set after successful send, cleared on auth state change).
-let _authPillNote='';
+// _authPillNote is declared up near the auth state block (R48) — must be initialized before the
+// boot-time refreshAuthPill() call now that cloudReady() is true on the live deploy.
 function refreshAuthPill(){
   const el=$('auth-pill');if(!el)return;
   if(!cloudReady()){el.style.display='none';return}
@@ -6312,7 +6318,7 @@ function qaSetTabHidden(hidden){
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setReducedMotion,setHiContrast,a11y:()=>({reducedMotion:_reducedMotion,hiContrast:_hiContrast}),setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,setFlag:setPlayerFlag,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
-signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
+signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),cloudReady,
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
