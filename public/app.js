@@ -2373,6 +2373,7 @@ function qaOpenAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')r
 function qaCloseAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;closeAtlas();return !_atlasOpen}
 function qaSetWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;setWaypoint(50,-50,'QA Waypoint','#fbcf3b');return _waypoint!==null}
 function qaClearWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;clearWaypoint();return _waypoint===null}
+function qaMinimapClick(px,py){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const mm=$('mm-canvas');if(!mm)return false;const ev=new MouseEvent('click',{bubbles:true,clientX:mm.getBoundingClientRect().left+(px||80),clientY:mm.getBoundingClientRect().top+(py||80)});mm.dispatchEvent(ev);return _waypoint!==null}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5112,6 +5113,20 @@ document.body.classList.add('mode-'+GAME_MODE);
 // boat() call later overwrites this with the actual hero once a class is chosen.
 document.body.classList.add('hero-reel');
 initEngine();wet.init();underwater.init();refreshTrophyPeek();applyGfx();
+// R44: minimap click → waypoint. Inverse of the drawMinimap projection: pixel → world coord.
+// Click within ~6px of the center dot clears any active waypoint instead of setting a new one.
+(function(){const mm=$('mm-canvas');if(!mm)return;mm.addEventListener('click',e=>{
+  if(!bMesh||!S.on||miniActive)return;
+  const r=mm.getBoundingClientRect(),W=mm.width,H=mm.height;
+  const px=(e.clientX-r.left)*(W/r.width)-W/2,py=(e.clientY-r.top)*(H/r.height)-H/2;
+  // proj forward: dx*scl, dz*scl, recenter camX/camZ added back. drawMinimap uses camX/camZ = boat
+  // position when zoomed in, 0 otherwise. We reverse using the same logic.
+  const scl=0.42*_mmZoom,camX=_mmZoom>1.5?bMesh.position.x:0,camZ=_mmZoom>1.5?bMesh.position.z:0;
+  const wx=px/scl+camX,wz=py/scl+camZ;
+  // Clear when clicking near the center (boat dot).
+  if(Math.hypot(px,py)<8){if(_waypoint)clearWaypoint();return}
+  setWaypoint(wx,wz,'Marker','#fbcf3b');
+})})();
 // R36: delegated click for the .prof-link spans so any handle in any overlay opens the
 // profile panel. Bound once at boot so panel rebuilds don't need to re-wire.
 document.addEventListener('click',e=>{const t=e.target&&e.target.closest&&e.target.closest('.prof-link');if(!t)return;const h=t.dataset.handle;if(!h||!cloudReady())return;e.stopPropagation();openProfilePanel({handle:h})});
@@ -6249,6 +6264,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
