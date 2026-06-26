@@ -344,7 +344,7 @@ async function authSignOut(){
       if(typeof drainPendingChallenges==='function')drainPendingChallenges();
       if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
       if(typeof syncProfile==='function')syncProfile();
-      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence()});
+      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending();if(typeof startCrewPresence==='function')startCrewPresence();if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll()});
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -566,6 +566,55 @@ function startPresenceUpsert(){
   _presenceUpsertT=setInterval(()=>{if(S.on)syncProfile({position:true})},5000);
 }
 function stopPresenceUpsert(){if(_presenceUpsertT){clearInterval(_presenceUpsertT);_presenceUpsertT=null}}
+
+// R38 · player-dropped spot tags (24h TTL, shared with friends).
+// crewSpotTags.list holds tags from the local player + all friends. Polled at the same
+// 24s cadence as crewPresence to amortize the round-trip (friends move more often than they
+// drop tags). 'T' key during a run drops a tag at the boat with a prompt for the label.
+const crewSpotTags={list:[]};
+let _spotTagPollT=null;
+async function dropSpotTag(label){
+  if(!cloudReady()||!auth.token||!auth.user||!bMesh)return false;
+  const clean=String(label||'').trim().slice(0,36);if(!clean)return false;
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const body={user_id:auth.user.id,x:Math.round(bMesh.position.x*100)/100,z:Math.round(bMesh.position.z*100)/100,label:clean,handle};
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/spot_tags`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
+    body:JSON.stringify(body)});if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'TAGGED',n:clean,d:'Your crew can see this on their minimap.'});fetchCrewSpotTags();return true}return false;
+  }catch(e){return false}
+}
+async function fetchCrewSpotTags(){
+  if(!cloudReady()||!auth.token||!auth.user)return;
+  // Tags from me + my friends. RLS handles the public-read; we just narrow by user_id.
+  const ids=[auth.user.id,...friends.list.map(f=>f.uid)].map(u=>`"${u}"`).join(',');
+  if(!ids.length){crewSpotTags.list=[];return}
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/spot_tags?user_id=in.(${ids})&select=id,user_id,x,z,label,handle,expires_at&order=created_at.desc&limit=40`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
+    if(!r.ok)return;crewSpotTags.list=await r.json()||[];
+  }catch(e){}
+}
+function startCrewSpotTagsPoll(){
+  if(_spotTagPollT||!cloudReady()||!auth.user)return;
+  fetchCrewSpotTags();
+  _spotTagPollT=setInterval(()=>fetchCrewSpotTags(),24000);
+}
+function stopCrewSpotTagsPoll(){if(_spotTagPollT){clearInterval(_spotTagPollT);_spotTagPollT=null}crewSpotTags.list=[]}
+function openSpotTagPrompt(){
+  if(!cloudReady()||!auth.user||!bMesh||!S.on){if(typeof pushAchToast==='function')pushAchToast({k:'TAG',n:'Can’t drop here',d:cloudReady()?(auth.user?'Take the boat out first.':'Sign in to drop a tag.'):'Cloud sync isn’t configured.'});return}
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">Drop a Spot Tag</div>
+    <div class="m-title">Mark this water.</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Pin the spot you’re sitting on with a short label. Your friends see it on their minimap for 24 hours.</div>
+    <div style="margin:14px 0 6px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase">Label · ≤ 36 chars</div>
+    <input id="spot-label" type="text" maxlength="36" placeholder="Bowfin pool · west of the chapel" style="width:100%;background:rgba(8,18,38,0.6);border:1px solid rgba(251,207,59,0.3);color:#e8edf5;border-radius:6px;padding:9px 12px;font:13px 'DM Sans',sans-serif;box-sizing:border-box">
+    <button class="btn bp" id="spot-drop" style="margin-top:12px;background:linear-gradient(135deg,#fbcf3b,#d97706)">DROP TAG</button>
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Cancel</button>`;
+  setTimeout(()=>{const i=$('spot-label');if(i)i.focus()},50);
+  const submit=async()=>{const i=$('spot-label');if(!i)return;const ok=await dropSpotTag(i.value);if(ok){closePeek();sfx('click')}};
+  $('spot-drop').onclick=submit;
+  const i=$('spot-label');if(i)i.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submit()}};
+}
 async function searchHandles(q){
   if(!cloudReady()||!q||q.length<2)return [];
   const qq=encodeURIComponent('*'+q.toLowerCase()+'*');
@@ -1918,6 +1967,7 @@ function initEngine(){
     }
     if(e.code==='KeyG'&&S.on&&GAME_MODE==='game'&&_nearCamp&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockCamp(_nearCamp.userData.camp,_nearCamp)}
     if(e.code==='KeyH'&&S.on&&GAME_MODE==='game'&&_nearHut&&Math.abs(spd)<0.25&&!miniActive){e.preventDefault();dockHut()}
+    if(e.code==='KeyT'&&S.on&&GAME_MODE==='game'&&!miniActive&&Math.abs(spd)<0.3){e.preventDefault();openSpotTagPrompt()}  // R38: drop a spot tag
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
     // Escape routes by context: catch dialog -> closeCatch, trophy peek -> closePeek, otherwise
@@ -2279,6 +2329,8 @@ function qaInviteUrl(){if(new URLSearchParams(location.search).get('qa')!=='1')r
 function qaOpenProfile(handle){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openProfilePanel({handle:handle||'self'});return miniActive&&_peekOpen}
 function qaSeedCrewPresence(){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;crewPresence.list=[{user_id:'qa1',handle:'TestCrew1',boat:'The Reel',pos_x:12,pos_z:-30,seen_at:new Date().toISOString()},{user_id:'qa2',handle:'TestCrew2',boat:'Lilly Loch',pos_x:-40,pos_z:60,seen_at:new Date().toISOString()}];return crewPresence.list.length}
 function qaCrewPresenceCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewPresence.list.length}
+function qaSeedSpotTag(label){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;const exp=new Date(Date.now()+3600000).toISOString();crewSpotTags.list.push({id:'qa'+Date.now(),user_id:'qa-self',x:5,z:5,label:label||'QA Tag',handle:'QA',expires_at:exp});return crewSpotTags.list.length}
+function qaSpotTagCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewSpotTags.list.length}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -2514,6 +2566,14 @@ function drawMinimap(){
   // Sonar range overlay — only while a ping is still in flight (within 1.5s of fire).
   const now=Date.now()*0.001;
   if(S.lastPing&&now-S.lastPing<1.5){const age=now-S.lastPing,[bx2,bz2]=proj(bMesh.position.x,bMesh.position.z);ctx.strokeStyle='#60d0ff';ctx.globalAlpha=Math.max(0,1-age/1.5)*0.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx2,bz2,25*scl*(0.4+age*0.7),0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1}
+  // R38 — Spot tags from the player + friends. Yellow flags with a tiny pole.
+  if(typeof crewSpotTags!=='undefined'&&crewSpotTags.list.length){
+    for(const t of crewSpotTags.list){
+      const[tx,tz]=proj(t.x,t.z);
+      ctx.strokeStyle='#a16207';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(tx,tz);ctx.lineTo(tx,tz-7);ctx.stroke();
+      ctx.fillStyle='#fbcf3b';ctx.beginPath();ctx.moveTo(tx,tz-7);ctx.lineTo(tx+5,tz-5);ctx.lineTo(tx,tz-3);ctx.closePath();ctx.fill();
+    }
+  }
   // R37 — Crew presence dots. Friends who've upserted a position within the last 3 min show as
   // green dots under the player's own marker so the run feels populated.
   if(typeof crewPresence!=='undefined'&&crewPresence.list.length){
@@ -4545,6 +4605,7 @@ function startGame(){
   if(typeof stopUnlockFeedPoll==='function')stopUnlockFeedPoll();  // R26: pause cross-device feed while running
   if(typeof startPresenceUpsert==='function')startPresenceUpsert();  // R37: live position upserts
   if(typeof startCrewPresence==='function')startCrewPresence();      // R37: poll friend positions
+  if(typeof startCrewSpotTagsPoll==='function')startCrewSpotTagsPoll();  // R38: poll spot tags
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -5920,6 +5981,7 @@ openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+dropSpotTag,openSpotTag:openSpotTagPrompt,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
