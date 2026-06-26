@@ -348,6 +348,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!atlasOff)fail('R42 atlas did not close');
     console.log('· lake atlas open + close');
 
+    // 13t. R43 waypoint set/clear via DS hooks.
+    const wpOn=await p.evaluate(()=>DS.qaSetWaypoint());
+    if(!wpOn)fail('R43 setWaypoint did not stick');
+    const wpOff=await p.evaluate(()=>DS.qaClearWaypoint());
+    if(!wpOff)fail('R43 clearWaypoint did not clear');
+    console.log('· atlas waypoint set + clear');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
