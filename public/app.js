@@ -4956,6 +4956,10 @@ function loop(){requestAnimationFrame(loop);const t=Date.now()*0.001;_frame++;
 // stays a clean 0..100 everywhere else. hullCap field is reframed as effective armor.
 // Total damage resistance from: tackle box (existing), armor upgrade, and Lilly's hero ability.
 function hullResist(){const base=Math.min(0.5,(eqBox().hullCap-100)/170);const armor=eqUp('armor').resist||0;const heroBonus=S.bc==='pontoon'?0.1:0;return Math.min(0.6,base+armor+heroBonus)}
+// R57: daily first-run bonus — a small bait grant the first time you launch each day, scaling
+// gently with the current streak (capped at +30) so returning daily compounds without trivialising
+// the economy. Pure function so the smoke can assert the curve.
+function dailyBonusAmount(streakCount){return 20+Math.min(Math.max(streakCount||0,0),10)*3}
 function startGame(){
   // R55: if it's already dark at launch, suppress the nightfall cue (no point announcing a state
   // the player started in); otherwise arm it so it fires once when dusk crosses into night.
@@ -4970,7 +4974,10 @@ function startGame(){
      if(streak.lastPlayed===yesterday)streak.count=(streak.count||0)+1;
      else streak.count=1;
      streak.lastPlayed=today;streak.max=Math.max(streak.max||0,streak.count);
+     // R57: first run of the day pays out a bait bonus that scales with the streak.
+     const dailyBonus=dailyBonusAmount(streak.count);bait+=dailyBonus;
      persist();
+     pushAchToast({k:'DAILY BONUS',n:`+${dailyBonus} bait`,d:`Day ${streak.count} — first cast of the day is on us.`});
      if(broken)pushAchToast({n:'STREAK RESET',d:`Your ${wasCount}-day streak broke. Welcome back.`});
      if(streak.count===3||streak.count===14||streak.count===100)pushAchToast({n:'STREAK!',d:streak.count+' days at the Bayou.'});
      if(streak.count>=7)onUnlock('streak_7');
@@ -6372,6 +6379,7 @@ function qaForceNight(){
 }
 // R55: deterministically exercise the nightfall cue — reset the per-run guard, fake an in-run
 // state, clear any queued toast, fire announceNightfall(), and report whether the toast rendered.
+function qaDailyBonus(n){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return dailyBonusAmount(n)}
 function qaNightfall(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;
   _nightAnnounced=false;const wasOn=S.on;S.on=true;
   clearTimeout(_achDrainT);_achQ.length=0;_achBusy=false;
@@ -6491,6 +6499,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaNightfall,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaNightBite,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaA11y,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaNightfall,qaDailyBonus,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
