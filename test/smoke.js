@@ -379,6 +379,19 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     console.log('· winter music + sfx cues route cleanly');
     await p.evaluate(()=>DS.qaClearWeather());
 
+    // 13x. R47 accessibility toggles — round-trip both flags via the QA hook + the public setters.
+    const a11yOn=await p.evaluate(()=>DS.qaA11y(true,true));
+    if(!a11yOn||!a11yOn.reducedMotion||!a11yOn.hiContrast)fail(`R47 a11y toggles did not enable: ${JSON.stringify(a11yOn)}`);
+    const a11yOff=await p.evaluate(()=>DS.qaA11y(false,false));
+    if(!a11yOff||a11yOff.reducedMotion||a11yOff.hiContrast)fail(`R47 a11y toggles did not disable: ${JSON.stringify(a11yOff)}`);
+    // Controls tab should now list the new keys.
+    await p.evaluate(()=>{DS.openSettings()});await sleep(80);
+    await p.evaluate(()=>{const b=[...document.querySelectorAll('.set-tab')].find(x=>x.dataset.tab==='controls');if(b)b.click()});await sleep(80);
+    const keymap=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Lake Atlas')&&h.includes('spot tag')});
+    if(!keymap)fail('R47 controls tab missing the new keybinds');
+    await p.keyboard.press('Escape');await sleep(120);
+    console.log('· a11y toggles persist + controls keymap refreshed');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
