@@ -355,6 +355,12 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!wpOff)fail('R43 clearWaypoint did not clear');
     console.log('· atlas waypoint set + clear');
 
+    // 13u. R44 minimap click → waypoint. Synthesize a click 20px off-center on the minimap;
+    //      confirms the click handler picks up the event, projects to world, and sets a waypoint.
+    const mmOk=await p.evaluate(()=>{const ok=DS.qaMinimapClick(100,100);if(ok)DS.clearWaypoint();return ok});
+    if(!mmOk)fail('R44 minimap click did not set a waypoint');
+    console.log('· minimap click sets waypoint');
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
