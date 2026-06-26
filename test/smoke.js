@@ -261,6 +261,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log(`· daily challenge resolves (${ch.id}) + leaderboard panel renders`);
 
+    // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
+    //      module and that the cross-device toast renders with the correct kicker.
+    const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
+    if(!hooks||hooks.post!=='function'||hooks.poll!=='function'||hooks.start!=='function'||hooks.stop!=='function')fail('R26 broadcast hooks missing');
+    const bcOk=await p.evaluate(()=>DS.qaFakeBroadcast());
+    if(!bcOk)fail('R26 fake broadcast toast did not fire');
+    await sleep(150);
+    const bcToast=await p.evaluate(()=>{const t=document.getElementById('ach-toast');return t&&t.innerHTML.includes('AROUND THE BAYOU')&&t.innerHTML.includes('Test Unlock')});
+    if(!bcToast)fail('R26 broadcast toast kicker missing');
+    console.log('· cross-device unlock broadcast hooks + toast wire');
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
