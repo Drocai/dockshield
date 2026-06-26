@@ -244,8 +244,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     //      should render the codex board, mission board, and tackle counter shortcut.
     const hutOpen=await p.evaluate(()=>DS.qaDockHut());
     if(!hutOpen)fail('R24 Pier Hut did not open via qaDockHut');
-    const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')});
-    if(!hutContent)fail('R24 Pier Hut interior missing sections');
+    const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')&&h.includes('Trophy Wall')&&h.includes('Run Journal')&&h.includes('Jukebox')});
+    if(!hutContent)fail('R24/R29 Pier Hut interior missing sections (now expects Trophy Wall, Run Journal, Jukebox)');
     await p.keyboard.press('Escape');await sleep(200);
     console.log('· pier hut interior opens with codex + missions + tackle counter');
 
