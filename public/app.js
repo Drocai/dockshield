@@ -562,7 +562,12 @@ async function fetchCrewPresence(){
     {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
     if(!r.ok)return;const rows=await r.json();const now=Date.now();
     (rows||[]).forEach(p=>{if(p.flag)setFlagFor(p.handle,p.flag)});  // R45
-    crewPresence.list=(rows||[]).filter(p=>p.pos_x!=null&&p.pos_z!=null&&p.seen_at&&(now-new Date(p.seen_at).getTime())<_PRESENCE_FRESH_MS);
+    // R46: chirp once when a friend first appears in the fresh-list (online for first time
+    // this session). Tracked by a Set of already-seen uids so the cue doesn't fire on every poll.
+    const fresh=(rows||[]).filter(p=>p.pos_x!=null&&p.pos_z!=null&&p.seen_at&&(now-new Date(p.seen_at).getTime())<_PRESENCE_FRESH_MS);
+    if(!crewPresence._seenUids)crewPresence._seenUids=new Set();
+    for(const p of fresh){if(!crewPresence._seenUids.has(p.user_id)){crewPresence._seenUids.add(p.user_id);if(typeof sfx==='function')sfx('online')}}
+    crewPresence.list=fresh;
     crewPresence.lastFetch=now;
   }catch(e){}
 }
@@ -592,7 +597,7 @@ async function dropSpotTag(label){
   const body={user_id:auth.user.id,x:Math.round(bMesh.position.x*100)/100,z:Math.round(bMesh.position.z*100)/100,label:clean,handle};
   try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/spot_tags`,{method:'POST',
     headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
-    body:JSON.stringify(body)});if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'TAGGED',n:clean,d:'Your crew can see this on their minimap.'});fetchCrewSpotTags();return true}return false;
+    body:JSON.stringify(body)});if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'TAGGED',n:clean,d:'Your crew can see this on their minimap.'});if(typeof sfx==='function')sfx('tag');fetchCrewSpotTags();return true}return false;
   }catch(e){return false}
 }
 async function fetchCrewSpotTags(){
@@ -638,7 +643,7 @@ async function postCrewMessage(text){
   try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/crew_messages`,{method:'POST',
     headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
     body:JSON.stringify({user_id:auth.user.id,handle,text:clean})});
-    if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'POSTED',n:'Crew message sent',d:'Friends will see it for 24 hours.'});fetchCrewMessages();return true}return false;
+    if(r.ok){if(typeof pushAchToast==='function')pushAchToast({k:'POSTED',n:'Crew message sent',d:'Friends will see it for 24 hours.'});if(typeof sfx==='function')sfx('post');fetchCrewMessages();return true}return false;
   }catch(e){return false}
 }
 async function fetchCrewMessages(){
@@ -2617,7 +2622,7 @@ let _atlasOpen=false;
 // Cleared via C key, on endGame, or when the player gets within 8u of the target.
 let _waypoint=null;
 let _atlasHits=[];  // pre-computed per-render: {x,y (canvas px), wx, wz (world), r, label, color}
-function setWaypoint(wx,wz,label,color){_waypoint={x:wx,z:wz,label:label||'Waypoint',color:color||'#fbcf3b'};if(typeof pushAchToast==='function')pushAchToast({k:'WAYPOINT',n:label||'Marker set',d:'Follow the arrow on the minimap.'});if(typeof sfx==='function')sfx('click')}
+function setWaypoint(wx,wz,label,color){_waypoint={x:wx,z:wz,label:label||'Waypoint',color:color||'#fbcf3b'};if(typeof pushAchToast==='function')pushAchToast({k:'WAYPOINT',n:label||'Marker set',d:'Follow the arrow on the minimap.'});if(typeof sfx==='function')sfx('navset')}
 function clearWaypoint(){_waypoint=null;if(typeof sfx==='function')sfx('click')}
 function openAtlas(){
   const ov=$('atlas-overlay');if(!ov)return;
@@ -3795,7 +3800,13 @@ function sfx(type){
   const ctx=_audioCtx,now=ctx.currentTime;
   // rate-limit per type so rapid triggers (e.g. clicker) don't machine-gun
   if(_sndGate[type]&&now<_sndGate[type])return;_sndGate[type]=now+0.04;
-  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth'],quack:[620,300,.16,'square'],dig:[160,90,.07,'square'],croak:[110,70,.16,'sawtooth'],swat:[400,120,.06,'square'],net:[300,500,.1,'sine'],splash_big:[200,60,.22,'sine']}[type]||[300,360,.08,'sine'];
+  const spec={cast:[300,520,.12,'sine'],catch:[440,760,.16,'triangle'],ping:[680,1150,.14,'sine'],rescue:[460,720,.18,'triangle'],win:[520,880,.22,'triangle'],hit:[150,60,.18,'square'],click:[300,360,.05,'square'],legendary:[300,1400,.5,'sawtooth'],quack:[620,300,.16,'square'],dig:[160,90,.07,'square'],croak:[110,70,.16,'sawtooth'],swat:[400,120,.06,'square'],net:[300,500,.1,'sine'],splash_big:[200,60,.22,'sine'],
+    // R46 · social cues — distinct timbres so the player learns them by ear.
+    tag:    [520, 760,.10,'triangle'],   // bright upward chirp · spot tag dropped
+    post:   [440, 660,.10,'triangle'],   // softer two-tone · crew chat posted
+    online: [780, 980,.08,'sine'],       // little bell-ping · friend came online
+    navset: [600, 480,.09,'sine']        // downward chirp · waypoint set
+  }[type]||[300,360,.08,'sine'];
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=spec[3];
   o.frequency.setValueAtTime(spec[0],now);o.frequency.exponentialRampToValueAtTime(Math.max(30,spec[1]),now+spec[2]);
   const peak=Math.max(0.0001,0.06*_audVol*_sfxVol);
@@ -3951,7 +3962,9 @@ const catalyst={lastTick:Date.now()*0.001,nextRand:0,
 const MUSIC_MODES={
   explore:{freqs:[110,165,220],lfo:0.07,detune:[-5,3,-2],filtHi:1100,filtLo:550},
   chase:  {freqs:[130,196,311],lfo:0.18,detune:[-8,5,-3], filtHi:1450,filtLo:700},
-  golden: {freqs:[87,220,330], lfo:0.04,detune:[-3,2,-1], filtHi:1300,filtLo:600}
+  golden: {freqs:[87,220,330], lfo:0.04,detune:[-3,2,-1], filtHi:1300,filtLo:600},
+  // R46 · winter — D minor with a wider voicing + cooler filter. Active when wx.c='Snow'.
+  winter: {freqs:[73,147,220], lfo:0.05,detune:[-2,1,-1], filtHi:900, filtLo:380}
 };
 const music={on:false,osc:[],gain:null,filt:null,lfo:null,mode:'explore',
   ensure(){
@@ -3991,6 +4004,7 @@ const music={on:false,osc:[],gain:null,filt:null,lfo:null,mode:'explore',
     // Auto-pick the chase mode whenever a Duct chase / boss / Gator King fight is live.
     if((DUCT&&DUCT.engaged)||_bossActive||_gkActive)this.setMode('chase');
     else if(_goldenFlashUntil&&Date.now()<_goldenFlashUntil)this.setMode('golden');
+    else if(S.wx&&S.wx.c==='Snow')this.setMode('winter');   // R46: winter pad while it's snowing
     else this.setMode('explore');
     // Music ducks slightly in heavy weather + when a fight overlay is up so it doesn't compete.
     const fightDuck=_catchOpen||miniActive?0.35:1;

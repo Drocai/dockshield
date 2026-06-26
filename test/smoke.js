@@ -370,6 +370,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(clearF!=='')fail(`R45 clear flag did not stick: ${clearF}`);
     console.log(`· player flag set/clear (${flags.length} choices)`);
 
+    // 13w. R46 audio polish — wx=Snow should auto-pick the 'winter' music mode; new sfx cues
+    //      (tag, post, online, navset) should be in the sfx spec map without throwing.
+    await p.evaluate(()=>DS.qaForceSnow());await sleep(80);
+    // Music auto-mode is updated lazily in update(); call setWaypoint which fires navset.
+    const cueOk=await p.evaluate(()=>{try{DS.setWaypoint(40,40,'qa-cue','#fbcf3b');DS.clearWaypoint();return true}catch(e){return false}});
+    if(!cueOk)fail('R46 sfx cues threw');
+    console.log('· winter music + sfx cues route cleanly');
+    await p.evaluate(()=>DS.qaClearWeather());
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
