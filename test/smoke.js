@@ -740,6 +740,37 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // Let the loop run to exercise water-normal staggering, engine audio, duct tick
     await sleep(800);
     await p.screenshot({path:path.join(os.tmpdir(),'dockshield_smoke.png')}).catch(()=>{});
+
+    // 48. R50 — boot-crash guard for the signed-in + invite path. This is the EXACT shape that
+    //     white-screened the live site three times during cloud activation: a returning signed-in
+    //     player opening an invite URL runs refreshTrophyPeek() at boot → popInvitePromptIfPending
+    //     → openProfilePanel() SYNCHRONOUSLY, which reads overlay/auth state (_authPillNote,
+    //     _peekGen, _peekOpen). If any of those is declared below the boot call it sits in the
+    //     temporal dead zone and the IIFE throws before DS is assigned (or, for the async
+    //     openProfilePanel path, surfaces as a boot-time unhandled rejection). Seed a valid session
+    //     + an invite for a DIFFERENT user and assert the IIFE completes (DS defined) with no
+    //     "before initialization" pageerror. This would have caught all three TDZ regressions.
+    //     Runs last, on its own page, after closing the main page so the heavy WebGL render loop
+    //     + cloud pollers aren't starving this fresh load (a second context on the busy browser
+    //     was timing out on 'load').
+    await p.close().catch(()=>{});
+    const bp=await (await b.newContext({viewport:{width:1280,height:800},ignoreHTTPSErrors:true})).newPage();
+    const bootErrs=[];
+    bp.on('pageerror',e=>bootErrs.push(String(e)));
+    await bp.addInitScript(()=>{try{
+      localStorage.setItem('dockshield_save_v1',JSON.stringify({tutorialSeen:{cast:true,duct:true,forage:true,boatworks:true,intro:true}}));
+      localStorage.setItem('dockshield_auth_v1',JSON.stringify({access_token:'qa-fake-token',refresh_token:'qa-fake-refresh',expires_at:Math.floor(Date.now()/1000)+86400,user:{id:'00000000-0000-0000-0000-000000000001',email:'qa@dockshield.test'}}));
+    }catch(e){}});
+    await bp.goto(`http://127.0.0.1:${PORT}/?qa=1&invite=00000000-0000-0000-0000-000000000099`,{waitUntil:'domcontentloaded',timeout:30000});
+    const bootDS=await bp.waitForFunction(()=>typeof DS!=='undefined',{timeout:15000}).then(()=>true).catch(()=>false);
+    if(!bootDS)fail('R50 boot crashed on the signed-in + invite path — DS never defined (likely a TDZ regression). pageerrors: '+JSON.stringify(bootErrs.slice(0,4)));
+    const tdz=bootErrs.find(e=>/before initialization|is not defined/.test(e));
+    if(tdz)fail('R50 boot-time ReferenceError on the invite path: '+tdz);
+    // Confirm the seeded session actually restored — otherwise popInvitePromptIfPending bails at
+    // boot and the test stops exercising the synchronous openProfilePanel path it's meant to guard.
+    const restored=await bp.evaluate(()=>DS.authState&&DS.authState().signedIn===true);
+    if(!restored)fail('R50 seeded session did not restore (authState not signed-in) — guard no longer exercises the boot path');
+    console.log('· boot survives the signed-in + invite path (TDZ regression guard)');
   }finally{
     await b.close();srv.close();
   }
