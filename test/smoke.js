@@ -301,6 +301,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(crewOff!==false)fail('R34 crew-only filter did not flip off');
     console.log('· tournament tabs + crew filter persist');
 
+    // 13n. R37 crew presence — seed two synthetic friends into crewPresence.list and verify
+    //      qaCrewPresenceCount reflects them. The minimap render uses the same list, so this
+    //      assertion exercises the in-memory state path even without a Supabase round-trip.
+    const seeded=await p.evaluate(()=>DS.qaSeedCrewPresence());
+    if(seeded!==2)fail(`R37 qaSeedCrewPresence expected 2, got ${seeded}`);
+    const count=await p.evaluate(()=>DS.qaCrewPresenceCount());
+    if(count!==2)fail(`R37 qaCrewPresenceCount expected 2, got ${count}`);
+    console.log(`· crew presence seeds + renders (${count})`);
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
