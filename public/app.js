@@ -316,6 +316,13 @@ let _cloudPulled=false,_cloudPushT=null,_cloudPushing=false;
 // (initEngine → refreshTrophyPeek) and reads _authPillNote. Declaring it down by the function
 // left it in the temporal dead zone at boot, crashing the whole IIFE before DS was assigned.
 let _authPillNote='';
+// Overlay generation token — same TDZ hazard as _authPillNote above. The boot-time
+// refreshTrophyPeek() (line ~5170) can reach popInvitePromptIfPending → openProfilePanel,
+// which reads _peekGen; declaring it down by closePeek left it in the temporal dead zone for
+// returning signed-in users opening an invite URL. Hoisted here so it's live before any boot
+// refresh. Bumped on every closePeek; the async social panels capture it at open and drop a
+// post-fetch render if it moved (another overlay superseded them).
+let _peekGen=0;
 function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
 function authRestore(){
   try{const raw=localStorage.getItem(_AUTH_KEY);if(!raw)return;const d=JSON.parse(raw);
@@ -5279,12 +5286,10 @@ function dockCamp(camp,mesh){
   card.querySelectorAll('.forage-row').forEach(btn=>btn.onclick=()=>{const fn=btn.dataset.fn;_peekOpen=false;const c2=$('mini-card');if(c2)c2.innerHTML='';if(typeof mini[fn]==='function')mini[fn](mesh)});
   el.style.display='flex';
 }
-// R48 · overlay generation token. Bumped on every closePeek (and read by the async social
-// panels). A panel that awaits a network fetch captures the gen at open; if the gen changed
-// by the time the fetch resolves, another overlay superseded it, so the late render is dropped
-// instead of clobbering whatever is now on screen. Fixes: open daily challenge → close → open
-// tournament → the challenge's late leaderboard response was overwriting the tournament panel.
-let _peekGen=0;
+// closePeek bumps _peekGen (declared up by _authPillNote to dodge the boot-time TDZ) so the
+// async social panels can drop a post-fetch render that a newer overlay has superseded. Fixes:
+// open daily challenge → close → open tournament → the challenge's late leaderboard response
+// was overwriting the tournament panel.
 function closePeek(){const el=$('mini');if(el)el.style.display='none';const card=$('mini-card');if(card)card.innerHTML='';miniActive=false;_peekOpen=false;_peekGen++;
   // If we paused a live run to dock at a shop, resume it now.
   if(_shopResumeRun){_shopResumeRun=false;S.on=true}}

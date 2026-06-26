@@ -321,7 +321,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     //      entries (Paint Shop, Winter, Pier Hut, Cloud, Friends).
     const wOpen=await p.evaluate(()=>DS.qaOpenWhatsNew());
     if(!wOpen)fail('R39 What’s New panel did not open');
-    const wContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes("What's New")&&h.includes('Boat Paint Shop')&&h.includes('Friends & Crew')});
+    // innerHTML serializes text-node '&' back to '&amp;', so assert against the escaped form
+    // (the panel renders the literal 'Friends & Crew' to the player — only the read-back escapes).
+    const wContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes("What's New")&&h.includes('Boat Paint Shop')&&h.includes('Friends &amp; Crew')});
     if(!wContent)fail('R39 What’s New panel missing entries');
     await p.keyboard.press('Escape');await sleep(150);
     console.log("· what's new panel + entries render");
