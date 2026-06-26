@@ -249,6 +249,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await p.keyboard.press('Escape');await sleep(200);
     console.log('· pier hut interior opens with codex + missions + tackle counter');
 
+    // 13g. R25 daily challenge — todaysChallenge() returns a deterministic id+label+hint;
+    //      openChallenge renders the leaderboard panel. With no SUPABASE config the panel
+    //      still renders the offline banner.
+    const ch=await p.evaluate(()=>DS.qaChallengeToday());
+    if(!ch||!ch.id||!ch.label||!ch.day)fail('R25 todaysChallenge missing fields');
+    const chOpen=await p.evaluate(()=>DS.qaChallengeOpen());
+    if(!chOpen)fail('R25 challenge panel did not open');
+    const chContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Daily Challenge')&&h.includes('Leaderboard')});
+    if(!chContent)fail('R25 challenge panel missing leaderboard section');
+    await p.keyboard.press('Escape');await sleep(200);
+    console.log(`· daily challenge resolves (${ch.id}) + leaderboard panel renders`);
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.

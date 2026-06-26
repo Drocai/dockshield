@@ -116,6 +116,8 @@
     <button class="btn bx game-only" id="trophy-peek-btn" onclick="DS.peekTrophies()" style="display:none">View Trophy Board</button>
     <!-- R22: cloud sync pill — JS populates it based on auth state. Hidden when no SUPABASE config. -->
     <div id="auth-pill" class="game-only" style="display:none;margin:6px auto 0;text-align:center;padding:5px 12px;background:rgba(96,208,255,0.10);border:1px solid rgba(96,208,255,0.30);border-radius:18px;color:#93c5fd;font:600 11px 'JetBrains Mono',monospace;letter-spacing:1px;width:fit-content;max-width:90%"></div>
+    <!-- R25: today's challenge card — JS populates it. Tap to open detail + leaderboard. -->
+    <div id="challenge-card" class="game-only" style="display:none;margin:8px 0 0;padding:8px 10px;background:linear-gradient(135deg,rgba(251,146,60,0.10),rgba(251,207,59,0.06));border:1px solid rgba(251,146,60,0.35);border-radius:8px;cursor:pointer;font:600 11px 'DM Sans',sans-serif;color:#e8edf5"></div>
     <div class="game-only" style="display:flex;gap:6px;margin-top:6px">
       <button class="btn bx" onclick="DS.openShop()" style="flex:1">Tackle Shop</button>
       <button class="btn bx" id="codex-btn" onclick="DS.openCodex()" style="flex:1">Fish Codex</button>
