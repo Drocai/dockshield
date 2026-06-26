@@ -220,6 +220,18 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!uwOff)fail('Underwater cinematic did not disable cleanly');
     console.log('· underwater cinematic enables + disables');
 
+    // 13d. R22 cloud-sync wiring. With no SUPABASE_URL/ANON_KEY in this smoke harness,
+    //      the auth-pill should stay hidden, the DS hooks should still resolve, and
+    //      authState() should report signed-out. Belt-and-braces against accidentally
+    //      shipping a half-wired auth UI.
+    const hasHooks=await p.evaluate(()=>typeof DS.signIn==='function'&&typeof DS.signOut==='function'&&typeof DS.authState==='function');
+    if(!hasHooks)fail('R22 DS auth hooks missing');
+    const pillHidden=await p.evaluate(()=>{const el=document.getElementById('auth-pill');return el&&el.style.display==='none'});
+    if(!pillHidden)fail('R22 auth-pill should be hidden when SUPABASE config is absent');
+    const offline=await p.evaluate(()=>{const s=DS.authState();return s.signedIn===false&&s.email===null});
+    if(!offline)fail('R22 authState should report signed-out when no session restored');
+    console.log('· cloud sync hooks present + auth-pill gated on config');
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
