@@ -28,6 +28,9 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// R29: bounded log of the most recent 5 runs for the Pier Hut "Run Journal" section.
+// Each entry: {ts:'YYYY-MM-DDThh:mm', score, civs, civsTotal, outcome, sec, hero}.
+let runHistory=[];
 // Bayou Files — the 5-chapter lore arc. Holds the ids of chapters the player has unlocked by
 // hitting progression milestones (launch, first rescue, evidence, the deep water, full extraction).
 let bayouFiles=new Set();
@@ -234,6 +237,7 @@ function loadSave(){
     if(d.paintOwned){Object.keys(paintOwned).forEach(h=>{if(Array.isArray(d.paintOwned[h]))paintOwned[h]=d.paintOwned[h].filter(k=>!!PAINT_KITS[k])})}
     if(d.equippedPaint){Object.keys(equippedPaint).forEach(h=>{if(typeof d.equippedPaint[h]==='string')equippedPaint[h]=d.equippedPaint[h]})}
     if(d.boatUpgrades){Object.keys(boatUpgrades).forEach(h=>{if(d.boatUpgrades[h])Object.assign(boatUpgrades[h],d.boatUpgrades[h])})}
+    if(Array.isArray(d.runHistory))runHistory=d.runHistory.slice(0,5);
     if(typeof d.audioVol==='number')_audVol=Math.max(0,Math.min(1,d.audioVol));
     if(typeof d.shakeMul==='number')_shakeMul=Math.max(0,Math.min(1.5,d.shakeMul));
     if(typeof d.sfxVol==='number')_sfxVol=Math.max(0,Math.min(1,d.sfxVol));
@@ -245,7 +249,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -1838,23 +1842,61 @@ function openHutInterior(){
   const caught=fishCatalog.size,total=FISH.length;
   const speciesGrid=FISH.map(f=>{const got=fishCatalog.has(f.n);return `<span title="${got?(f.f||''):'Not yet caught'}" style="display:inline-flex;align-items:center;gap:3px;background:rgba(8,18,38,0.55);border:1px solid ${got?(RARE_COLOR[f.r]||'#475569'):'rgba(80,80,80,0.35)'};border-radius:4px;padding:2px 6px;font:11px 'DM Sans',sans-serif;color:${got?RARE_COLOR[f.r]:'#475569'}">${got?f.e:'🔒'}<span style="${got?'':'opacity:0.65'}">${got?f.n:'?'}</span></span>`}).join(' ');
   const activeMissions=(typeof dropPoints!=='undefined'?dropPoints:[]).filter(d=>d&&!d.userData.done).map(d=>{const u=d.userData,t=u.type||{n:'Mission',col:0xfb923c},dist=Math.round(bMesh.position.distanceTo(d.position));return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(3,7,18,0.55);border-left:3px solid #${t.col.toString(16).padStart(6,'0')};border-radius:4px;margin:4px 0;font:12px 'DM Sans',sans-serif"><span><b>${t.n}</b><span style="color:#94a3b8;font-size:10px"> · ${u.n||'unknown'}</span></span><span style="color:#fb923c;font:600 10px 'JetBrains Mono',monospace">${dist}u</span></div>`}).join('')||`<div style="padding:10px 12px;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No active missions right now — drive the lake to spawn drop points.</div>`;
+  // R29 — Trophy Wall. Mounts bestFish prominently + the top 3 species by their first-landing
+  // score (from speciesLog). Empty state when there's nothing to mount yet.
+  const sortedTrophies=Object.entries(speciesLog||{}).sort((a,b)=>(b[1].score||0)-(a[1].score||0)).slice(0,3);
+  const trophyMount=(name,score,spot,date,rare,emoji)=>`<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;padding:8px 4px;background:rgba(8,18,38,0.55);border-radius:6px;border-bottom:3px solid ${rare||'#475569'}"><div style="font-size:24px">${emoji||'🐟'}</div><div style="font-weight:700;font-size:11px;color:${rare||'#cbd5e1'};margin-top:2px;max-width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div><div style="font:700 11px 'JetBrains Mono',monospace;color:#fde68a">${score||'—'}</div><div style="font:9px 'JetBrains Mono',monospace;color:#64748b;margin-top:1px;text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${spot||''}${date?' · '+(String(date).slice(0,10)):''}</div></div>`;
+  const trophyWallHTML=(bestFish||sortedTrophies.length)
+    ? `${bestFish?`<div style="display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,rgba(255,210,63,0.10),rgba(251,146,60,0.06));border:1px solid rgba(255,210,63,0.4);border-radius:6px;padding:10px 12px;margin-bottom:6px"><div style="font-size:34px">${bestFish.e||'🏆'}</div><div style="flex:1;min-width:0"><div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase">All-time biggest</div><div style="color:${RARE_COLOR[bestFish.r]||'#e8edf5'};font-weight:700;font-size:14px">${bestFish.n} <span style="color:#fde68a">+${bestFish.s}</span></div><div style="font:9px 'JetBrains Mono',monospace;color:#64748b">${bestFish.date||''}</div></div></div>`:''}
+       ${sortedTrophies.length?`<div style="display:flex;gap:6px;margin-top:4px">${sortedTrophies.map(([name,info])=>{const f=FISH.find(x=>x.n===name);return trophyMount(name,info.score,info.spot,info.date,f&&RARE_COLOR[f.r],f&&f.e)}).join('')}</div>`:''}`
+    : `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">Mount your first catch to start the wall.</div>`;
+  // R29 — Run Journal. Most recent 5 runs with score, civs, outcome, duration.
+  const journalRow=(r,i)=>{const t=new Date(r.ts);const d=t.toISOString().slice(0,10);const today=new Date().toISOString().slice(0,10);const dateLabel=d===today?'TODAY':d;const outCol=r.outcome==='WRECKED'?'#ef4444':r.outcome==='FULL EXTRACTION'?'#10b981':r.outcome==='LIFEGUARD'?'#86efac':'#fb923c';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(3,7,18,0.5);border-left:3px solid ${outCol};border-radius:4px;margin:3px 0;font:11px 'DM Sans',sans-serif">
+      <span style="width:36px;font:9px 'JetBrains Mono',monospace;color:#64748b">${dateLabel}</span>
+      <span style="flex:1;min-width:0;color:#e8edf5"><b>${r.hero||'—'}</b> <span style="color:#64748b">· ${r.outcome||'—'}</span></span>
+      <span style="color:#10b981;font:600 10px 'JetBrains Mono',monospace">${r.civs}/${r.civsTotal||'?'}</span>
+      <span style="color:#fbcf3b;font:700 11px 'JetBrains Mono',monospace">${r.score}</span>
+      <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${Math.floor((r.sec||0)/60)}:${String((r.sec||0)%60).padStart(2,'0')}</span>
+    </div>`};
+  const journalHTML=(runHistory&&runHistory.length)
+    ? runHistory.map(journalRow).join('')
+    : `<div style="padding:12px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No runs yet. The page is blank until you take a boat out.</div>`;
+  // R29 — Jukebox. Buttons preview each ambient music mode. The "auto" button restores normal
+  // mode detection (the loop reassigns the right mode based on chase/golden/explore conditions).
+  const currentMode=(typeof music!=='undefined'&&music.mode)||'explore';
+  const modes=[['explore','EXPLORE','#60d0ff'],['chase','CHASE','#fb923c'],['golden','GOLDEN','#fbcf3b']];
+  const jukeRow=`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    ${modes.map(([id,lbl,col])=>`<button class="btn bx hut-juke" data-m="${id}" style="background:${currentMode===id?col:'rgba(3,7,18,0.5)'};color:${currentMode===id?'#02060f':col};border:1px solid ${col}55;width:auto;padding:5px 10px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px">${lbl}</button>`).join('')}
+    <button class="btn bx" onclick="DS.toggleMute()" style="width:auto;padding:5px 10px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;${muted?'opacity:0.6':''}">${muted?'🔇':'🔊'}</button>
+  </div>`;
   card.innerHTML=`<div class="m-kicker" style="color:#ffb45a">Pier Hut</div>
     <div class="m-title">Inside.</div>
     <!-- Interior diorama — gradient + lantern glow + wood-grain feel. -->
     <div style="position:relative;background:linear-gradient(180deg,#3a2a18 0%,#241910 100%);border-radius:8px;padding:14px;margin:8px 0">
       <!-- soft amber haze from a hearth -->
       <div style="position:absolute;inset:0;background:radial-gradient(circle at 20% 30%,rgba(255,180,90,0.18),transparent 60%);border-radius:8px;pointer-events:none"></div>
-      <!-- Codex board (wall) -->
-      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,207,59,0.3);border-radius:6px;padding:10px 12px">
+      <!-- Trophy Wall (R29) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(255,210,63,0.3);border-radius:6px;padding:10px 12px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Trophy Wall</div>
+        ${trophyWallHTML}
+      </div>
+      <!-- Codex Board -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,207,59,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
         <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Codex Board · ${caught} / ${total} species</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow-y:auto">${speciesGrid}</div>
       </div>
-      <!-- Mission board -->
+      <!-- Mission Board -->
       <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(251,146,60,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
         <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase;margin-bottom:6px">Mission Board · active</div>
         <div style="max-height:120px;overflow-y:auto">${activeMissions}</div>
       </div>
-      <!-- Tackle counter -->
+      <!-- Run Journal (R29) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#93c5fd;text-transform:uppercase;margin-bottom:6px">Run Journal · last ${Math.min(runHistory.length,5)} runs</div>
+        <div style="max-height:140px;overflow-y:auto">${journalHTML}</div>
+      </div>
+      <!-- Tackle Counter -->
       <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.3);border-radius:6px;padding:10px 12px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <div>
           <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#60d0ff;text-transform:uppercase">Tackle Counter</div>
@@ -1862,8 +1904,21 @@ function openHutInterior(){
         </div>
         <button class="btn bp" onclick="DS.closePeek();setTimeout(()=>DS.openShop(),100)" style="width:auto;padding:7px 14px;margin:0;background:linear-gradient(135deg,#3b82f6,#1d4ed8);font-size:11px">OPEN SHOP</button>
       </div>
+      <!-- Jukebox (R29) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(167,139,250,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase;margin-bottom:6px">Jukebox · ambient mode</div>
+        ${jukeRow}
+        <div style="font-size:10px;color:#64748b;margin-top:6px;line-height:1.4">Locks the music until you launch — the run-loop picks chase/golden/explore automatically once you're on the water.</div>
+      </div>
     </div>
     <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Leave the Hut</button>`;
+  // Jukebox click handlers — wire after innerHTML is set.
+  card.querySelectorAll('.hut-juke').forEach(b=>b.onclick=()=>{
+    const m=b.dataset.m;if(typeof music==='undefined'||!music)return;
+    if(!music.on)music.ensure();
+    if(music.on)music.setMode(m);
+    sfx('click');openHutInterior();
+  });
   el.style.display='flex';
   if(typeof sfx==='function')sfx('click');
 }
@@ -4251,6 +4306,12 @@ function endGame(won){S.on=false;S.played=true;document.body.classList.remove('p
   }else if(medalEl)medalEl.style.display='none';
   // Tiered discount earned from run quality
   S.outcome=rl;S.discount=DISC[rl]||0;
+  // R29 — push compact run summary to the journal (last-5, ring buffer). Stamped with the local
+  // date+time; the journal shows them with relative-time style ("just now" / "today" / date).
+  try{const elapsed=(Date.now()-S.t0)/1000|0;
+    runHistory.unshift({ts:new Date().toISOString(),score:S.score,civs:S.civsSaved,civsTotal:S.civsTotal,outcome:rl,sec:elapsed,hero:(BT[S.bc]&&BT[S.bc].n)||S.bc});
+    if(runHistory.length>5)runHistory.length=5;persist();
+  }catch(e){}
   // Business-mode pipeline: paint the discount banner + send the analytics_events row.
   // In game mode, s5 still shows score/civilians/evidence but no discount/plans bridge.
   if(GAME_MODE==='business'){paintDiscount();saveData(won)}
