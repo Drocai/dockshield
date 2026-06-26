@@ -283,6 +283,7 @@ async function authSignOut(){
       try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}
       if(typeof cloudSync==='function')cloudSync('login');
       if(typeof drainPendingChallenges==='function')drainPendingChallenges();
+      if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -411,6 +412,58 @@ async function fetchLeaderboard(dayKey){
     {headers:{apikey:C.SUPABASE_ANON_KEY}});
     if(!r.ok)return [];return await r.json();
   }catch(e){return []}
+}
+// ============================================================================
+
+// === R26 · Cross-device unlock broadcasts ==================================
+// REST-poll based "feels live" feed. When the local player unlocks an achievement,
+// we POST a row to public.unlock_broadcasts. While the marina overlay (s1) is up,
+// we poll the last few rows every 12s and pop a cross-device toast for each new
+// row (someone else, since our last seen ts). No Supabase JS SDK, no WebSocket —
+// keeps the zero-dep contract. Trade-off: up to 12s of latency vs WS realtime.
+let _bcPollT=null,_bcLastTs=null,_bcSelfSentIds=new Set();
+async function postUnlockBroadcast(achId,achMeta){
+  if(!auth.token||!auth.user||!cloudReady())return false;
+  // Avoid double-broadcast if onUnlock fires twice in the same session (achievements set
+  // already gates that, but belt-and-braces).
+  const stamp=achId+'/'+(auth.user.id||'self');if(_bcSelfSentIds.has(stamp))return false;_bcSelfSentIds.add(stamp);
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const body={user_id:auth.user.id,ach_id:achId,ach_name:(achMeta&&achMeta.n)||achId,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc};
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/unlock_broadcasts`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
+    body:JSON.stringify(body)});return r.ok}catch(e){return false}
+}
+async function pollUnlockFeed(){
+  if(!cloudReady())return;
+  // First poll = bootstrap _bcLastTs from the latest row so we don't dump 20 historical
+  // toasts on session start. Subsequent polls fetch rows newer than the last seen ts.
+  const since=_bcLastTs?`&ts=gt.${encodeURIComponent(_bcLastTs)}`:'';
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/unlock_broadcasts?select=ach_id,ach_name,handle,boat,ts${since}&order=ts.desc&limit=12`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});
+    if(!r.ok)return;const rows=await r.json();if(!Array.isArray(rows)||!rows.length)return;
+    // newest ts wins for the watermark
+    _bcLastTs=rows[0].ts;
+    if(since===''){return}  // bootstrap — don't toast historical rows
+    const meHandle=playerHandle||(auth.user&&auth.user.email&&auth.user.email.split('@')[0])||'';
+    // Toast oldest→newest so the visual order matches reality.
+    rows.slice().reverse().forEach(r=>{
+      if(r.handle===meHandle)return;  // skip our own broadcasts — local toast already fired
+      pushAchToast({k:'AROUND THE BAYOU',n:r.ach_name,d:`${r.handle}${r.boat?` · ${r.boat}`:''} just unlocked it.`});
+    });
+  }catch(e){}
+}
+function startUnlockFeedPoll(){
+  if(_bcPollT||!cloudReady())return;
+  pollUnlockFeed();  // bootstrap watermark immediately
+  _bcPollT=setInterval(()=>pollUnlockFeed(),12000);
+}
+function stopUnlockFeedPoll(){if(_bcPollT){clearInterval(_bcPollT);_bcPollT=null}}
+// Marina-mode lifecycle — the poll runs while s1 is visible so we don't waste budget
+// during a run. _isMarinaUp tracks current visibility, flipped on every refresh tick.
+function tickUnlockFeedLifecycle(){
+  const up=$('s1')&&!$('s1').classList.contains('off');
+  if(up&&!_bcPollT)startUnlockFeedPoll();
+  else if(!up&&_bcPollT)stopUnlockFeedPoll();
 }
 // ============================================================================
 
@@ -3508,6 +3561,9 @@ function pushAchToast(a){
 function onUnlock(id){
   if(!ACH[id]||achievements.has(id))return;
   achievements.add(id);persist();pushAchToast(ACH[id]);sfx('win');
+  // R26: broadcast this unlock to other signed-in devices via unlock_broadcasts (no-op when
+  // signed out — local unlock toast still fired above). Network errors are intentionally swallowed.
+  if(typeof postUnlockBroadcast==='function')postUnlockBroadcast(id,ACH[id]);
 }
 // Top-center "NEW BEST" pill — fires when S.runBest is replaced. Non-blocking, mute-friendly.
 function flashRunBest(f){
@@ -3982,6 +4038,7 @@ function startGame(){
   S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;S._castedThisRun=false;
   unlockChapter('ch1');  // first launch opens the case file
   if(typeof snapshotChallenge==='function')snapshotChallenge();  // R25: snapshot pre-run state for today's daily challenge
+  if(typeof stopUnlockFeedPoll==='function')stopUnlockFeedPoll();  // R26: pause cross-device feed while running
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -4858,6 +4915,7 @@ function refreshTrophyPeek(){
   const fb=$('f-boatname');if(fb&&!fb.value&&boatName)fb.value=boatName;
   refreshAuthPill();
   refreshChallengeCard();
+  if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
 }
 
 // R25 · today's daily challenge tile on the s1 marina. Always visible in game mode (works
@@ -5028,6 +5086,8 @@ function qaUnderwater(on){if(new URLSearchParams(location.search).get('qa')!=='1
 function qaForceSnow(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:5,wd:90,g:6,c:'Snow',t:30,v:4000};applyWeatherVisuals();const el=$('wx-c');if(el)el.textContent='Snow 30°F';return S.wx.c==='Snow'&&snowFlakes.length>0}
 function qaChallengeOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openChallengePanel();return miniActive&&_peekOpen}
 function qaChallengeToday(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return todaysChallenge()}
+function qaBroadcastHooks(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{post:typeof postUnlockBroadcast,poll:typeof pollUnlockFeed,start:typeof startUnlockFeedPoll,stop:typeof stopUnlockFeedPoll}}
+function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
 function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
@@ -5138,6 +5198,6 @@ function qaSetTabHidden(hidden){
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
