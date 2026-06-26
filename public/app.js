@@ -2000,6 +2000,7 @@ function initEngine(){
     if(e.code==='KeyT'&&S.on&&GAME_MODE==='game'&&!miniActive&&Math.abs(spd)<0.3){e.preventDefault();openSpotTagPrompt()}  // R38: drop a spot tag
     if(e.code==='Tab'&&GAME_MODE==='game'&&!miniActive){e.preventDefault();if(_atlasOpen)closeAtlas();else openAtlas()}  // R42: lake atlas
     if(e.code==='Escape'&&_atlasOpen){e.preventDefault();closeAtlas()}  // R42: close atlas
+    if(e.code==='KeyC'&&S.on&&GAME_MODE==='game'&&!miniActive&&_waypoint){e.preventDefault();clearWaypoint()}  // R43: clear waypoint
     if(e.code==='KeyP'&&GAME_MODE==='game'){e.preventDefault();togglePhoto()}
     if(e.code==='KeyS'&&photoMode&&GAME_MODE==='game'){e.preventDefault();exportPhoto()}  // R40: save photo
     if(e.code==='KeyM'&&GAME_MODE==='game'&&S.on&&!miniActive&&!_peekOpen){e.preventDefault();_mmZoom=_mmZoom>1.5?1.0:2.2;sfx('click')}
@@ -2370,6 +2371,8 @@ function qaSeedCrewMessage(text){if(new URLSearchParams(location.search).get('qa
 function qaCrewMessagesCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewMessages.list.length}
 function qaOpenAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openAtlas();return _atlasOpen}
 function qaCloseAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;closeAtlas();return !_atlasOpen}
+function qaSetWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;setWaypoint(50,-50,'QA Waypoint','#fbcf3b');return _waypoint!==null}
+function qaClearWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;clearWaypoint();return _waypoint===null}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -2584,12 +2587,26 @@ const POIS=[
 // canvas with every named POI, shop, camp, hut, civilian, drop point, friend boat, and spot tag
 // drawn to scale + labeled. Closes on Tab or Escape.
 let _atlasOpen=false;
+// R43 · waypoint set by clicking an atlas marker. {x,z,label,color} or null.
+// Cleared via C key, on endGame, or when the player gets within 8u of the target.
+let _waypoint=null;
+let _atlasHits=[];  // pre-computed per-render: {x,y (canvas px), wx, wz (world), r, label, color}
+function setWaypoint(wx,wz,label,color){_waypoint={x:wx,z:wz,label:label||'Waypoint',color:color||'#fbcf3b'};if(typeof pushAchToast==='function')pushAchToast({k:'WAYPOINT',n:label||'Marker set',d:'Follow the arrow on the minimap.'});if(typeof sfx==='function')sfx('click')}
+function clearWaypoint(){_waypoint=null;if(typeof sfx==='function')sfx('click')}
 function openAtlas(){
   const ov=$('atlas-overlay');if(!ov)return;
   _atlasOpen=true;ov.style.display='flex';
   drawAtlas();
   // Click outside the canvas to close. Bound once; the closure self-detaches on close.
   if(!ov._wired){ov._wired=true;ov.addEventListener('click',e=>{if(e.target===ov)closeAtlas()})}
+  // R43 · click a marker on the canvas to set a waypoint. Bound once on the canvas.
+  const cv=$('atlas-cv');
+  if(cv&&!cv._wpWired){cv._wpWired=true;cv.addEventListener('click',e=>{
+    const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*(cv.width/r.width),my=(e.clientY-r.top)*(cv.height/r.height);
+    let best=null,bestD=Infinity;
+    for(const h of _atlasHits){const d=Math.hypot(h.x-mx,h.y-my);if(d<h.r&&d<bestD){best=h;bestD=d}}
+    if(best){setWaypoint(best.wx,best.wz,best.label,best.color);drawAtlas()}
+  })}
 }
 function closeAtlas(){
   const ov=$('atlas-overlay');if(!ov)return;
@@ -2600,6 +2617,7 @@ function drawAtlas(){
   const ctx=c.getContext('2d'),W=c.width,H=c.height;
   // World extent: the playable ring is roughly ±200u; render at scale that fits comfortably.
   const worldR=210,scl=Math.min(W,H)/(worldR*2.05);const cx=W/2,cy=H/2;
+  _atlasHits=[];  // R43: rebuild click-target list every render
   ctx.clearRect(0,0,W,H);
   // Water — radial gradient suggesting depth.
   const g=ctx.createRadialGradient(cx,cy,40,cx,cy,Math.max(W,H)*0.7);
@@ -2613,27 +2631,37 @@ function drawAtlas(){
   // POIs (named landmarks).
   POIS.forEach(p=>{const[x,y]=proj(p.x,p.z);ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
     ctx.font='600 10px "DM Sans", sans-serif';ctx.fillStyle='#cbd5e1';ctx.textAlign='left';ctx.fillText(p.n,x+7,y+3);
+    _atlasHits.push({x,y,wx:p.x,wz:p.z,r:14,label:p.n,color:p.c});
   });
   // Shops.
   shopMeshes.forEach(m=>{const[x,y]=proj(m.position.x,m.position.z);ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/4);ctx.fillStyle='#'+m.userData.shop.col.toString(16).padStart(6,'0');ctx.fillRect(-3,-3,6,6);ctx.restore();
     ctx.font='500 9px "DM Sans", sans-serif';ctx.fillStyle='#94a3b8';ctx.fillText('🛒 '+m.userData.shop.n,x+7,y-4);
+    _atlasHits.push({x,y,wx:m.position.x,wz:m.position.z,r:14,label:m.userData.shop.n,color:'#'+m.userData.shop.col.toString(16).padStart(6,'0')});
   });
   // Camps.
   if(typeof campMeshes!=='undefined')campMeshes.forEach(m=>{const[x,y]=proj(m.position.x,m.position.z);ctx.fillStyle='#a47a52';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
-    ctx.font='500 9px "DM Sans", sans-serif';ctx.fillStyle='#a47a52';ctx.fillText('🪱 '+(m.userData.camp&&m.userData.camp.n||'camp'),x+7,y+12);
+    const cname=m.userData.camp&&m.userData.camp.n||'camp';
+    ctx.font='500 9px "DM Sans", sans-serif';ctx.fillStyle='#a47a52';ctx.fillText('🪱 '+cname,x+7,y+12);
+    _atlasHits.push({x,y,wx:m.position.x,wz:m.position.z,r:14,label:cname,color:'#a47a52'});
   });
   // Pier Hut.
-  if(typeof pierHutMesh!=='undefined'&&pierHutMesh){const[x,y]=proj(pierHutMesh.position.x,pierHutMesh.position.z);ctx.fillStyle='#ffb45a';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#ffb45a';ctx.fillText('🏡 Pier Hut',x+9,y+4)}
+  if(typeof pierHutMesh!=='undefined'&&pierHutMesh){const[x,y]=proj(pierHutMesh.position.x,pierHutMesh.position.z);ctx.fillStyle='#ffb45a';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#ffb45a';ctx.fillText('🏡 Pier Hut',x+9,y+4);_atlasHits.push({x,y,wx:pierHutMesh.position.x,wz:pierHutMesh.position.z,r:14,label:'Pier Hut',color:'#ffb45a'})}
   // Marina dock.
-  {const[x,y]=proj(dockPos.x,dockPos.z);ctx.fillStyle='#fb923c';ctx.fillRect(x-3,y-3,6,6);ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#fb923c';ctx.fillText('⚓ Marina',x+9,y+4)}
+  {const[x,y]=proj(dockPos.x,dockPos.z);ctx.fillStyle='#fb923c';ctx.fillRect(x-3,y-3,6,6);ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#fb923c';ctx.fillText('⚓ Marina',x+9,y+4);_atlasHits.push({x,y,wx:dockPos.x,wz:dockPos.z,r:14,label:'Marina',color:'#fb923c'})}
   // Civilians waiting.
   if(typeof civs!=='undefined')civs.forEach(civ=>{if(civ.userData&&civ.userData.saved)return;const[x,y]=proj(civ.position.x,civ.position.z);ctx.fillStyle='#fb923c';ctx.globalAlpha=0.85;ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1});
   // Drop points (missions).
-  if(typeof dropPoints!=='undefined')dropPoints.forEach(dp=>{if(!dp.userData||!dp.userData.active||dp.userData.qa)return;const[x,y]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();ctx.font='600 9px "DM Sans", sans-serif';ctx.fillStyle='#cbd5e1';ctx.fillText(dp.userData.type.n||'',x+6,y-4)});
+  if(typeof dropPoints!=='undefined')dropPoints.forEach(dp=>{if(!dp.userData||!dp.userData.active||dp.userData.qa)return;const[x,y]=proj(dp.position.x,dp.position.z);const dcol='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.fillStyle=dcol;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();ctx.font='600 9px "DM Sans", sans-serif';ctx.fillStyle='#cbd5e1';ctx.fillText(dp.userData.type.n||'',x+6,y-4);_atlasHits.push({x,y,wx:dp.position.x,wz:dp.position.z,r:14,label:dp.userData.type.n||'Mission',color:dcol})});
   // R37 — Crew presence (friends' live boats).
   if(typeof crewPresence!=='undefined')crewPresence.list.forEach(p=>{const[x,y]=proj(p.pos_x,p.pos_z);ctx.fillStyle='rgba(74,222,128,0.35)';ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fill();ctx.fillStyle='#4ade80';ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();ctx.font='600 10px "DM Sans", sans-serif';ctx.fillStyle='#86efac';ctx.fillText(p.handle,x+8,y+4)});
   // R38 — Spot tags.
   if(typeof crewSpotTags!=='undefined')crewSpotTags.list.forEach(t=>{const[x,y]=proj(t.x,t.z);ctx.strokeStyle='#a16207';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-10);ctx.stroke();ctx.fillStyle='#fbcf3b';ctx.beginPath();ctx.moveTo(x,y-10);ctx.lineTo(x+7,y-7);ctx.lineTo(x,y-4);ctx.closePath();ctx.fill();ctx.font='600 9px "DM Sans", sans-serif';ctx.fillStyle='#fde68a';ctx.fillText('🚩 '+t.label,x+10,y-4)});
+  // R43 · Waypoint marker — drawn just under the player boat so the YOU dot stays unambiguous.
+  if(_waypoint){const[x,y]=proj(_waypoint.x,_waypoint.z);
+    ctx.strokeStyle=_waypoint.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle=_waypoint.color;ctx.globalAlpha=0.18;ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    ctx.font='700 11px "DM Sans", sans-serif';ctx.fillStyle=_waypoint.color;ctx.fillText('◎ '+_waypoint.label,x+14,y-8);
+  }
   // Player boat — last so it's on top.
   if(typeof bMesh!=='undefined'&&bMesh){const[x,y]=proj(bMesh.position.x,bMesh.position.z);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();const hx=x+Math.sin(bMesh.rotation.y)*-14,hy=y+Math.cos(bMesh.rotation.y)*-14;ctx.strokeStyle='#fb923c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(hx,hy);ctx.stroke();ctx.font='700 10px "DM Sans", sans-serif';ctx.fillStyle='#fb923c';ctx.fillText('YOU',x+8,y+18)}
   // Legend.
@@ -2695,6 +2723,18 @@ function drawMinimap(){
   // heading line
   const hx=bx+Math.sin(bMesh.rotation.y)*-8,hz=bz+Math.cos(bMesh.rotation.y)*-8;
   ctx.strokeStyle='#fb923c';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(hx,hz);ctx.stroke();
+  // R43 · waypoint marker + arrow. Marker drawn at the waypoint's projected position; when the
+  // waypoint sits past the dial rim the proj() already clamped it, so we get a directional pip.
+  // Auto-clears when the player is within 8u of the target.
+  if(_waypoint){
+    const d3=Math.hypot(bMesh.position.x-_waypoint.x,bMesh.position.z-_waypoint.z);
+    if(d3<8){clearWaypoint();if(typeof pushAchToast==='function')pushAchToast({k:'ARRIVED',n:_waypoint?_waypoint.label:'Waypoint',d:'You made it.'})}
+    else{const[wx,wz]=proj(_waypoint.x,_waypoint.z);
+      ctx.strokeStyle=_waypoint.color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(wx,wz,4,0,Math.PI*2);ctx.stroke();
+      // Line from boat → waypoint pip so the bearing reads.
+      ctx.globalAlpha=0.45;ctx.beginPath();ctx.moveTo(bx,bz);ctx.lineTo(wx,wz);ctx.stroke();ctx.globalAlpha=1;
+    }
+  }
   // drop points
   dropPoints.forEach(dp=>{if(!dp.userData.active||dp.userData.qa)return;const[dx,dz]=proj(dp.position.x,dp.position.z);ctx.fillStyle='#'+dp.userData.type.col.toString(16).padStart(6,'0');ctx.beginPath();ctx.arc(dx,dz,3,0,Math.PI*2);ctx.fill()});
   // R19 — Civilians are ALWAYS visible on the minimap as small orange beacons (was previously
@@ -6207,8 +6247,8 @@ openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
 dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
-openAtlas,closeAtlas,
+openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
