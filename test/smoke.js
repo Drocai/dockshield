@@ -259,6 +259,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!hutOpen)fail('R24 Pier Hut did not open via qaDockHut');
     const hutContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes('Pier Hut')&&h.includes('Codex Board')&&h.includes('Mission Board')&&h.includes('Tackle Counter')&&h.includes('Trophy Wall')&&h.includes('Run Journal')&&h.includes('Jukebox')&&h.includes('Showcase Wall')});
     if(!hutContent)fail('R24/R29/R32 Pier Hut interior missing sections (now expects Trophy Wall, Showcase Wall, Run Journal, Jukebox)');
+    // R54: Records stats board + the new winter/night jukebox modes are present.
+    const hutR54=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return {records:/>Records</.test(h),codexStat:h.includes('species landed'),nightBite:h.includes('nocturnal species'),juke:h.includes('>NIGHT<')&&h.includes('>WINTER<')}});
+    if(!hutR54.records||!hutR54.codexStat||!hutR54.nightBite)fail('R54 Records board missing from the hut: '+JSON.stringify(hutR54));
+    if(!hutR54.juke)fail('R54 jukebox missing winter/night modes: '+JSON.stringify(hutR54));
     // R32: pin toggle round-trip — toggle adds + removes the id.
     const pinAdd=await p.evaluate(()=>DS.qaPinToggle('first_catch'));
     if(!Array.isArray(pinAdd)||pinAdd.indexOf('first_catch')<0)fail('R32 qaPinToggle did not pin first_catch');
