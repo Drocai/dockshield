@@ -235,10 +235,23 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // 13e. R23 snow weather + new species count. Confirms FISH.length grew from 13 → 17 and that
     //      forcing Snow weather lights up the snowFlakes particle layer + sets S.wx.c correctly.
     const fishN=await p.evaluate(()=>DS.qaFishCount());
-    if(fishN<25)fail(`R23/R31 expected ≥25 species, got ${fishN}`);
+    if(fishN<30)fail(`R23/R31/R52 expected ≥30 species, got ${fishN}`);
     const snowOk=await p.evaluate(()=>DS.qaForceSnow());
     if(!snowOk)fail('R23 qaForceSnow did not light up snow particles');
     console.log(`· snow weather + ${fishN} species`);
+
+    // 13e2. R52 Night Bite — the night-gate factors come straight from the real nightWeight() used
+    //       by rollFish: night species ×2 after dark, ×0 by day, ×0.5 by day with a Lantern Lure
+    //       (its only daytime path). Plus the new content: ≥7 nocturnal species + the lantern lure.
+    const nb=await p.evaluate(()=>DS.qaNightBite());
+    if(!nb)fail('R52 qaNightBite returned null');
+    if(nb.night!==2||nb.day!==0||nb.dayLantern!==0.5)fail('R52 night-gate factors wrong: '+JSON.stringify({night:nb.night,day:nb.day,dayLantern:nb.dayLantern}));
+    if(!nb.lantern||!nb.lanternRecipe)fail('R52 Lantern Lure missing from BAIT_TYPES/CRAFT_RECIPES');
+    if(nb.species.length<7)fail(`R52 expected ≥7 nocturnal species, got ${nb.species.length}: ${nb.species.join(', ')}`);
+    for(const want of ['Bullhead','Walleye','Moon perch','Burbot','Lantern-eye gar']){
+      if(!nb.species.includes(want))fail('R52 night species missing: '+want);
+    }
+    console.log(`· night bite — ${nb.species.length} nocturnal species + lantern lure (gate 2/0/0.5)`);
 
     // 13f. R24 Pier Hut. qaDockHut forces the proximity flag + opens the interior, the overlay
     //      should render the codex board, mission board, and tackle counter shortcut.
