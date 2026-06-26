@@ -224,10 +224,123 @@ function persist(){
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
   if(dot){dot.style.opacity='1';clearTimeout(persist._dot);persist._dot=setTimeout(()=>{dot.style.opacity='0.25'},500)}
+  // R22: piggyback a debounced cloud push on every persist when the player is signed in.
+  if(typeof auth!=='undefined'&&auth.token&&typeof cloudSync==='function')cloudSync('push');
 }
 // QA-only: read the current save blob (post-load) for backward-compat assertions. No side effects.
 function getSave(){try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'{}')}catch(e){return{}}}
 loadSave();
+
+// === R22 · Cloud auth + save sync ===========================================
+// Zero-dep: no Supabase JS SDK. Magic-link OTP via /auth/v1/otp, user fetch via
+// /auth/v1/user, save table read/write via /rest/v1/player_saves. Falls back
+// gracefully when SUPABASE_URL / SUPABASE_ANON_KEY are unset (the game stays
+// fully offline-playable via localStorage; nothing degrades).
+const _AUTH_KEY='dockshield_auth_v1';
+const auth={user:null,token:null,refresh:null,exp:0};
+let _cloudPulled=false,_cloudPushT=null,_cloudPushing=false;
+function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
+function authRestore(){
+  try{const raw=localStorage.getItem(_AUTH_KEY);if(!raw)return;const d=JSON.parse(raw);
+    if(d&&d.access_token&&d.user&&d.expires_at&&d.expires_at*1000>Date.now()+30000){
+      auth.user=d.user;auth.token=d.access_token;auth.refresh=d.refresh_token||null;auth.exp=d.expires_at;
+    }else{localStorage.removeItem(_AUTH_KEY)}
+  }catch(e){}
+}
+authRestore();
+function authPersist(){try{localStorage.setItem(_AUTH_KEY,JSON.stringify({access_token:auth.token,refresh_token:auth.refresh,expires_at:auth.exp,user:auth.user}))}catch(e){}}
+async function authSendMagicLink(email){
+  if(!cloudReady())return{ok:false,error:'Cloud sync isn’t configured for this deploy.'};
+  const cleanEmail=String(email||'').trim().toLowerCase();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cleanEmail))return{ok:false,error:'Enter a valid email.'};
+  try{
+    const r=await fetch(`${C.SUPABASE_URL}/auth/v1/otp`,{method:'POST',
+      headers:{apikey:C.SUPABASE_ANON_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({email:cleanEmail,create_user:true,options:{email_redirect_to:location.origin+location.pathname}})});
+    if(!r.ok){let msg='Magic link request failed.';try{const j=await r.json();msg=j.msg||j.error_description||j.error||msg}catch(e){}return{ok:false,error:msg}}
+    return{ok:true};
+  }catch(e){return{ok:false,error:String(e.message||e)}}
+}
+async function authSignOut(){
+  if(auth.token&&cloudReady()){try{await fetch(`${C.SUPABASE_URL}/auth/v1/logout?scope=local`,{method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}})}catch(e){}}
+  auth.user=null;auth.token=null;auth.refresh=null;auth.exp=0;_cloudPulled=false;
+  try{localStorage.removeItem(_AUTH_KEY)}catch(e){}
+  if(typeof refreshAuthPill==='function')refreshAuthPill();
+}
+// Email-link callback: Supabase redirects back with #access_token=... in the hash.
+// Capture, fetch user, persist session, scrub URL, kick cloud pull.
+(function captureAuthCallback(){
+  if(typeof location==='undefined'||!location.hash||!location.hash.includes('access_token='))return;
+  if(!cloudReady())return;
+  const p=new URLSearchParams(location.hash.slice(1));
+  const access_token=p.get('access_token'),refresh_token=p.get('refresh_token'),expires_in=parseInt(p.get('expires_in')||'3600',10);
+  if(!access_token)return;
+  fetch(`${C.SUPABASE_URL}/auth/v1/user`,{headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${access_token}`}})
+    .then(r=>r.ok?r.json():null).then(user=>{
+      if(!user||!user.id)return;
+      auth.user=user;auth.token=access_token;auth.refresh=refresh_token;auth.exp=Math.floor(Date.now()/1000)+expires_in;
+      authPersist();
+      try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}
+      if(typeof cloudSync==='function')cloudSync('login');
+      if(typeof refreshAuthPill==='function')refreshAuthPill();
+      if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
+    }).catch(()=>{});
+})();
+async function cloudPull(){
+  if(!auth.token||!auth.user||!cloudReady())return null;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/player_saves?user_id=eq.${encodeURIComponent(auth.user.id)}&select=save_blob,last_synced_at`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
+    if(!r.ok)return null;const a=await r.json();return Array.isArray(a)&&a.length?a[0]:null;
+  }catch(e){return null}
+}
+async function cloudPush(){
+  if(!auth.token||!auth.user||!cloudReady()||_cloudPushing)return false;
+  _cloudPushing=true;
+  try{const body={user_id:auth.user.id,save_blob:getSave(),last_synced_at:new Date().toISOString()};
+    const r=await fetch(`${C.SUPABASE_URL}/rest/v1/player_saves?on_conflict=user_id`,
+      {method:'POST',headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+       body:JSON.stringify(body)});
+    _cloudPushing=false;return r.ok;
+  }catch(e){_cloudPushing=false;return false}
+}
+function mergeCloudSave(cs){
+  if(!cs||typeof cs!=='object')return;
+  // Unions — never lose progress, additive only.
+  (cs.fish||[]).forEach(n=>fishCatalog.add(n));
+  (cs.evidence||[]).forEach(n=>evidenceCatalog.add(n));
+  (cs.ach||[]).forEach(n=>achievements.add(n));
+  (cs.bayouFiles||[]).forEach(n=>bayouFiles.add(n));
+  // Max-wins for numeric progression.
+  if(typeof cs.best==='number')bestScore=Math.max(bestScore,cs.best);
+  if(typeof cs.bait==='number')bait=Math.max(bait,cs.bait);
+  if(typeof cs.loyalty==='number')loyaltySpent=Math.max(loyaltySpent,cs.loyalty);
+  if(cs.bestFish&&(!bestFish||((cs.bestFish.s||0)>(bestFish.s||0))))bestFish=cs.bestFish;
+  if(cs.streak&&cs.streak.max>(streak.max||0))streak.max=cs.streak.max;
+  // Per-slot max for upgrades + gear + bait inventory.
+  if(cs.boatUpgrades)Object.keys(boatUpgrades).forEach(h=>{if(cs.boatUpgrades[h])Object.keys(cs.boatUpgrades[h]).forEach(s=>{const cur=(boatUpgrades[h]&&boatUpgrades[h][s])||0;const c=cs.boatUpgrades[h][s]||0;if(c>cur)boatUpgrades[h][s]=c})});
+  if(cs.gear)Object.keys(cs.gear).forEach(k=>{gear[k]=Math.max(gear[k]||0,cs.gear[k]||0)});
+  if(cs.baitInv)Object.keys(cs.baitInv).forEach(k=>{baitInv[k]=Math.max(baitInv[k]||0,cs.baitInv[k]||0)});
+  // Identity — cloud only wins when local is blank, so a freshly-signed-in
+  // device doesn't overwrite a name the player set here first.
+  if(!playerHandle&&typeof cs.playerHandle==='string')playerHandle=cs.playerHandle.slice(0,24);
+  if(!boatName&&typeof cs.boatName==='string')boatName=cs.boatName.slice(0,24);
+  persist();
+}
+async function cloudSync(reason){
+  if(!auth.token)return;
+  if(reason==='login'&&!_cloudPulled){
+    _cloudPulled=true;
+    const row=await cloudPull();
+    if(row&&row.save_blob)mergeCloudSave(row.save_blob);
+    await cloudPush();
+    return;
+  }
+  // Debounced push from persist().
+  if(_cloudPushT)clearTimeout(_cloudPushT);
+  _cloudPushT=setTimeout(()=>{_cloudPushT=null;cloudPush()},2200);
+}
+// ============================================================================
+
 // Fish species pool with rarity weights, score values, and lore flavor. Higher 'w' = more common.
 // Spots on the lake bias which species roll — see FISH_SPOTS below.
 // fight: 0 = no struggle (lands instantly), 1..3 = fight intensity. line: minimum line strength
@@ -4515,6 +4628,62 @@ function refreshTrophyPeek(){
   // Prefill the identity inputs from the persisted save so returning players see their handle.
   const fh=$('f-handle');if(fh&&!fh.value&&playerHandle)fh.value=playerHandle;
   const fb=$('f-boatname');if(fb&&!fb.value&&boatName)fb.value=boatName;
+  refreshAuthPill();
+}
+
+// R22 · sign-in pill renderer. Hidden when no Supabase config (offline-only deploy).
+// Three states: (1) not signed in → "Sign in to sync"  (2) signed in → "✓ synced · email" + Sign out
+// (3) email sent → "Check your email" (set after successful send, cleared on auth state change).
+let _authPillNote='';
+function refreshAuthPill(){
+  const el=$('auth-pill');if(!el)return;
+  if(!cloudReady()){el.style.display='none';return}
+  el.style.display='block';
+  if(auth.user&&auth.token){
+    const em=auth.user.email||'';
+    el.innerHTML=`☁ <b style="color:#86efac">Synced</b> · <span style="color:#cbd5e1">${em}</span> <button onclick="DS.signOut();event.stopPropagation()" style="margin-left:6px;background:transparent;border:1px solid rgba(248,113,113,0.45);color:#fca5a5;padding:2px 8px;border-radius:4px;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;cursor:pointer">SIGN OUT</button>`;
+    el.style.borderColor='rgba(134,239,172,0.4)';el.style.background='rgba(16,185,129,0.10)';el.style.color='#a7f3d0';
+  }else if(_authPillNote){
+    el.innerHTML=`📧 ${_authPillNote}`;
+    el.style.borderColor='rgba(251,207,59,0.4)';el.style.background='rgba(251,207,59,0.10)';el.style.color='#fde68a';
+  }else{
+    el.innerHTML=`☁ <button onclick="DS.signIn();event.stopPropagation()" style="background:transparent;border:none;color:#93c5fd;font:inherit;cursor:pointer;text-decoration:underline">Sign in to sync your save</button>`;
+    el.style.borderColor='rgba(96,208,255,0.3)';el.style.background='rgba(96,208,255,0.10)';el.style.color='#93c5fd';
+  }
+}
+function openSignIn(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  if(!cloudReady()){_authPillNote='Cloud sync isn’t configured for this deploy.';refreshAuthPill();return}
+  miniActive=true;_peekOpen=true;
+  card.innerHTML=`<div class="m-kicker" style="color:#93c5fd">Cloud Sync</div>
+    <div class="m-title">Sign in to sync your save</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">We’ll email you a magic link. Click it to sign in here — your trophies, achievements, codex, gear, and the Bayou Files travel between every device you use.</div>
+    <div style="margin:14px 0 6px;font:10px 'JetBrains Mono',monospace;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase">Email</div>
+    <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" style="width:100%;background:rgba(8,18,38,0.6);border:1px solid rgba(96,208,255,0.3);color:#e8edf5;border-radius:6px;padding:9px 12px;font:13px 'DM Sans',sans-serif;box-sizing:border-box">
+    <div id="auth-err" style="display:none;color:#fca5a5;font:11px 'JetBrains Mono',monospace;margin-top:8px"></div>
+    <button class="btn bp" id="auth-send" style="margin-top:14px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);box-shadow:0 4px 16px rgba(59,130,246,0.4)">Send Magic Link</button>
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:8px">Cancel</button>
+    <div style="margin-top:10px;font:10px 'JetBrains Mono',monospace;color:#64748b;line-height:1.6">No passwords. We never see your save data while you’re signed out. You can delete the cloud copy any time by signing out.</div>`;
+  const ai=$('auth-email');if(ai)setTimeout(()=>ai.focus(),50);
+  const send=$('auth-send');if(send){send.onclick=async()=>{
+    const em=$('auth-email').value;const er=$('auth-err');if(er){er.style.display='none';er.textContent=''}
+    send.disabled=true;send.textContent='Sending…';
+    const r=await authSendMagicLink(em);
+    if(r.ok){
+      _authPillNote=`Check ${em} · click the link to sign in.`;
+      card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">📧 Sent</div>
+        <div class="m-title">Check your inbox.</div>
+        <div class="m-sub" style="line-height:1.6;color:#cbd5e1">We sent a magic link to <b style="color:#fde68a">${em}</b>. Click it in the same browser to sign in. The link is single-use and expires after a few minutes.</div>
+        <button class="btn bp" onclick="DS.closePeek()" style="margin-top:14px">OK</button>`;
+      refreshAuthPill();
+    }else{
+      send.disabled=false;send.textContent='Send Magic Link';
+      if(er){er.textContent=r.error||'Send failed.';er.style.display='block'}
+    }
+  }}
+  // Enter submits.
+  const aiel=$('auth-email');if(aiel)aiel.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();send&&send.click()}};
+  el.style.display='flex';
 }
 
 function endRun(){
@@ -4686,6 +4855,7 @@ function qaSetTabHidden(hidden){
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 

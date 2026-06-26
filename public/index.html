@@ -20,7 +20,7 @@
 <link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#030712">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/vendor/three.min.js"></script>
 </head>
 <body>
 
@@ -112,6 +112,8 @@
     <button class="btn bp game-only" id="begin-btn" onclick="DS.beginRun()">Begin Your Run</button>
     <div id="streak-pill" class="game-only" style="display:none;margin:6px auto 0;text-align:center;padding:5px 12px;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.35);border-radius:18px;color:#93c5fd;font:600 11px 'JetBrains Mono',monospace;letter-spacing:1.5px;width:fit-content"></div>
     <button class="btn bx game-only" id="trophy-peek-btn" onclick="DS.peekTrophies()" style="display:none">View Trophy Board</button>
+    <!-- R22: cloud sync pill — JS populates it based on auth state. Hidden when no SUPABASE config. -->
+    <div id="auth-pill" class="game-only" style="display:none;margin:6px auto 0;text-align:center;padding:5px 12px;background:rgba(96,208,255,0.10);border:1px solid rgba(96,208,255,0.30);border-radius:18px;color:#93c5fd;font:600 11px 'JetBrains Mono',monospace;letter-spacing:1px;width:fit-content;max-width:90%"></div>
     <div class="game-only" style="display:flex;gap:6px;margin-top:6px">
       <button class="btn bx" onclick="DS.openShop()" style="flex:1">Tackle Shop</button>
       <button class="btn bx" id="codex-btn" onclick="DS.openCodex()" style="flex:1">Fish Codex</button>
