@@ -361,6 +361,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!mmOk)fail('R44 minimap click did not set a waypoint');
     console.log('· minimap click sets waypoint');
 
+    // 13v. R45 player flag — catalog ≥ 10, set then round-trip via DS.
+    const flags=await p.evaluate(()=>DS.qaFlagChoices());
+    if(!Array.isArray(flags)||flags.length<10)fail(`R45 flag catalog has ${flags?flags.length:'none'} options`);
+    const setF=await p.evaluate(()=>DS.qaSetFlag('🦅'));
+    if(setF!=='🦅')fail(`R45 setFlag did not persist: ${setF}`);
+    const clearF=await p.evaluate(()=>DS.qaSetFlag(''));
+    if(clearF!=='')fail(`R45 clear flag did not stick: ${clearF}`);
+    console.log(`· player flag set/clear (${flags.length} choices)`);
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());

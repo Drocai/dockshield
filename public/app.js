@@ -28,6 +28,12 @@ const SAVE_KEY='dockshield_save_v1';
 const evidenceCatalog=new Set();
 const fishCatalog=new Set();
 let bestScore=0,muted=false,bait=0,achievements=new Set();
+// R45 · Player flag emblem catalog + state. The 10 options below are curated for the bayou
+// theme (water, fishing, weather, mood). Saved locally + synced to public.profiles so it
+// follows the player across the social UI (tournament rows, friends list, presence, profile).
+const FLAG_CHOICES=['🦅','🐊','🎣','⛵','🌙','⚡','🔥','💎','🌊','🪝'];
+let playerFlag='';
+function setPlayerFlag(f){const v=String(f||'').trim();if(v&&FLAG_CHOICES.indexOf(v)<0&&v.length>4)return false;playerFlag=v.slice(0,4);persist();if(auth.user&&typeof syncProfile==='function')syncProfile();return true}
 // R32 · Achievement Showcase Wall — up to 6 pinned achievement ids, surfaced in the Pier Hut.
 const PIN_MAX=6;
 let pinnedAchievements=[];
@@ -255,6 +261,7 @@ function loadSave(){
     if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
     if(d.streak&&typeof d.streak==='object')Object.assign(streak,d.streak);
     if(typeof d.playerHandle==='string')playerHandle=d.playerHandle.slice(0,24);
+    if(typeof d.playerFlag==='string')playerFlag=d.playerFlag.slice(0,4);
     if(typeof d.boatName==='string')boatName=d.boatName.slice(0,24);
     if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
@@ -278,7 +285,7 @@ function loadSave(){
 function persist(){
   // Bait is capped by the equipped box capacity.
   bait=Math.min(bait,eqBox().baitCap);
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,pinnedAchievements,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,boatName,tutorialSeen}))}catch(e){}
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({fish:[...fishCatalog],evidence:[...evidenceCatalog],ach:[...achievements],bayouFiles:[...bayouFiles],best:bestScore,muted,bait,buffs,gear,duct:ductStats,baitInv,equippedBait,boatUpgrades,paintOwned,equippedPaint,runHistory,pinnedAchievements,audioVol:_audVol,shakeMul:_shakeMul,sfxVol:_sfxVol,engineVol:_engineVol,ambientVol:_ambientVol,musicVol:_musicVol,loyalty:loyaltySpent,bestFish,ductLog,speciesLog,streak,playerHandle,playerFlag,boatName,tutorialSeen}))}catch(e){}
   // Auto-save indicator — brief green pulse next to the HUD score. Falls back gracefully if HUD
   // isn't in the DOM yet (very-early bootstrap persist).
   const dot=typeof document!=='undefined'?document.getElementById('save-dot'):null;
@@ -515,6 +522,10 @@ async function fetchTournament(weekKey){
 // `friends.outgoing` are pending requests *from* the local user. Refreshed on
 // login + manually via the marina overlay's manage button.
 const friends={list:[],incoming:[],outgoing:[],byHandle:new Map()};
+// R45 · flag cache. Populated from any profile fetch. Keyed by lowercased handle.
+const _flagByHandle=new Map();
+function setFlagFor(handle,flag){if(handle&&flag)_flagByHandle.set(handle.toLowerCase(),flag)}
+function flagFor(handle){if(!handle)return '';return _flagByHandle.get(handle.toLowerCase())||''}
 let _profileSyncedAt=0;
 // R34 · "Crew only" filter for the broadcast feed. Local-storage backed so it survives
 // reloads even when signed out (no point pushing it to the save blob — it's a UI prefs flag).
@@ -524,7 +535,7 @@ function setBroadcastCrewOnly(on){broadcastCrewOnly=!!on;try{localStorage.setIte
 async function syncProfile(opts){
   if(!cloudReady()||!auth.token||!auth.user)return false;
   const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
-  const body={user_id:auth.user.id,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc,updated_at:new Date().toISOString()};
+  const body={user_id:auth.user.id,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc,flag:playerFlag||null,updated_at:new Date().toISOString()};
   // R37 · live presence — when called from the run loop we attach the boat position + seen_at.
   // Marina/sign-in calls skip these fields so we don't broadcast stale positions.
   if(opts&&opts.position&&typeof bMesh!=='undefined'&&bMesh){
@@ -547,9 +558,10 @@ const _PRESENCE_FRESH_MS=180000;  // 3 minutes
 async function fetchCrewPresence(){
   if(!cloudReady()||!auth.token||!auth.user||friends.list.length===0){crewPresence.list=[];return}
   const ids=friends.list.map(f=>`"${f.uid}"`).join(',');
-  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?user_id=in.(${ids})&select=user_id,handle,boat,pos_x,pos_z,seen_at`,
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?user_id=in.(${ids})&select=user_id,handle,boat,pos_x,pos_z,seen_at,flag`,
     {headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`}});
     if(!r.ok)return;const rows=await r.json();const now=Date.now();
+    (rows||[]).forEach(p=>{if(p.flag)setFlagFor(p.handle,p.flag)});  // R45
     crewPresence.list=(rows||[]).filter(p=>p.pos_x!=null&&p.pos_z!=null&&p.seen_at&&(now-new Date(p.seen_at).getTime())<_PRESENCE_FRESH_MS);
     crewPresence.lastFetch=now;
   }catch(e){}
@@ -648,7 +660,7 @@ function stopCrewMessagesPoll(){if(_crewMsgPollT){clearInterval(_crewMsgPollT);_
 async function searchHandles(q){
   if(!cloudReady()||!q||q.length<2)return [];
   const qq=encodeURIComponent('*'+q.toLowerCase()+'*');
-  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${qq}&select=user_id,handle,boat&limit=12`,
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${qq}&select=user_id,handle,boat,flag&limit=12`,
     {headers:{apikey:C.SUPABASE_ANON_KEY}});
     if(!r.ok)return [];return await r.json();
   }catch(e){return []}
@@ -712,14 +724,14 @@ async function removeFriend(otherUserId){
 // for handling once auth completes — auto-pops the friend-request prompt.
 async function fetchProfileFor(userId){
   if(!cloudReady()||!userId)return null;
-  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,handle,boat,updated_at`,
-    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();return Array.isArray(a)&&a.length?a[0]:null;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,handle,boat,flag,updated_at`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();if(Array.isArray(a)&&a.length){if(a[0].flag)setFlagFor(a[0].handle,a[0].flag);return a[0]}return null;
   }catch(e){return null}
 }
 async function fetchProfileByHandle(handle){
   if(!cloudReady()||!handle)return null;
-  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${encodeURIComponent(handle)}&select=user_id,handle,boat,updated_at&limit=1`,
-    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();return Array.isArray(a)&&a.length?a[0]:null;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${encodeURIComponent(handle)}&select=user_id,handle,boat,flag,updated_at&limit=1`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();if(Array.isArray(a)&&a.length){if(a[0].flag)setFlagFor(a[0].handle,a[0].flag);return a[0]}return null;
   }catch(e){return null}
 }
 async function fetchTournamentRankFor(userId,weekKey){
@@ -759,7 +771,7 @@ async function openProfilePanel(opts){
   const joined=profile.updated_at?new Date(profile.updated_at).toISOString().slice(0,10):'';
   card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div>
     <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
-      <div style="font-size:42px;background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.35);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center">🎣</div>
+      <div style="font-size:42px;background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.35);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center">${profile.flag||'🎣'}</div>
       <div style="flex:1;min-width:0">
         <div style="font:700 18px 'DM Sans',sans-serif;color:#e8edf5">${profile.handle}${isMe?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· YOU</span>':friendState==='friends'?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· CREW</span>':''}</div>
         <div style="font-size:11px;color:#94a3b8;margin-top:2px">${profile.boat||'—'}${joined?` · seen ${joined}`:''}</div>
@@ -777,6 +789,15 @@ async function openProfilePanel(opts){
       </div>
     </div>
     ${isMe?`
+    <!-- R45 · Player flag picker — only on the player's own profile card. -->
+    <div style="margin-top:14px;padding:12px;background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.3);border-radius:6px">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Your flag</div>
+      <div style="font-size:11px;color:#cbd5e1;margin-top:3px;line-height:1.5">Pick an emblem. It'll show next to your handle across the social UI.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+        <button class="flag-pick" data-f="" style="background:${!playerFlag?'rgba(167,139,250,0.25)':'rgba(3,7,18,0.5)'};border:1px solid ${!playerFlag?'#a78bfa':'rgba(30,41,59,0.6)'};font-size:18px;padding:6px 10px;border-radius:6px;cursor:pointer;color:#94a3b8" title="No flag">∅</button>
+        ${FLAG_CHOICES.map(f=>`<button class="flag-pick" data-f="${f}" style="background:${playerFlag===f?'rgba(167,139,250,0.25)':'rgba(3,7,18,0.5)'};border:1px solid ${playerFlag===f?'#a78bfa':'rgba(30,41,59,0.6)'};font-size:18px;padding:6px 10px;border-radius:6px;cursor:pointer">${f}</button>`).join('')}
+      </div>
+    </div>
     <!-- R36 · Share invite link — only on the player's own profile card. -->
     <div style="margin-top:14px;padding:12px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.3);border-radius:6px">
       <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#4ade80;text-transform:uppercase">Share your invite</div>
@@ -790,6 +811,8 @@ async function openProfilePanel(opts){
   card.querySelectorAll('.prof-add').forEach(b=>b.onclick=async()=>{const ok=await sendFriendRequest(b.dataset.uid,b.dataset.handle);if(ok){sfx('click');refreshFriendsPill();openProfilePanel({userId:profile.user_id})}});
   card.querySelectorAll('.prof-accept').forEach(b=>b.onclick=async()=>{await respondFriendRequest(b.dataset.uid,true);sfx('win');refreshFriendsPill();openProfilePanel({userId:profile.user_id})});
   card.querySelectorAll('.prof-remove').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this friend?'))return;await removeFriend(b.dataset.uid);refreshFriendsPill();openProfilePanel({userId:profile.user_id})});
+  // R45: flag picker — set on click + re-render so the avatar tile updates.
+  card.querySelectorAll('.flag-pick').forEach(b=>b.onclick=()=>{setPlayerFlag(b.dataset.f||'');sfx('click');openProfilePanel({userId:profile.user_id})});
 }
 function copyInvite(){
   const i=$('invite-url');if(!i)return;
@@ -2374,6 +2397,8 @@ function qaCloseAtlas(){if(new URLSearchParams(location.search).get('qa')!=='1')
 function qaSetWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;setWaypoint(50,-50,'QA Waypoint','#fbcf3b');return _waypoint!==null}
 function qaClearWaypoint(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;clearWaypoint();return _waypoint===null}
 function qaMinimapClick(px,py){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const mm=$('mm-canvas');if(!mm)return false;const ev=new MouseEvent('click',{bubbles:true,clientX:mm.getBoundingClientRect().left+(px||80),clientY:mm.getBoundingClientRect().top+(py||80)});mm.dispatchEvent(ev);return _waypoint!==null}
+function qaSetFlag(f){if(new URLSearchParams(location.search).get('qa')!=='1')return null;setPlayerFlag(f);return playerFlag}
+function qaFlagChoices(){if(new URLSearchParams(location.search).get('qa')!=='1')return [];return FLAG_CHOICES.slice()}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -5951,7 +5976,7 @@ async function openTournamentPanel(){
         ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">${_tournamentTab==='crew'?(auth.user?(friends.list.length===0?'Add some friends to populate this view.':'None of your crew has banked a run this week yet.'):'Sign in to use the crew view.'):'No runs banked this week yet. Be first.'}</div>`
         : `<div style="overflow-y:auto;max-height:380px">${viewRows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;const isFriend=auth.user&&friends.byHandle&&friends.byHandle.has((r.handle||'').toLowerCase());return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':isFriend?'rgba(74,222,128,0.08)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':isFriend?'border-left:3px solid #4ade80;':''}">
             <span style="width:30px;text-align:center;font:600 13px 'JetBrains Mono',monospace;color:${i<3?'#fbcf3b':'#64748b'}">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px">${mine&&playerFlag?`<span style="margin-right:4px">${playerFlag}</span>`:flagFor(r.handle)?`<span style="margin-right:4px">${flagFor(r.handle)}</span>`:''}<b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 14px 'JetBrains Mono',monospace">${r.score}</span>
           </div>`}).join('')}</div>`;
     card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Weekly Tournament · ${wk}</div>
@@ -6254,7 +6279,7 @@ function qaSetTabHidden(hidden){
   setTabHidden(Boolean(hidden));
   return{hidden:_tabHidden,on:S.on,weatherTimer:Boolean(_wxTimer)};
 }
-return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
+return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,exportPhoto,toggleDuctSpan,setHandle,setBoatName,setFlag:setPlayerFlag,dockShop,dockCamp,dockHut,openHut:openHutInterior,openPinPicker,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
@@ -6264,6 +6289,6 @@ dropSpotTag,openSpotTag:openSpotTagPrompt,
 postCrewMessage,
 openAtlas,closeAtlas,setWaypoint,clearWaypoint,
 openWhatsNew,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaExportPhoto,qaSeedCrewMessage,qaCrewMessagesCount,qaOpenAtlas,qaCloseAtlas,qaSetWaypoint,qaClearWaypoint,qaMinimapClick,qaSetFlag,qaFlagChoices,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
