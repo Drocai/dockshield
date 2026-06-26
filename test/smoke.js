@@ -232,6 +232,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!offline)fail('R22 authState should report signed-out when no session restored');
     console.log('· cloud sync hooks present + auth-pill gated on config');
 
+    // 13e. R23 snow weather + new species count. Confirms FISH.length grew from 13 → 17 and that
+    //      forcing Snow weather lights up the snowFlakes particle layer + sets S.wx.c correctly.
+    const fishN=await p.evaluate(()=>DS.qaFishCount());
+    if(fishN<17)fail(`R23 expected ≥17 species, got ${fishN}`);
+    const snowOk=await p.evaluate(()=>DS.qaForceSnow());
+    if(!snowOk)fail('R23 qaForceSnow did not light up snow particles');
+    console.log(`· snow weather + ${fishN} species`);
+
     // 14. Boatworks "BEST VALUE" badge appears when an upgrade is buyable.
     await p.evaluate(()=>{DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'t',boatworks:true,consumables:['hull']})});await sleep(300);
     // Seed enough bait via the QA save shape so at least one upgrade is buyable.
