@@ -282,6 +282,7 @@ async function authSignOut(){
       authPersist();
       try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}
       if(typeof cloudSync==='function')cloudSync('login');
+      if(typeof drainPendingChallenges==='function')drainPendingChallenges();
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -338,6 +339,78 @@ async function cloudSync(reason){
   // Debounced push from persist().
   if(_cloudPushT)clearTimeout(_cloudPushT);
   _cloudPushT=setTimeout(()=>{_cloudPushT=null;cloudPush()},2200);
+}
+// ============================================================================
+
+// === R25 · Daily challenge + leaderboard ===================================
+// The challenge prompt is derived client-side from localDayKey() so no server-side
+// "challenges" table is needed; every signed-in player sees the same prompt for
+// the same day. Completion is posted to public.challenge_runs (RLS: public read
+// for the leaderboard, authed self-only write) when the run ends and the check
+// returns true. Pending submissions are queued in localStorage if the player
+// finishes a run while signed out — they upload on next login.
+const CHALLENGES=[
+  {id:'tripled_haul',     label:'Land 8 fish in a single run',    hint:'Any species counts. Cast often.',
+   check:(S,c)=>c.length>=8},
+  {id:'rare_or_better',   label:'Land 2 rare-or-better fish',     hint:'Tackle Shop tournament line helps.',
+   check:(S,c)=>c.filter(f=>f.r==='rare'||f.r==='legendary').length>=2},
+  {id:'winter_drift',     label:'Land a winter species',          hint:'Brook trout, ice carp, or northern pike.',
+   check:(S,c)=>c.some(f=>f.winter)},
+  {id:'after_dark',       label:'Land any fish after dusk',       hint:'Wait for the sky to turn.',
+   check:(S,c)=>c.some(f=>f.atNight)},
+  {id:'lifeguard_lite',   label:'Rescue 2 civilians in one run',  hint:'Watch for the orange help-beams.',
+   check:(S)=>S.civsSaved>=2},
+  {id:'duct_pursuit',     label:'Get a Duct sighting',            hint:'Drive the open water, eyes peeled.',
+   check:(S,c,extra)=>(extra&&extra.ductSighted)||(typeof ductStats!=='undefined'&&ductStats.sightings>(extra&&extra.preDuct||0))},
+  {id:'reach_400',        label:'Reach 400 score in one run',     hint:'Rare fish help — so does the boss.',
+   check:(S)=>S.score>=400},
+  {id:'gator_grappler',   label:'Land any gator-class fish',      hint:'Alligator gar, Bull gator, Spotted gar.',
+   check:(S,c)=>c.some(f=>f.gator)}
+];
+// Stable string→int hash for deterministic per-day picks.
+function _ds_hash(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return Math.abs(h)}
+function todaysChallenge(){const key=typeof localDayKey==='function'?localDayKey():new Date().toISOString().slice(0,10);return Object.assign({day:key},CHALLENGES[_ds_hash(key)%CHALLENGES.length])}
+// Pre-run snapshot so checks can compare deltas (e.g. duct sightings before vs after).
+let _challengePre=null;
+function snapshotChallenge(){const c=todaysChallenge();_challengePre={preDuct:typeof ductStats!=='undefined'?(ductStats.sightings||0):0,ductSighted:false,c}}
+function checkChallenge(){
+  if(!_challengePre)return null;const ch=_challengePre.c;
+  // c.atNight: fish landed while _isNight — mark on each catch in landFish, but we approximate
+  // with the runCatches mark added below at fish-keep time.
+  const ok=ch.check(S,runCatches||[],_challengePre);
+  return ok?ch:null;
+}
+// Submission queue — when a player completes a challenge while signed out, the row goes here and
+// drains on next sign-in. Persists alongside the save in localStorage.
+const _CH_PENDING_KEY='dockshield_pending_challenge_v1';
+function _chPendingGet(){try{return JSON.parse(localStorage.getItem(_CH_PENDING_KEY)||'[]')}catch(e){return[]}}
+function _chPendingPut(arr){try{localStorage.setItem(_CH_PENDING_KEY,JSON.stringify(arr.slice(0,20)))}catch(e){}}
+async function postChallengeRun(ch,score){
+  if(!ch||!cloudReady())return false;
+  const handle=(playerHandle||(auth.user&&auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const body={day_key:ch.day,challenge_id:ch.id,score,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc};
+  if(!auth.token||!auth.user){const q=_chPendingGet();q.push(body);_chPendingPut(q);return false}
+  body.user_id=auth.user.id;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/challenge_runs?on_conflict=user_id,day_key`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(body)});return r.ok}catch(e){return false}
+}
+async function drainPendingChallenges(){
+  if(!auth.token||!auth.user||!cloudReady())return;
+  const q=_chPendingGet();if(!q.length)return;
+  for(const row of q){row.user_id=auth.user.id;
+    try{await fetch(`${C.SUPABASE_URL}/rest/v1/challenge_runs?on_conflict=user_id,day_key`,{method:'POST',
+      headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+      body:JSON.stringify(row)})}catch(e){}
+  }
+  _chPendingPut([]);
+}
+async function fetchLeaderboard(dayKey){
+  if(!cloudReady())return [];
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/challenge_runs?day_key=eq.${encodeURIComponent(dayKey)}&select=handle,boat,score,completed_at&order=score.desc&limit=10`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});
+    if(!r.ok)return [];return await r.json();
+  }catch(e){return []}
 }
 // ============================================================================
 
@@ -2676,6 +2749,8 @@ function tryHookSet(){
 // startBobberWait + tryHookSet). Last legacy reference was deleted in this audit pass.
 // Logs the catalog + plays the catch sting + opens the keep/release dialog.
 function landFish(fish,spot){
+  // R25: stamp the per-catch context so daily-challenge checks can read it (e.g. atNight).
+  fish.atNight=!!_isNight;
   runCatches.push(fish);
   if(!fishCatalog.has(fish.n)){
     fishCatalog.add(fish.n);
@@ -3906,6 +3981,7 @@ function startGame(){
   }
   S.on=true;document.body.classList.add('playing');_lastBait=bait;S.score=0;S.t0=Date.now();S.maxSpd=0;S.dist=0;S.near=0;S.pc=0;S.hull=100;S.lastSurge=Date.now()*0.001;S.surgeRand=3;S.civsSaved=0;S.civsTotal=civs.length;S.sonarReady=0;S.evCollected=null;S.missionsCleared=0;runCatches=[];S.runBest=null;S._castedThisRun=false;
   unlockChapter('ch1');  // first launch opens the case file
+  if(typeof snapshotChallenge==='function')snapshotChallenge();  // R25: snapshot pre-run state for today's daily challenge
   // Overlay + chatter hygiene: any dialog/peek/cast left over from a prior run or the menu is
   // force-cleared so the new run starts with no stranded overlay state and no queued radio lines.
   cancelCast();_catchOpen=false;_catchBusy=false;_peekOpen=false;miniActive=false;_radioQ.length=0;_radioBusy=false;
@@ -3970,6 +4046,11 @@ function endGame(won){S.on=false;S.played=true;document.body.classList.remove('p
   if(GAME_MODE==='game'){$('rt').textContent=won?'Pulled Off The Run':'Hull Went Under'}
   else $('rt').textContent=won?'Survivors Extracted':'Dragged Under';
   $('r-scr').textContent=S.score;$('r-time').textContent=el.toFixed(1)+'s';$('r-spd').textContent=S.maxSpd.toFixed(1)+' kn';$('r-near').textContent=Math.min(S.near,99);$('f-scr').textContent=S.score;
+  // R25: if today's challenge cleared, post to the leaderboard (or queue when signed out). Toast it.
+  if(typeof checkChallenge==='function'){const done=checkChallenge();
+    if(done){if(typeof pushAchToast==='function')pushAchToast({k:'DAILY CHALLENGE',n:done.label,d:'Cleared — posted to the leaderboard.'});postChallengeRun(done,S.score)}
+    _challengePre=null;
+  }
   // Phases row repurposes as "Missions" in game mode.
   const phEl=$('r-ph'),phLbl=phEl?phEl.previousElementSibling:null;
   if(phEl){if(GAME_MODE==='game'){phEl.textContent=(S.missionsCleared||0)+' cleared';if(phLbl)phLbl.textContent='Missions'}else{phEl.textContent=S.pc+'/3';if(phLbl)phLbl.textContent='Phases'}}
@@ -4776,6 +4857,55 @@ function refreshTrophyPeek(){
   const fh=$('f-handle');if(fh&&!fh.value&&playerHandle)fh.value=playerHandle;
   const fb=$('f-boatname');if(fb&&!fb.value&&boatName)fb.value=boatName;
   refreshAuthPill();
+  refreshChallengeCard();
+}
+
+// R25 · today's daily challenge tile on the s1 marina. Always visible in game mode (works
+// offline — completion is queued + uploaded on next sign-in). Tap → openChallengePanel().
+function refreshChallengeCard(){
+  const el=$('challenge-card');if(!el)return;
+  if(GAME_MODE!=='game'){el.style.display='none';return}
+  const ch=todaysChallenge();
+  el.style.display='block';
+  el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div style="flex:1;min-width:0">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fb923c;text-transform:uppercase">Daily Challenge · ${ch.day}</div>
+      <div style="margin-top:2px;font-size:12.5px;color:#e8edf5">${ch.label}</div>
+    </div>
+    <span style="font:600 10px 'JetBrains Mono',monospace;color:#fbcf3b;letter-spacing:1px">VIEW →</span>
+  </div>`;
+  el.onclick=()=>openChallengePanel();
+}
+
+async function openChallengePanel(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const ch=todaysChallenge();
+  // Initial render with loading state, then patch in the leaderboard rows once they're back.
+  const render=(rows)=>{
+    const ldb=rows===null
+      ? `<div style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`
+      : rows.length===0
+        ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No completions yet today. Be first.</div>`
+        : `<div style="overflow-y:auto;max-height:300px">${rows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':' ';const t=new Date(r.completed_at);const hh=String(t.getHours()).padStart(2,'0'),mm=String(t.getMinutes()).padStart(2,'0');return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:4px;margin:3px 0">
+            <span style="width:24px;text-align:center;font-size:14px">${med}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font-size:10px">· ${r.boat}</span>`:''}</span>
+            <span style="color:#fbcf3b;font:600 13px 'JetBrains Mono',monospace">${r.score}</span>
+            <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${hh}:${mm}</span>
+          </div>`}).join('')}</div>`;
+    card.innerHTML=`<div class="m-kicker" style="color:#fb923c">Daily Challenge · ${ch.day}</div>
+      <div class="m-title">${ch.label}</div>
+      <div class="m-sub" style="line-height:1.6;color:#cbd5e1">${ch.hint||''}</div>
+      ${!cloudReady()?`<div style="margin-top:10px;padding:10px 12px;background:rgba(96,208,255,0.08);border:1px solid rgba(96,208,255,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#93c5fd">Cloud sync isn’t configured for this deploy. Your completion is still tracked locally for the score sheet.</div>`:''}
+      ${cloudReady()&&!auth.user?`<div style="margin-top:10px;padding:10px 12px;background:rgba(251,207,59,0.08);border:1px solid rgba(251,207,59,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#fde68a">Sign in to post your time to the leaderboard. Until then, completions queue locally and upload on next sign-in.</div>`:''}
+      <div style="margin:14px 0 6px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase">Leaderboard · top 10 today</div>
+      ${ldb}
+      <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  };
+  render(null);
+  el.style.display='flex';
+  const rows=cloudReady()?await fetchLeaderboard(ch.day):[];
+  render(rows);
 }
 
 // R22 · sign-in pill renderer. Hidden when no Supabase config (offline-only deploy).
@@ -4896,6 +5026,8 @@ function qaUnlock(ids){
 function qaUnlockChapter(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;unlockChapter(id);return bayouFiles.has(id)}
 function qaUnderwater(on){if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(on)underwater.enable();else underwater.disable();return underwater.enabled===!!on}
 function qaForceSnow(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:5,wd:90,g:6,c:'Snow',t:30,v:4000};applyWeatherVisuals();const el=$('wx-c');if(el)el.textContent='Snow 30°F';return S.wx.c==='Snow'&&snowFlakes.length>0}
+function qaChallengeOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openChallengePanel();return miniActive&&_peekOpen}
+function qaChallengeToday(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return todaysChallenge()}
 function qaFishCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return FISH.length}
 function qaPulseBait(d){if(new URLSearchParams(location.search).get('qa')!=='1')return false;return pulseBait(d||1)}
 // QA-only: jump the day/night clock to deep night (cycle = 0.75 → sun fully below) so the smoke
@@ -5005,6 +5137,7 @@ function qaSetTabHidden(hidden){
 }
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+openChallenge:openChallengePanel,todaysChallenge,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
