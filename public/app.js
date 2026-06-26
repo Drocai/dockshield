@@ -443,6 +443,37 @@ async function fetchLeaderboard(dayKey){
     if(!r.ok)return [];return await r.json();
   }catch(e){return []}
 }
+
+// === R30 · Weekly Tournament ================================================
+// One row per (user, ISO week). Posts the player's run score on endGame; the
+// stored row is the player's best score for the week (Postgres BEFORE-UPDATE
+// trigger keeps the higher of new/existing). Leaderboard reads top 20.
+// isoWeekKey: 'YYYY-W##' — ISO 8601 week date. Stable across timezones because
+// we use UTC week boundaries. Returns the same key for any time in the same week.
+function isoWeekKey(d){const t=d?new Date(d):new Date();
+  // Algorithm from RFC 3339 / ISO 8601: Thursday determines the ISO week.
+  const c=new Date(Date.UTC(t.getUTCFullYear(),t.getUTCMonth(),t.getUTCDate()));
+  const dayNum=(c.getUTCDay()+6)%7;
+  c.setUTCDate(c.getUTCDate()-dayNum+3);
+  const firstThu=new Date(Date.UTC(c.getUTCFullYear(),0,4));
+  const week=1+Math.round(((c-firstThu)/86400000-3+((firstThu.getUTCDay()+6)%7))/7);
+  return c.getUTCFullYear()+'-W'+String(week).padStart(2,'0');
+}
+async function postTournamentRun(score){
+  if(!cloudReady()||!auth.token||!auth.user||!score||score<=0)return false;
+  const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
+  const body={user_id:auth.user.id,week_key:isoWeekKey(),score,handle,boat:(BT[S.bc]&&BT[S.bc].n)||S.bc,updated_at:new Date().toISOString()};
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/tournament_runs?on_conflict=user_id,week_key`,{method:'POST',
+    headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},
+    body:JSON.stringify(body)});return r.ok}catch(e){return false}
+}
+async function fetchTournament(weekKey){
+  if(!cloudReady())return [];
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/tournament_runs?week_key=eq.${encodeURIComponent(weekKey||isoWeekKey())}&select=handle,boat,score,updated_at&order=score.desc&limit=20`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});
+    if(!r.ok)return [];return await r.json();
+  }catch(e){return []}
+}
 // ============================================================================
 
 // === R26 · Cross-device unlock broadcasts ==================================
@@ -4242,6 +4273,9 @@ function endGame(won){S.on=false;S.played=true;document.body.classList.remove('p
     if(done){if(typeof pushAchToast==='function')pushAchToast({k:'DAILY CHALLENGE',n:done.label,d:'Cleared — posted to the leaderboard.'});postChallengeRun(done,S.score)}
     _challengePre=null;
   }
+  // R30: every run posts its score to the weekly tournament (the trigger keeps the higher
+  // of new/existing). Silent no-op when offline.
+  if(typeof postTournamentRun==='function')postTournamentRun(S.score);
   // Phases row repurposes as "Missions" in game mode.
   const phEl=$('r-ph'),phLbl=phEl?phEl.previousElementSibling:null;
   if(phEl){if(GAME_MODE==='game'){phEl.textContent=(S.missionsCleared||0)+' cleared';if(phLbl)phLbl.textContent='Missions'}else{phEl.textContent=S.pc+'/3';if(phLbl)phLbl.textContent='Phases'}}
@@ -5093,7 +5127,52 @@ function refreshTrophyPeek(){
   const fb=$('f-boatname');if(fb&&!fb.value&&boatName)fb.value=boatName;
   refreshAuthPill();
   refreshChallengeCard();
+  refreshTournamentCard();
   if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
+}
+// R30 · weekly tournament tile renderer. Always shown in game mode (mirrors challenge tile).
+function refreshTournamentCard(){
+  const el=$('tournament-card');if(!el)return;
+  if(GAME_MODE!=='game'){el.style.display='none';return}
+  const wk=isoWeekKey();
+  el.style.display='block';
+  el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div style="flex:1;min-width:0">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Weekly Tournament · ${wk}</div>
+      <div style="margin-top:2px;font-size:12.5px;color:#e8edf5">Your best run this week wins.</div>
+    </div>
+    <span style="font:600 10px 'JetBrains Mono',monospace;color:#c4b5fd;letter-spacing:1px">RANK →</span>
+  </div>`;
+  el.onclick=()=>openTournamentPanel();
+}
+async function openTournamentPanel(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  const wk=isoWeekKey();
+  const render=(rows)=>{
+    const meHandle=playerHandle||(auth.user&&auth.user.email&&auth.user.email.split('@')[0])||'';
+    const ldb=rows===null
+      ? `<div style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`
+      : rows.length===0
+        ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No runs banked this week yet. Be first.</div>`
+        : `<div style="overflow-y:auto;max-height:380px">${rows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':''}">
+            <span style="width:30px;text-align:center;font:600 13px 'JetBrains Mono',monospace;color:${i<3?'#fbcf3b':'#64748b'}">${med}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:''}</span>
+            <span style="color:#fbcf3b;font:600 14px 'JetBrains Mono',monospace">${r.score}</span>
+          </div>`}).join('')}</div>`;
+    card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Weekly Tournament · ${wk}</div>
+      <div class="m-title">Best run this week wins.</div>
+      <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Every run you finish posts your score. Only your <b>best</b> counts toward the week. Ranks reset every Monday at 00:00 UTC.</div>
+      ${!cloudReady()?`<div style="margin-top:10px;padding:10px 12px;background:rgba(96,208,255,0.08);border:1px solid rgba(96,208,255,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#93c5fd">Cloud sync isn’t configured for this deploy — tournament is read-only here.</div>`:''}
+      ${cloudReady()&&!auth.user?`<div style="margin-top:10px;padding:10px 12px;background:rgba(251,207,59,0.08);border:1px solid rgba(251,207,59,0.3);border-radius:6px;font:11px 'DM Sans',sans-serif;color:#fde68a">Sign in to bank your runs to the leaderboard.</div>`:''}
+      <div style="margin:14px 0 6px;font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Top 20 · this week</div>
+      ${ldb}
+      <button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;
+  };
+  render(null);
+  el.style.display='flex';
+  const rows=cloudReady()?await fetchTournament(wk):[];
+  render(rows);
 }
 
 // R25 · today's daily challenge tile on the s1 marina. Always visible in game mode (works
@@ -5264,6 +5343,8 @@ function qaUnderwater(on){if(new URLSearchParams(location.search).get('qa')!=='1
 function qaForceSnow(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;S.wx={ws:5,wd:90,g:6,c:'Snow',t:30,v:4000};applyWeatherVisuals();const el=$('wx-c');if(el)el.textContent='Snow 30°F';return S.wx.c==='Snow'&&snowFlakes.length>0}
 function qaChallengeOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openChallengePanel();return miniActive&&_peekOpen}
 function qaChallengeToday(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return todaysChallenge()}
+function qaTournamentOpen(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openTournamentPanel();return miniActive&&_peekOpen}
+function qaTournamentWeek(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return isoWeekKey()}
 function qaBroadcastHooks(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{post:typeof postUnlockBroadcast,poll:typeof pollUnlockFeed,start:typeof startUnlockFeedPoll,stop:typeof stopUnlockFeedPoll}}
 function qaFakeBroadcast(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;pushAchToast({k:'AROUND THE BAYOU',n:'Test Unlock',d:'TestUser · The Reel just unlocked it.'});return true}
 function qaPaintEquip(id){if(new URLSearchParams(location.search).get('qa')!=='1')return false;const kit=PAINT_KITS[id];if(!kit)return false;if(kit.hero&&kit.hero!==S.bc)return false;if(!paintOwned[S.bc].includes(id))paintOwned[S.bc].push(id);equippedPaint[S.bc]=id;persist();return paintFor(S.bc).primary===kit.accents.primary}
@@ -5380,6 +5461,7 @@ function qaSetTabHidden(hidden){
 return{launch,skip,skipFromLoad,playFromTier,boat,tier,quote,pay,reset,showTiers,replay,ping:fireSonar,beginRun,qAns,launchGame,endRun,qaOpen,qaSpawnDuct,cast:castLine,peekTrophies,closePeek,openCodex,toggleMute,openShop,openAchievements,openSettings,setGfx,setAudVol,setShakeMul,setSfxVol,setEngineVol,setAmbientVol,setMusicVol,replayTutorials,exportTrophy,exportStreak,exportAchievements,toggleDuctSpan,setHandle,setBoatName,dockShop,dockCamp,dockHut,togglePhoto,duct:()=>openDuctChase(),qaDockCamp:()=>{if(new URLSearchParams(location.search).get('qa')!=='1')return false;if(!campMeshes.length)return false;dockCamp(campMeshes[0].userData.camp,campMeshes[0]);return true},errors:()=>window.__dsErrors?window.__dsErrors.get():[],errorsClear:()=>window.__dsErrors&&window.__dsErrors.clear(),
 signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email:auth.user&&auth.user.email||null}),
 openChallenge:openChallengePanel,todaysChallenge,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
