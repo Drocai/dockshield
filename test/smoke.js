@@ -317,6 +317,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(tagCount<1)fail(`R38 qaSpotTagCount returned ${tagCount}`);
     console.log(`· spot tags seed + count (${tagCount})`);
 
+    // 13p. R39 What's New panel — opens via qaOpenWhatsNew, renders with the five feature
+    //      entries (Paint Shop, Winter, Pier Hut, Cloud, Friends).
+    const wOpen=await p.evaluate(()=>DS.qaOpenWhatsNew());
+    if(!wOpen)fail('R39 What’s New panel did not open');
+    const wContent=await p.evaluate(()=>{const h=document.getElementById('mini-card').innerHTML;return h.includes("What's New")&&h.includes('Boat Paint Shop')&&h.includes('Friends & Crew')});
+    if(!wContent)fail('R39 What’s New panel missing entries');
+    await p.keyboard.press('Escape');await sleep(150);
+    console.log("· what's new panel + entries render");
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());

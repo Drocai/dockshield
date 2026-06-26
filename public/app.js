@@ -2331,6 +2331,7 @@ function qaSeedCrewPresence(){if(new URLSearchParams(location.search).get('qa')!
 function qaCrewPresenceCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewPresence.list.length}
 function qaSeedSpotTag(label){if(new URLSearchParams(location.search).get('qa')!=='1')return 0;const exp=new Date(Date.now()+3600000).toISOString();crewSpotTags.list.push({id:'qa'+Date.now(),user_id:'qa-self',x:5,z:5,label:label||'QA Tag',handle:'QA',expires_at:exp});return crewSpotTags.list.length}
 function qaSpotTagCount(){if(new URLSearchParams(location.search).get('qa')!=='1')return -1;return crewSpotTags.list.length}
+function qaOpenWhatsNew(){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openWhatsNew();return miniActive&&_peekOpen}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -4166,6 +4167,53 @@ function showTutorial(kind){
   return true;
 }
 
+// R39 · What's New panel. One-time auto-pop on the first marina view after the social rounds
+// ship; can be re-opened any time via the s1 button. Persisted dismissal via tutorialSeen.whatsnew_r38.
+const WHATS_NEW=[
+  {emoji:'🎨', title:'Boat Paint Shop',    body:'9 paint kits — chrome, neon, signature hero finishes. Buy + equip at Castor Boatworks.', action:'Open Boatworks', fn:"DS.closePeek();setTimeout(()=>DS.openShop({id:'works',n:'Castor Boatworks',col:0xf97316,blurb:'Engines, lights, armor, electronics — and now paint kits.',boatworks:true,consumables:['hull']}),100)"},
+  {emoji:'❄️', title:'Winter Weather',     body:'Snow turns the world winter: snow caps on trees, frost on the dock, ice patches drifting. Comes with 4 winter species.', action:null},
+  {emoji:'🏡', title:'Pier Hut',          body:'Walkable hut at the marina with a trophy wall, codex board, mission list, run journal, and jukebox. Drive close, press H.', action:null},
+  {emoji:'☁️', title:'Cloud Save + Daily Challenge', body:'Sign in for cross-device save sync, a daily challenge with global leaderboard, and the weekly tournament.', action:'Sign In', fn:'DS.closePeek();setTimeout(()=>DS.signIn(),100)'},
+  {emoji:'👥', title:'Friends & Crew',     body:'Search by handle, share an invite URL, see your crew live on the minimap, drop spot tags for them with T while running, get achievement broadcasts.', action:'Open Friends', fn:'DS.closePeek();setTimeout(()=>DS.openFriends(),100)'}
+];
+function openWhatsNew(){
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  // Mark as seen so the auto-pop doesn't re-fire on next boot.
+  if(!tutorialSeen.whatsnew_r38){tutorialSeen.whatsnew_r38=true;persist()}
+  const items=WHATS_NEW.map(w=>`<div style="display:flex;gap:12px;padding:11px 12px;background:rgba(8,18,38,0.5);border:1px solid rgba(167,139,250,0.2);border-radius:8px;margin:6px 0">
+    <div style="font-size:26px;flex-shrink:0">${w.emoji}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font:700 12.5px 'DM Sans',sans-serif;color:#e8edf5">${w.title}</div>
+      <div style="font-size:11px;color:#cbd5e1;line-height:1.5;margin-top:2px">${w.body}</div>
+      ${w.action?`<button class="btn bp" onclick="${w.fn}" style="width:auto;padding:5px 12px;margin:8px 0 0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:linear-gradient(135deg,#a78bfa,#7c3aed)">${w.action} →</button>`:''}
+    </div>
+  </div>`).join('');
+  card.innerHTML=`<div class="m-kicker" style="color:#fbcf3b">What's New</div>
+    <div class="m-title">A whole lot.</div>
+    <div class="m-sub" style="line-height:1.6;color:#cbd5e1">Recent rounds added paint, weather, a walkable hut, cloud save, and a full friends + leaderboard layer. Quick tour:</div>
+    <div style="max-height:380px;overflow-y:auto;margin:8px 0">${items}</div>
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:6px">Close</button>`;
+  el.style.display='flex';
+}
+function refreshWhatsNewButton(){
+  const b=$('whats-new-btn');if(!b)return;
+  if(GAME_MODE!=='game'){b.style.display='none';return}
+  b.style.display='block';
+}
+// Auto-pop fires once after the player lands on the marina, but only if they're not a brand-new
+// player (so first launch isn't visually noisy). Returning players (S.played at any point this
+// session, or has any unlocked achievement) get the panel exactly once.
+function maybeAutoPopWhatsNew(){
+  if(tutorialSeen.whatsnew_r38)return;
+  if(miniActive||_peekOpen)return;
+  if(!$('s1')||$('s1').classList.contains('off'))return;
+  // Only nudge returning players — brand-new players get a clean intro.
+  if(GAME_MODE!=='game')return;
+  if(achievements.size===0&&fishCatalog.size===0&&!S.played)return;
+  openWhatsNew();
+}
+
 // === HULL-DAMAGE VISUAL FEEDBACK ===
 // Brief red vignette pulse — drained on a short timer so rapid hits stack into a sustained flash
 // instead of a strobe. Intensity 0..1.
@@ -5534,10 +5582,13 @@ function refreshTrophyPeek(){
   refreshChallengeCard();
   refreshTournamentCard();
   refreshFriendsPill();
+  if(typeof refreshWhatsNewButton==='function')refreshWhatsNewButton();
   if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
   // R36: catch the already-signed-in-at-boot case — if an invite URL was captured,
   // pop the prompt the moment the marina is shown.
   if(typeof popInvitePromptIfPending==='function'&&auth.user&&friends.list!==undefined)popInvitePromptIfPending();
+  // R39: one-time auto-pop for returning players. Slight delay so the marina renders first.
+  if(typeof maybeAutoPopWhatsNew==='function')setTimeout(maybeAutoPopWhatsNew,800);
 }
 // R30 · weekly tournament tile renderer. Always shown in game mode (mirrors challenge tile).
 function refreshTournamentCard(){
@@ -5982,6 +6033,7 @@ openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
 openProfile:openProfilePanel,copyInvite,
 dropSpotTag,openSpotTag:openSpotTagPrompt,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+openWhatsNew,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaSeedCrewPresence,qaCrewPresenceCount,qaSeedSpotTag,qaSpotTagCount,qaOpenWhatsNew,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
