@@ -332,6 +332,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!dataPrefix||!dataPrefix.startsWith('data:image/png'))fail(`R40 exportPhoto did not return a PNG data URL prefix: ${dataPrefix}`);
     console.log('· photo export captures scene + stamps metadata');
 
+    // 13r. R41 crew chat — seed a synthetic message; verify count + cardrenders.
+    const cmSeeded=await p.evaluate(()=>DS.qaSeedCrewMessage('Test post'));
+    if(cmSeeded<1)fail(`R41 qaSeedCrewMessage returned ${cmSeeded}`);
+    const cmCount=await p.evaluate(()=>DS.qaCrewMessagesCount());
+    if(cmCount<1)fail(`R41 qaCrewMessagesCount returned ${cmCount}`);
+    console.log(`· crew chat seed + count (${cmCount})`);
+
     // 13h. R26 unlock broadcast wiring. Confirms the four broadcast functions exist on the
     //      module and that the cross-device toast renders with the correct kicker.
     const hooks=await p.evaluate(()=>DS.qaBroadcastHooks());
