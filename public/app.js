@@ -344,7 +344,7 @@ async function authSignOut(){
       if(typeof drainPendingChallenges==='function')drainPendingChallenges();
       if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
       if(typeof syncProfile==='function')syncProfile();
-      if(typeof refreshFriends==='function')refreshFriends().then(()=>typeof refreshFriendsPill==='function'&&refreshFriendsPill());
+      if(typeof refreshFriends==='function')refreshFriends().then(()=>{if(typeof refreshFriendsPill==='function')refreshFriendsPill();if(typeof popInvitePromptIfPending==='function')popInvitePromptIfPending()});
       if(typeof refreshAuthPill==='function')refreshAuthPill();
       if(typeof pushAchToast==='function')pushAchToast({k:'CLOUD SYNC',n:'Signed in',d:user.email||'Save will sync between devices.'});
     }).catch(()=>{});
@@ -586,6 +586,117 @@ async function removeFriend(otherUserId){
     headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,Prefer:'return=minimal'}});
     if(r.ok)await refreshFriends();return r.ok;
   }catch(e){return false}
+}
+// ============================================================================
+
+// === R36 · Profile panel + Friend invite links ============================
+// fetchProfileFor / openProfilePanel: clickable handle → modal with the player's
+// public profile (handle/boat/joined) + their best score this week + the
+// friendship status with the local user (+ Add button if not yet friends).
+// captureInviteUrl: on bootstrap, if the URL has ?invite=USERID, stash it
+// for handling once auth completes — auto-pops the friend-request prompt.
+async function fetchProfileFor(userId){
+  if(!cloudReady()||!userId)return null;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,handle,boat,updated_at`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();return Array.isArray(a)&&a.length?a[0]:null;
+  }catch(e){return null}
+}
+async function fetchProfileByHandle(handle){
+  if(!cloudReady()||!handle)return null;
+  try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/profiles?handle=ilike.${encodeURIComponent(handle)}&select=user_id,handle,boat,updated_at&limit=1`,
+    {headers:{apikey:C.SUPABASE_ANON_KEY}});if(!r.ok)return null;const a=await r.json();return Array.isArray(a)&&a.length?a[0]:null;
+  }catch(e){return null}
+}
+async function fetchTournamentRankFor(userId,weekKey){
+  // We don't expose user_id on tournament_runs rows (the public SELECT doesn't include it),
+  // so we fetch the leaderboard, find the player's handle by user_id, then locate their rank.
+  if(!cloudReady()||!userId)return null;
+  const profile=await fetchProfileFor(userId);if(!profile)return null;
+  try{const rows=await fetchTournament(weekKey);if(!Array.isArray(rows))return null;
+    const i=rows.findIndex(r=>(r.handle||'').toLowerCase()===profile.handle.toLowerCase());
+    return i>=0?{rank:i+1,score:rows[i].score,handle:profile.handle}:null;
+  }catch(e){return null}
+}
+async function openProfilePanel(opts){
+  // opts may be {userId} or {handle}. Resolves both shapes.
+  const card=$('mini-card'),el=$('mini');if(!card||!el)return;
+  miniActive=true;_peekOpen=true;
+  if(!cloudReady()){card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-title">Cloud sync isn’t configured.</div><div class="m-sub" style="line-height:1.6;color:#cbd5e1">Profiles need Supabase. This deploy is running offline.</div><button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;el.style.display='flex';return}
+  // Loading state.
+  card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-sub" style="padding:14px;text-align:center;color:#64748b;font:11px 'DM Sans',sans-serif">Loading…</div>`;el.style.display='flex';
+  const profile=opts&&opts.userId?await fetchProfileFor(opts.userId):opts&&opts.handle?await fetchProfileByHandle(opts.handle):null;
+  if(!profile){card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div><div class="m-title">Captain not found.</div><div class="m-sub" style="line-height:1.6;color:#cbd5e1">Either they haven’t signed in yet, or the handle moved.</div><button class="btn bx" onclick="DS.closePeek()" style="margin-top:12px">Close</button>`;return}
+  const rank=await fetchTournamentRankFor(profile.user_id,isoWeekKey());
+  const isMe=auth.user&&profile.user_id===auth.user.id;
+  let friendState='none';let friendBtnHTML='';
+  if(!isMe&&auth.user){
+    if(friends.list.find(f=>f.uid===profile.user_id))friendState='friends';
+    else if(friends.outgoing.find(f=>f.uid===profile.user_id))friendState='outgoing';
+    else if(friends.incoming.find(f=>f.uid===profile.user_id))friendState='incoming';
+    friendBtnHTML=friendState==='friends'
+      ? `<button class="btn bx prof-remove" data-uid="${profile.user_id}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px">REMOVE FRIEND</button>`
+      : friendState==='outgoing'
+        ? `<button class="btn bx" disabled style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;opacity:0.6">⏳ REQUEST SENT</button>`
+        : friendState==='incoming'
+          ? `<button class="btn bp prof-accept" data-uid="${profile.user_id}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">ACCEPT REQUEST</button>`
+          : `<button class="btn bp prof-add" data-uid="${profile.user_id}" data-handle="${profile.handle}" style="width:auto;padding:6px 14px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD FRIEND</button>`;
+  }
+  const joined=profile.updated_at?new Date(profile.updated_at).toISOString().slice(0,10):'';
+  card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Profile</div>
+    <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
+      <div style="font-size:42px;background:rgba(167,139,250,0.10);border:1px solid rgba(167,139,250,0.35);width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center">🎣</div>
+      <div style="flex:1;min-width:0">
+        <div style="font:700 18px 'DM Sans',sans-serif;color:#e8edf5">${profile.handle}${isMe?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· YOU</span>':friendState==='friends'?' <span style="color:#86efac;font:600 10px \'JetBrains Mono\',monospace;letter-spacing:1px">· CREW</span>':''}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px">${profile.boat||'—'}${joined?` · seen ${joined}`:''}</div>
+      </div>
+      ${friendBtnHTML}
+    </div>
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="background:rgba(8,18,38,0.6);border:1px solid rgba(167,139,250,0.25);border-radius:6px;padding:10px 12px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Tournament rank</div>
+        <div style="font-size:13px;color:#e8edf5;margin-top:3px">${rank?`<b>#${rank.rank}</b> · <span style="color:#fbcf3b">${rank.score}</span>`:'<span style="color:#475569">No run banked this week</span>'}</div>
+      </div>
+      <div style="background:rgba(8,18,38,0.6);border:1px solid rgba(167,139,250,0.25);border-radius:6px;padding:10px 12px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#a78bfa;text-transform:uppercase">Week</div>
+        <div style="font-size:13px;color:#e8edf5;margin-top:3px">${isoWeekKey()}</div>
+      </div>
+    </div>
+    ${isMe?`
+    <!-- R36 · Share invite link — only on the player's own profile card. -->
+    <div style="margin-top:14px;padding:12px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.3);border-radius:6px">
+      <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#4ade80;text-transform:uppercase">Share your invite</div>
+      <div style="font-size:11px;color:#cbd5e1;margin-top:3px;line-height:1.5">Send this URL to anyone. When they open it, the game pops a one-tap "Add ${profile.handle}" prompt.</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input id="invite-url" readonly value="${location.origin+location.pathname}?invite=${profile.user_id}" style="flex:1;background:rgba(3,7,18,0.55);border:1px solid rgba(74,222,128,0.25);color:#86efac;border-radius:5px;padding:6px 10px;font:600 10px 'JetBrains Mono',monospace">
+        <button class="btn bp" onclick="DS.copyInvite()" style="width:auto;padding:6px 12px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">COPY</button>
+      </div>
+    </div>`:''}
+    <button class="btn bx" onclick="DS.closePeek()" style="margin-top:14px">Close</button>`;
+  card.querySelectorAll('.prof-add').forEach(b=>b.onclick=async()=>{const ok=await sendFriendRequest(b.dataset.uid,b.dataset.handle);if(ok){sfx('click');refreshFriendsPill();openProfilePanel({userId:profile.user_id})}});
+  card.querySelectorAll('.prof-accept').forEach(b=>b.onclick=async()=>{await respondFriendRequest(b.dataset.uid,true);sfx('win');refreshFriendsPill();openProfilePanel({userId:profile.user_id})});
+  card.querySelectorAll('.prof-remove').forEach(b=>b.onclick=async()=>{if(!confirm('Remove this friend?'))return;await removeFriend(b.dataset.uid);refreshFriendsPill();openProfilePanel({userId:profile.user_id})});
+}
+function copyInvite(){
+  const i=$('invite-url');if(!i)return;
+  try{i.select();document.execCommand('copy');if(typeof pushAchToast==='function')pushAchToast({k:'COPIED',n:'Invite URL ready',d:'Paste it anywhere.'})}catch(e){}
+  if(navigator.clipboard){navigator.clipboard.writeText(i.value).catch(()=>{})}
+}
+// Capture ?invite=USERID once at bootstrap. Held in a local until auth resolves; then the
+// next refreshFriends() call pops the prompt. URL is scrubbed so reload doesn't re-pop.
+let _pendingInviteUid=null;
+(function captureInviteUrl(){
+  if(typeof location==='undefined'||!location.search)return;
+  const p=new URLSearchParams(location.search);
+  const uid=p.get('invite');if(!uid)return;
+  _pendingInviteUid=uid;
+  try{p.delete('invite');const newSearch=p.toString();history.replaceState(null,'',location.pathname+(newSearch?'?'+newSearch:'')+location.hash)}catch(e){}
+})();
+async function popInvitePromptIfPending(){
+  if(!_pendingInviteUid)return false;
+  if(!cloudReady()||!auth.user)return false;  // wait for sign-in
+  const uid=_pendingInviteUid;_pendingInviteUid=null;
+  if(uid===auth.user.id){if(typeof pushAchToast==='function')pushAchToast({k:'INVITE',n:'That’s your own link',d:'Send it to someone else.'});return false}
+  openProfilePanel({userId:uid});return true;
 }
 // ============================================================================
 
@@ -2128,6 +2239,8 @@ function qaFriendsOpen(){if(new URLSearchParams(location.search).get('qa')!=='1'
 function qaFriendsState(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;return{list:friends.list.length,incoming:friends.incoming.length,outgoing:friends.outgoing.length}}
 function qaCrewOnly(on){if(new URLSearchParams(location.search).get('qa')!=='1')return null;if(on!==undefined)setBroadcastCrewOnly(on);return broadcastCrewOnly}
 function qaTournamentTab(t){if(new URLSearchParams(location.search).get('qa')!=='1')return null;if(t)_tournamentTab=t;return _tournamentTab}
+function qaInviteUrl(){if(new URLSearchParams(location.search).get('qa')!=='1')return null;const u=auth.user&&auth.user.id;return u?`${location.origin+location.pathname}?invite=${u}`:null}
+function qaOpenProfile(handle){if(new URLSearchParams(location.search).get('qa')!=='1')return false;openProfilePanel({handle:handle||'self'});return miniActive&&_peekOpen}
 
 // === WORLD POIs ===
 // Visible landmarks at the named locations from the canon. Each is a small dock + light pole so
@@ -4695,6 +4808,9 @@ document.body.classList.add('mode-'+GAME_MODE);
 // boat() call later overwrites this with the actual hero once a class is chosen.
 document.body.classList.add('hero-reel');
 initEngine();wet.init();underwater.init();refreshTrophyPeek();applyGfx();
+// R36: delegated click for the .prof-link spans so any handle in any overlay opens the
+// profile panel. Bound once at boot so panel rebuilds don't need to re-wire.
+document.addEventListener('click',e=>{const t=e.target&&e.target.closest&&e.target.closest('.prof-link');if(!t)return;const h=t.dataset.handle;if(!h||!cloudReady())return;e.stopPropagation();openProfilePanel({handle:h})});
 // Pause when the tab is hidden — silence all continuous audio so we don't bleed in a background
 // tab, and stash S.on so we can restore it on visibilitychange→visible. The RAF loop is left
 // running (a paused tab throttles RAF automatically) so the scene is ready when the user returns.
@@ -5308,6 +5424,9 @@ function refreshTrophyPeek(){
   refreshTournamentCard();
   refreshFriendsPill();
   if(typeof tickUnlockFeedLifecycle==='function')tickUnlockFeedLifecycle();
+  // R36: catch the already-signed-in-at-boot case — if an invite URL was captured,
+  // pop the prompt the moment the marina is shown.
+  if(typeof popInvitePromptIfPending==='function'&&auth.user&&friends.list!==undefined)popInvitePromptIfPending();
 }
 // R30 · weekly tournament tile renderer. Always shown in game mode (mirrors challenge tile).
 function refreshTournamentCard(){
@@ -5364,14 +5483,14 @@ async function openFriendsPanel(){
   const myHandle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   const incomingHTML=friends.incoming.length
     ? friends.incoming.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(251,207,59,0.10);border:1px solid rgba(251,207,59,0.3);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
-        <span style="flex:1;min-width:0;color:#fde68a"><b>${r.handle}</b> wants to add you</span>
+        <span style="flex:1;min-width:0;color:#fde68a"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b> wants to add you</span>
         <button class="btn bp friend-accept" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#10b981">ACCEPT</button>
         <button class="btn bx friend-decline" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">DECLINE</button>
       </div>`).join('')
     : '';
   const friendsHTML=friends.list.length
     ? friends.list.map(r=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif;border-left:3px solid #4ade80">
-        <span style="flex:1;min-width:0;color:#e8edf5"><b>${r.handle}</b></span>
+        <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b></span>
         <button class="btn bx friend-remove" data-uid="${r.uid}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">REMOVE</button>
       </div>`).join('')
     : `<div style="padding:12px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">No friends yet. Search a handle below to send a request.</div>`;
@@ -5381,7 +5500,7 @@ async function openFriendsPanel(){
   const searchHTML=_friendsSearchResults.length
     ? `<div style="margin:8px 0 4px;font:11px 'JetBrains Mono',monospace;color:#94a3b8;text-transform:uppercase;letter-spacing:1px">Results</div>${_friendsSearchResults.map(r=>{const isMe=r.user_id===auth.user.id;const already=friends.list.find(f=>f.uid===r.user_id)||friends.outgoing.find(f=>f.uid===r.user_id);
         return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.5);border-radius:6px;margin:3px 0;font:12px 'DM Sans',sans-serif">
-          <span style="flex:1;min-width:0;color:#e8edf5"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${isMe?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace">· YOU</span>`:''}</span>
+          <span style="flex:1;min-width:0;color:#e8edf5"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${isMe?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace">· YOU</span>`:''}</span>
           ${isMe?'':already?`<span style="font:600 9px 'JetBrains Mono',monospace;color:#475569;letter-spacing:1px">${already.since?'✓ FRIENDS':'⏳ SENT'}</span>`:`<button class="btn bp friend-add" data-uid="${r.user_id}" data-handle="${r.handle}" style="width:auto;padding:4px 10px;margin:0;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px;background:#3b82f6">ADD</button>`}
         </div>`}).join('')}`
     : (_friendsSearch.length>=2?`<div style="padding:10px;color:#64748b;font:italic 11px 'DM Sans',sans-serif;text-align:center">${_friendsSearchPending?'Searching…':'No captains match.'}</div>`:'');
@@ -5442,7 +5561,7 @@ async function openTournamentPanel(){
         ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">${_tournamentTab==='crew'?(auth.user?(friends.list.length===0?'Add some friends to populate this view.':'None of your crew has banked a run this week yet.'):'Sign in to use the crew view.'):'No runs banked this week yet. Be first.'}</div>`
         : `<div style="overflow-y:auto;max-height:380px">${viewRows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1).padStart(2,' ');const mine=meHandle&&r.handle===meHandle;const isFriend=auth.user&&friends.byHandle&&friends.byHandle.has((r.handle||'').toLowerCase());return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${mine?'rgba(167,139,250,0.15)':isFriend?'rgba(74,222,128,0.08)':'rgba(3,7,18,0.55)'};border-radius:4px;margin:3px 0;${mine?'border:1px solid rgba(167,139,250,0.5);':isFriend?'border-left:3px solid #4ade80;':''}">
             <span style="width:30px;text-align:center;font:600 13px 'JetBrains Mono',monospace;color:${i<3?'#fbcf3b':'#64748b'}">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font:9px 'JetBrains Mono',monospace">· ${r.boat}</span>`:''}${mine?` <span style="color:#a78bfa;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· YOU</span>`:isFriend?` <span style="color:#86efac;font:600 9px 'JetBrains Mono',monospace;letter-spacing:1px">· CREW</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 14px 'JetBrains Mono',monospace">${r.score}</span>
           </div>`}).join('')}</div>`;
     card.innerHTML=`<div class="m-kicker" style="color:#a78bfa">Weekly Tournament · ${wk}</div>
@@ -5491,7 +5610,7 @@ async function openChallengePanel(){
         ? `<div style="padding:14px;text-align:center;color:#64748b;font:italic 11px 'DM Sans',sans-serif">No completions yet today. Be first.</div>`
         : `<div style="overflow-y:auto;max-height:300px">${rows.map((r,i)=>{const med=i===0?'🥇':i===1?'🥈':i===2?'🥉':' ';const t=new Date(r.completed_at);const hh=String(t.getHours()).padStart(2,'0'),mm=String(t.getMinutes()).padStart(2,'0');return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:rgba(3,7,18,0.55);border-radius:4px;margin:3px 0">
             <span style="width:24px;text-align:center;font-size:14px">${med}</span>
-            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b>${r.handle}</b>${r.boat?` <span style="color:#64748b;font-size:10px">· ${r.boat}</span>`:''}</span>
+            <span style="flex:1;min-width:0;color:#e8edf5;font-size:12px"><b class="prof-link" data-handle="${r.handle}" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(167,139,250,0.4);text-underline-offset:2px">${r.handle}</b>${r.boat?` <span style="color:#64748b;font-size:10px">· ${r.boat}</span>`:''}</span>
             <span style="color:#fbcf3b;font:600 13px 'JetBrains Mono',monospace">${r.score}</span>
             <span style="color:#475569;font:9px 'JetBrains Mono',monospace">${hh}:${mm}</span>
           </div>`}).join('')}</div>`;
@@ -5750,6 +5869,7 @@ signIn:openSignIn,signOut:authSignOut,authState:()=>({signedIn:!!auth.user,email
 openChallenge:openChallengePanel,todaysChallenge,
 openTournament:openTournamentPanel,thisWeekKey:isoWeekKey,
 openFriends:openFriendsPanel,refreshFriends,
-qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
+openProfile:openProfilePanel,copyInvite,
+qaDuctEscape,qaUnlock,qaUnlockChapter,qaUnderwater,qaForceSnow,qaClearWeather,qaFishCount,qaDockHut,qaPinToggle,qaChallengeOpen,qaChallengeToday,qaTournamentOpen,qaTournamentWeek,qaTournamentTab,qaFriendsOpen,qaFriendsState,qaCrewOnly,qaInviteUrl,qaOpenProfile,qaBroadcastHooks,qaFakeBroadcast,qaPaintEquip,qaPaintCount,qaSeasonalState,qaPulseBait,qaForceNight,qaSpawnGatorKing,qaOpenGatorKing,qaStrikeLightning,qaSeedDuctRecipe,qaForceNibble,qaAudioProbe,qaAdvanceDay,qaResetStreak,qaTriggerCatalyst,qaForceFight,qaStumpCount,qaSetTabHidden,getSave,mode:GAME_MODE};
 })();
 
