@@ -235,7 +235,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     // 13e. R23 snow weather + new species count. Confirms FISH.length grew from 13 → 17 and that
     //      forcing Snow weather lights up the snowFlakes particle layer + sets S.wx.c correctly.
     const fishN=await p.evaluate(()=>DS.qaFishCount());
-    if(fishN<17)fail(`R23 expected ≥17 species, got ${fishN}`);
+    if(fishN<25)fail(`R23/R31 expected ≥25 species, got ${fishN}`);
     const snowOk=await p.evaluate(()=>DS.qaForceSnow());
     if(!snowOk)fail('R23 qaForceSnow did not light up snow particles');
     console.log(`· snow weather + ${fishN} species`);

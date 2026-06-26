@@ -81,7 +81,7 @@ let ductStats={sightings:0,attempts:0,nearCatches:0};
 let buffs={rareLine:0,sonarBank:0,scoutPing:0};
 // Bait pantry — typed bait gathered from shore foraging. Each cast consumes one of the equipped
 // bait type and biases rollFish() in a different direction (see BAIT_TYPES below).
-let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0};
+let baitInv={worm:0,cricket:0,frog:0,minnow:0,crayfish:0,ducttape:0,calmminnow:0,loudcricket:0,topwater:0,spinnerbait:0,jig:0};
 let equippedBait='';   // '' = bare hook, no bait bias
 // === BOAT UPGRADES ===
 // Per-hero loadout. Four slots × 3 tiers each. Bought with bait at the new Boatworks shop. Each
@@ -153,7 +153,14 @@ const BAIT_TYPES={
   // Crafted: pacified minnow → cleaner bites on uncommon spots, no spook factor.
   calmminnow:{n:'Calm Minnow Rig', c:'#a5d8ee', e:'🪞', desc:'+35% rare on uncommon spots, no spook.', crafted:true},
   // Crafted: loud cricket → uncommon + double bites at lure-marked spots.
-  loudcricket:{n:'Loud Cricket Charm', c:'#d8e066', e:'📣', desc:'+25% uncommon · doubles bites at lure spots.', crafted:true}
+  loudcricket:{n:'Loud Cricket Charm', c:'#d8e066', e:'📣', desc:'+25% uncommon · doubles bites at lure spots.', crafted:true},
+  // R31 crafted lures — species-specific kits that bias the roll toward the new fish.
+  // topwater: doubles weight on `surface` fish (sunfish/yellow perch/white bass) + uncommons.
+  topwater:   {n:'Topwater Popper',   c:'#fb923c', e:'🎯', desc:'2× surface species + uncommon bass.', crafted:true},
+  // spinnerbait: triples weight on `cover` species (snakehead) + rare bias.
+  spinnerbait:{n:'Spinnerbait',       c:'#fbcf3b', e:'🌀', desc:'3× cover species (snakehead). +20% rare.', crafted:true},
+  // jig: doubles weight on `bottom` species (drum/mud minnow/river cat).
+  jig:        {n:'Bottom Jig',        c:'#94a3b8', e:'⚖️', desc:'2× bottom species (drum, river cat).', crafted:true}
 };
 // Duct Tape Lure recipe — crafted at any tackle shop. Designed to be just out of reach early on so
 // the player has to forage a while before they can chase the legend with it.
@@ -169,7 +176,18 @@ const CRAFT_RECIPES=[
    tag:'🪞 Calm Minnow Rig',blurb:'A pacified minnow. +35% rare on uncommon spots, no spook factor.'},
   {id:'loudcricket',out:'loudcricket',in:{cricket:6,frog:1},
    ach:'first_craft',
-   tag:'📣 Loud Cricket Charm',blurb:'A cricket that won\'t shut up. +25% uncommon AND lure-spots see double bites.'}
+   tag:'📣 Loud Cricket Charm',blurb:'A cricket that won\'t shut up. +25% uncommon AND lure-spots see double bites.'},
+  // R31 lure recipes — kept cheap so they're approachable, but each requires a focused
+  // forage haul so the player has to commit to a strategy before they're crafted.
+  {id:'topwater',   out:'topwater',   in:{cricket:8,minnow:3},
+   ach:'first_craft',
+   tag:'🎯 Topwater Popper',  blurb:'Plug + feathers + a cricket twitched on top. 2× surface fish + uncommon bass.'},
+  {id:'spinnerbait',out:'spinnerbait',in:{minnow:6,frog:3,worm:4},
+   ach:'first_craft',
+   tag:'🌀 Spinnerbait',       blurb:'Flashing blade rig. Snakeheads hit it like they\'re owed money. +20% rare.'},
+  {id:'jig',        out:'jig',        in:{worm:8,crayfish:1},
+   ach:'first_craft',
+   tag:'⚖️ Bottom Jig',         blurb:'Heavy head, soft-plastic trailer. 2× bottom species — drum, mud, river cat.'}
 ];
 // === GEAR PROGRESSION ===
 // Four equipment slots, each a tier ladder bought with bait at the lake's bait shops. Higher tiers
@@ -554,7 +572,20 @@ const FISH=[
   {n:'Albino bream', r:'legendary', w:1.2, s:280, e:'👻', fight:2, line:3, f:'White as wet paper. Found near the Flooded Chapel.'},
   {n:'Three-eyed pike',r:'legendary', w:0.9, s:420, e:'🐲', fight:3, line:3, f:'Pulled from the Sunk Road waters. Lilly looked at it too long.'},
   {n:'Deep-Dock catch',r:'legendary',w:0.4,s:850, e:'🌑', fight:3, line:4, gator:true, f:'Doesn’t look right. Something else is on the line below this one.'},
-  {n:'Spectral catfish',r:'legendary',w:0.35,s:780,e:'🐡', fight:3, line:4, night:true, f:'Only ever lands after dark. Eyes don’t catch the boat lights — they catch yours.'}
+  {n:'Spectral catfish',r:'legendary',w:0.35,s:780,e:'🐡', fight:3, line:4, night:true, f:'Only ever lands after dark. Eyes don’t catch the boat lights — they catch yours.'},
+  // R31 expansion. Eight more species across all rarities — Codex 17 → 25.
+  // Common — easy yield, no fight. Topwater + jig kits start to matter at this band.
+  {n:'Sunfish',      r:'common',  w:22, s:9,  e:'☀️', fight:0, line:1, surface:true, f:'A coin on the line. Kids round the bayou catch a dozen before lunch.'},
+  {n:'Yellow perch', r:'common',  w:18, s:12, e:'🐟', fight:0, line:1, surface:true, f:'Stripey little brawler — punches above its weight.'},
+  // Uncommon — light fight. Bottom & schooling species rotate in.
+  {n:'Black drum',   r:'uncommon', w:9,  s:32, e:'🥁', fight:1, line:1, bottom:true, f:'You feel the thump before you see the bend.'},
+  {n:'White bass',   r:'uncommon', w:10, s:28, e:'🐠', fight:1, line:1, surface:true, f:'Schools blitz the shallows at dusk. Quick rod or no fish.'},
+  {n:'Mud minnow',   r:'uncommon', w:11, s:24, e:'🪱', fight:0, line:1, bottom:true, f:'Three inches of soggy bayou. Forgiving on the hook.'},
+  // Rare — real fight. Bigger predators with cover preferences.
+  {n:'Snakehead',    r:'rare',    w:3.5,s:120,e:'🐍', fight:3, line:3, cover:true, gator:true, f:'Out of place on every chart. Pulls like it doesn\'t care which way is up.'},
+  {n:'River cat',    r:'rare',    w:3,  s:140,e:'🐈', fight:2, line:3, bottom:true, f:'Old as the channel. Lilly\'s grandfather lost a finger to one.'},
+  // Legendary — night-only. Joins Spectral catfish as the second nocturnal showpiece.
+  {n:'Ghost gar',    r:'legendary',w:0.3,s:920,e:'👻', fight:3, line:4, gator:true, night:true, f:'Silver scales that don\'t reflect right. Only ever in the water after the sky turns.'}
 ];
 const RARE_COLOR={common:'#94a3b8',uncommon:'#fbcf3b',rare:'#a78bfa',legendary:'#10b981'};
 // Special spots that bias the fish roll. Within radius r of (x,z), 'bias' species get a 3x weight.
@@ -588,6 +619,10 @@ function rollFish(spot){
     // Crafted baits.
     if(useBait==='calmminnow')return spot&&f.r==='uncommon'?1.35:f.r==='rare'?1.10:1;
     if(useBait==='loudcricket')return f.r==='uncommon'?1.25:(spot&&spot.bias&&spot.bias.includes(f.n))?2.0:1;
+    // R31 species lures — push the new R31 fish without making old fish disappear.
+    if(useBait==='topwater')return f.surface?2.0:f.r==='uncommon'?1.20:1;
+    if(useBait==='spinnerbait')return f.cover?3.0:f.r==='rare'?1.20:1;
+    if(useBait==='jig')return f.bottom?2.0:f.r==='uncommon'?1.10:1;
     return 1;
   };
   let pool=FISH.map(f=>{let w=f.w;if(spot&&spot.bias.includes(f.n))w*=3;if(stormy&&(f.r==='rare'||f.r==='legendary'))w*=2.2;if(tourney&&(f.r==='rare'||f.r==='legendary'))w*=3;if((f.r==='rare'||f.r==='legendary'))w*=reelBonus;
