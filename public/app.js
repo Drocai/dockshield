@@ -264,9 +264,9 @@ function loadSave(){
     if(d.ductLog&&typeof d.ductLog==='object')ductLog=d.ductLog;
     if(d.speciesLog&&typeof d.speciesLog==='object')speciesLog=d.speciesLog;
     if(d.streak&&typeof d.streak==='object')Object.assign(streak,d.streak);
-    if(typeof d.playerHandle==='string')playerHandle=d.playerHandle.slice(0,24);
+    if(typeof d.playerHandle==='string')playerHandle=sanitizeText(d.playerHandle,24,true);
     if(typeof d.playerFlag==='string')playerFlag=d.playerFlag.slice(0,4);
-    if(typeof d.boatName==='string')boatName=d.boatName.slice(0,24);
+    if(typeof d.boatName==='string')boatName=sanitizeText(d.boatName,24,true);
     if(d.tutorialSeen&&typeof d.tutorialSeen==='object')tutorialSeen=d.tutorialSeen;
     if(d.buffs)Object.assign(buffs,d.buffs);
     if(d.gear)Object.assign(gear,d.gear);
@@ -336,6 +336,29 @@ function cloudReady(){return !!(C.SUPABASE_URL&&C.SUPABASE_ANON_KEY)}
 // cloud reads live they must be escaped at every render sink or a crafted handle/message becomes
 // stored XSS for everyone who opens a leaderboard, profile, friends list or crew wall.
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+// Input hygiene for anything a player types that gets stored in a shared cloud table (handle,
+// boat name, crew message, spot-tag label). esc() neutralises HTML at render time, but it does
+// NOT remove control chars, zero-width/joiner chars, or bidi-override chars — those render as
+// invisible garbage or let one handle spoof another. Strip them at the source, collapse runs of
+// whitespace on single-line fields, trim, and hard-cap the length. Returns a clean string.
+function sanitizeText(s,max,singleLine){
+  // Strip chars that esc() does not: C0/C1 controls (but keep tab/newline/CR so they collapse to
+  // spaces below), zero-width + joiners (200B-200D), LRM/RLM (200E-200F), bidi embeddings &
+  // overrides (202A-202E, used to spoof other handles), word-joiner (2060), BOM/ZWNBSP (FEFF).
+  let t=Array.prototype.filter.call(String(s==null?"":s),function(ch){
+    var c=ch.charCodeAt(0);
+    if(c===9||c===10||c===13)return true;
+    if(c<32||c===127||(c>=128&&c<160))return false;
+    if(c>=0x200B&&c<=0x200F)return false;
+    if(c>=0x202A&&c<=0x202E)return false;
+    if(c===0x2060||c===0xFEFF)return false;
+    return true;
+  }).join("");
+  if(singleLine)t=t.replace(/\s+/g," ");
+  t=t.trim();
+  if(max&&t.length>max)t=t.slice(0,max).trim();
+  return t;
+}
 function withTimeout(promise,ms,fallback){
   return new Promise(resolve=>{
     let done=false;
@@ -444,8 +467,8 @@ function mergeCloudSave(cs){
   if(cs.baitInv)Object.keys(cs.baitInv).forEach(k=>{baitInv[k]=Math.max(baitInv[k]||0,cs.baitInv[k]||0)});
   // Identity — cloud only wins when local is blank, so a freshly-signed-in
   // device doesn't overwrite a name the player set here first.
-  if(!playerHandle&&typeof cs.playerHandle==='string')playerHandle=cs.playerHandle.slice(0,24);
-  if(!boatName&&typeof cs.boatName==='string')boatName=cs.boatName.slice(0,24);
+  if(!playerHandle&&typeof cs.playerHandle==='string')playerHandle=sanitizeText(cs.playerHandle,24,true);
+  if(!boatName&&typeof cs.boatName==='string')boatName=sanitizeText(cs.boatName,24,true);
   persist();
 }
 async function cloudSync(reason){
@@ -644,7 +667,7 @@ const crewSpotTags={list:[]};
 let _spotTagPollT=null;
 async function dropSpotTag(label){
   if(!cloudReady()||!auth.token||!auth.user||!bMesh)return false;
-  const clean=String(label||'').trim().slice(0,36);if(!clean)return false;
+  const clean=sanitizeText(label,36,true);if(!clean)return false;
   const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   const body={user_id:auth.user.id,x:Math.round(bMesh.position.x*100)/100,z:Math.round(bMesh.position.z*100)/100,label:clean,handle};
   try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/spot_tags`,{method:'POST',
@@ -690,7 +713,7 @@ const crewMessages={list:[]};
 let _crewMsgPollT=null;
 async function postCrewMessage(text){
   if(!cloudReady()||!auth.token||!auth.user)return false;
-  const clean=String(text||'').trim().slice(0,140);if(!clean)return false;
+  const clean=sanitizeText(text,140,true);if(!clean)return false;
   const handle=(playerHandle||(auth.user.email&&auth.user.email.split('@')[0])||'Operative').slice(0,24);
   try{const r=await fetch(`${C.SUPABASE_URL}/rest/v1/crew_messages`,{method:'POST',
     headers:{apikey:C.SUPABASE_ANON_KEY,Authorization:`Bearer ${auth.token}`,'Content-Type':'application/json',Prefer:'return=minimal'},
@@ -5603,8 +5626,8 @@ function setMusicVol(v){_musicVol=Math.max(0,Math.min(1,v));persist()}
 // Intro is excluded — re-firing it on the next reload would surprise the player.
 function replayTutorials(){const intro=tutorialSeen.intro;tutorialSeen={};if(intro)tutorialSeen.intro=intro;persist()}
 // Identity setters — persist + update the HUD operative pill if a name is added mid-run.
-function setHandle(v){playerHandle=String(v||'').slice(0,24);persist();if(auth.user&&typeof syncProfile==='function')syncProfile()}
-function setBoatName(v){boatName=String(v||'').slice(0,24);persist();if(S.bc)boat(S.bc)}
+function setHandle(v){playerHandle=sanitizeText(v,24,true);persist();if(auth.user&&typeof syncProfile==='function')syncProfile()}
+function setBoatName(v){boatName=sanitizeText(v,24,true);persist();if(S.bc)boat(S.bc)}
 // Render the player's biggest catch into a shareable PNG. Lays the trophy out on a 1200×630
 // open-graph-friendly card and triggers a browser download.
 // === MOBILE TOUCH GLUE ===

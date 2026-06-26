@@ -732,6 +732,25 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(idSave.playerHandle!=='@trout_whisperer'||idSave.boatName!=='Money Pit')fail('handle/boatName did not persist: '+JSON.stringify({h:idSave.playerHandle,n:idSave.boatName}));
     console.log('· handle + boat name persist');
 
+    // 46b. R51 input hygiene -- setHandle/setBoatName run through sanitizeText: control chars,
+    //      zero-width/joiner and bidi-override chars are stripped (esc() at render time does NOT
+    //      catch those -- they spoof handles / inject invisible garbage into the shared tables),
+    //      whitespace collapses, length caps at 24, and emoji survive. Bad-codepoint detection is
+    //      done in-page via charCodeAt so the test source stays clean ASCII.
+    const hyg=await p.evaluate(()=>{
+      const ZW=String.fromCharCode(0x200B),RLO=String.fromCharCode(0x202E),CTRL=String.fromCharCode(7),NL=String.fromCharCode(10);
+      DS.setHandle('ad'+ZW+'min'+RLO+CTRL+' 🎣');
+      DS.setBoatName('Money'+NL+'Pit'+ZW+'xxxxxxxxxxxxxxxxxxxxxxxx');
+      const s=DS.getSave();
+      const bad=str=>Array.prototype.some.call(str||'',ch=>{const c=ch.charCodeAt(0);return c<32||c===127||(c>=128&&c<160)||(c>=0x200B&&c<=0x200F)||(c>=0x202A&&c<=0x202E)||c===0x2060||c===0xFEFF});
+      return {handle:s.playerHandle,boat:s.boatName,handleBad:bad(s.playerHandle),boatBad:bad(s.boatName)};
+    });
+    if(hyg.handleBad)fail('R51 handle still has control/zero-width/bidi chars: '+JSON.stringify(hyg.handle));
+    if(hyg.handle!=='admin 🎣')fail('R51 handle sanitization wrong: '+JSON.stringify(hyg.handle));
+    if(hyg.boatBad||hyg.boat.length>24)fail('R51 boat name not sanitized/capped: '+JSON.stringify(hyg.boat)+' len='+hyg.boat.length);
+    await p.evaluate(()=>{DS.setHandle('@trout_whisperer');DS.setBoatName('Money Pit')});  // restore tidy state
+    console.log('· input hygiene strips control/zero-width/bidi + caps length (emoji preserved)');
+
     // 47. HUD operative pill updates with the boat name (DS.boat is called by setBoatName).
     const heroLabel=await p.evaluate(()=>{const e=document.getElementById('h-hero');return e?e.textContent:''});
     if(!heroLabel.includes('MONEY PIT'))fail('Operative pill missing boat name: '+heroLabel);
