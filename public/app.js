@@ -2385,10 +2385,26 @@ function openHutInterior(){
   // R29 — Jukebox. Buttons preview each ambient music mode. The "auto" button restores normal
   // mode detection (the loop reassigns the right mode based on chase/golden/explore conditions).
   const currentMode=(typeof music!=='undefined'&&music.mode)||'explore';
-  const modes=[['explore','EXPLORE','#60d0ff'],['chase','CHASE','#fb923c'],['golden','GOLDEN','#fbcf3b']];
+  const modes=[['explore','EXPLORE','#60d0ff'],['chase','CHASE','#fb923c'],['golden','GOLDEN','#fbcf3b'],['winter','WINTER','#93c5fd'],['night','NIGHT','#a78bfa']];
   const jukeRow=`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
     ${modes.map(([id,lbl,col])=>`<button class="btn bx hut-juke" data-m="${id}" style="background:${currentMode===id?col:'rgba(3,7,18,0.5)'};color:${currentMode===id?'#02060f':col};border:1px solid ${col}55;width:auto;padding:5px 10px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px">${lbl}</button>`).join('')}
     <button class="btn bx" onclick="DS.toggleMute()" style="width:auto;padding:5px 10px;margin:0;font:600 10px 'JetBrains Mono',monospace;letter-spacing:1px;${muted?'opacity:0.6':''}">${muted?'🔇':'🔊'}</button>
+  </div>`;
+  // R54 — Records board. A stats dashboard pulled entirely from already-persisted state, so it
+  // costs no new save fields. Complements the Trophy Wall (which shows species) with the numbers.
+  const achTotal=Object.keys(ACH).length;
+  const nightTotal=FISH.filter(f=>f.night).length;
+  const nightCaught=FISH.filter(f=>f.night&&fishCatalog.has(f.n)).length;
+  const recStat=(label,val,sub,col)=>`<div style="background:rgba(8,18,38,0.55);border:1px solid ${col}44;border-radius:6px;padding:8px 10px;min-width:0"><div style="font:700 8px 'JetBrains Mono',monospace;letter-spacing:1px;color:${col};text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</div><div style="font:800 16px 'JetBrains Mono',monospace;color:#e8edf5;margin-top:1px;line-height:1">${val}</div>${sub?`<div style="font:9px 'DM Sans',sans-serif;color:#64748b;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sub}</div>`:''}</div>`;
+  const recordsHTML=`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+    ${recStat('Codex',`${fishCatalog.size}/${FISH.length}`,'species landed','#fbcf3b')}
+    ${recStat('Achievements',`${achievements.size}/${achTotal}`,'unlocked','#a78bfa')}
+    ${recStat('Best run',bestScore||'—','top single score','#10b981')}
+    ${recStat('Biggest catch',bestFish?('+'+bestFish.s):'—',bestFish?bestFish.n:'none yet','#fb923c')}
+    ${recStat('Night bite',`${nightCaught}/${nightTotal}`,'nocturnal species','#60a5fa')}
+    ${recStat('Day streak',streak.max||0,'best run of days','#f59e0b')}
+    ${recStat('Duct',ductStats.attempts||0,`attempts · ${ductStats.nearCatches||0} near`,'#fde047')}
+    ${recStat('Bayou Files',`${(typeof bayouFiles!=='undefined'?bayouFiles.size:0)}`,'lore recovered','#86efac')}
   </div>`;
   card.innerHTML=`<div class="m-kicker" style="color:#ffb45a">Pier Hut</div>
     <div class="m-title">Inside.</div>
@@ -2400,6 +2416,11 @@ function openHutInterior(){
       <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(255,210,63,0.3);border-radius:6px;padding:10px 12px">
         <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#fbcf3b;text-transform:uppercase;margin-bottom:6px">Trophy Wall</div>
         ${trophyWallHTML}
+      </div>
+      <!-- Records Board (R54) -->
+      <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(96,165,250,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
+        <div style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:1.5px;color:#60a5fa;text-transform:uppercase;margin-bottom:6px">Records</div>
+        ${recordsHTML}
       </div>
       <!-- Showcase Wall (R32) -->
       <div style="position:relative;background:rgba(8,18,38,0.6);border:1px solid rgba(167,139,250,0.3);border-radius:6px;padding:10px 12px;margin-top:8px">
